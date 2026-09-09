@@ -12,16 +12,14 @@
 // Keep the MONTHLY prefix in the filter too: Eclipse and Odyssey carry
 // "HOTEL MONTHLY LOCAL" and some ships still schedule against it.
 //
-// CADENCE. Eligibility is not obligation. Ships have a BIWEEKLY loading
-// opportunity and use roughly EVERY OTHER ONE: measured on Apex, Odyssey,
-// Summit and Eclipse, their ordered loadings sit 25-28 days apart. Treating
-// every eligible voyage as owed an order produced 7 false "MISSED" on a
-// six-ship sample. A miss is therefore a GAP longer than the ship's own normal
-// interval, not simply an eligible voyage with no order.
-//
-// STILL OPEN WITH RAY: whether every-other-biweekly is a rule with a defined
-// interval or just habit. Until he answers, MAX_GAP_DAYS is a deliberate
-// over-estimate so the check under-reports rather than cries wolf.
+// CADENCE. Eligibility is not obligation. Ray, 9 Sep 2026: "the ship uses a
+// bi-weekly order; if you miss one you have to wait for the other, in 2 weeks
+// or so." Measured on Apex, Odyssey, Summit and Eclipse, ordered loadings sit
+// 25-28 days apart - they use roughly every OTHER biweekly slot. Treating every
+// eligible voyage as owed an order produced 7 false "MISSED" on a six-ship
+// sample. A miss is a GAP longer than the ship's own normal interval, not
+// simply an eligible voyage with no order. MAX_GAP_DAYS is deliberately loose
+// so the check under-reports rather than cries wolf.
 
 export const WINDOW_DAYS = 7;
 export const MAX_GAP_DAYS = 35;
@@ -47,8 +45,12 @@ WITH eligible AS (
          MAX(COALESCE(date_changed, 0)) AS date_changed,
          MAX(mot)                       AS mot
     FROM schedule_order
-   WHERE UPPER(REPLACE(mot, '-', ' ')) LIKE 'HOTEL BIWEEKLY HOTEL%'
-      OR UPPER(REPLACE(mot, '-', ' ')) LIKE 'HOTEL MONTHLY%'
+   -- NORMALISE BY REMOVING HYPHENS *AND* SPACES. Symphony's schedule carries
+   -- "HOTEL BIWEEKLY - HOTEL"; replacing the hyphen with a space leaves a
+   -- DOUBLE space and the LIKE fails, which made all 10 of Symphony's voyages
+   -- invisible to this check. Compare the squashed string instead.
+   WHERE UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELBIWEEKLYHOTEL%'
+      OR UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELMONTHLY%'
       OR mot = 'AZAMARA BWS'
    GROUP BY ship, voyage
 )
@@ -69,6 +71,11 @@ export async function voyageStates(hon, today) {
   const r = await hon.prepare(SQL).bind(today).all();
   return classifyAll(r.results || [], today);
 }
+
+const isCovered = (r) =>
+  r.mot === 'AZAMARA BWS'
+    ? (Boolean(r.po_state) && r.po_state !== 'none') || r.order_lines > 0
+    : r.order_lines > 0;
 
 // NO PO = NO ORDER. That is Ray's rule and the weekly email states it to the
 // crew in as many words, so the code must not quietly invert it.
@@ -105,8 +112,21 @@ export function classifyAll(rows, today) {
       } else {
         // Not ordered. Only a risk if skipping it opens a gap longer than this
         // ship normally runs between loadings.
+        //
+        // LOOK FORWARD AS WELL AS BACK. With no prior covered loading - the
+        // first voyage in the window, or a ship whose earlier orders have all
+        // been received and so are no longer in-transit - a backward-only test
+        // calls every voyage at risk. Eclipse was a live false positive: no
+        // order on its 28 Sep loading, but 11 lines on 9 Oct, eleven days later.
         const gap = lastCovered ? days(r.loading_delivery_date, lastCovered) : null;
-        const atRisk = gap === null || gap > MAX_GAP_DAYS;
+        const nextCovered = list.find(
+          (x) => x.loading_delivery_date > r.loading_delivery_date && isCovered(x)
+        );
+        const forwardGap = nextCovered
+          ? days(nextCovered.loading_delivery_date, r.loading_delivery_date)
+          : null;
+        const coveredSoon = forwardGap !== null && forwardGap <= MAX_GAP_DAYS;
+        const atRisk = coveredSoon ? false : (gap === null || gap > MAX_GAP_DAYS);
         if (!atRisk) state = 'skippable'; // the every-other-loading pattern
         else if (r.days_to_due < 0) state = 'MISSED';
         else if (r.days_to_due <= WINDOW_DAYS) state = 'DUE NOW';
