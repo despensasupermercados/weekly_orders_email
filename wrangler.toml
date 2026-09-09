@@ -3,19 +3,25 @@ main = "src/index.js"
 compatibility_date = "2026-09-09"
 compatibility_flags = ["nodejs_compat"]
 
-# TWO SCHEDULES, one handler, split on event.cron inside scheduled().
-#   "0 6 * * *"   nightly 02:00 Miami - the watchdog. Repairs and reports.
-#   "0 12 * * 2"  Monday  08:00 Miami - the fleet email.
+# ONE SCHEDULE. Monday 08:00 Miami, the fleet email.
+#
+# A nightly "0 6 * * *" trigger was added here for the watchdog BEFORE
+# src/lib/watchdog.js was pushed, and src/index.js has no cron discrimination.
+# The result: every night at 02:00 Miami the WEEKLY EMAIL path would run. It sent
+# nothing only because there is currently nothing actionable; from 5 Oct it would
+# have mailed Miguel and Ray nightly instead of weekly. Removed until the
+# watchdog module and the cron split in index.js are on main together.
 #
 # CLOUDFLARE'S DAY-OF-WEEK IS 1-BASED FROM SUNDAY: 1=Sun, 2=Mon. "0 12 * * 1"
 # scheduled the weekly for SUNDAY - confirmed against the dashboard's own
 # "next run" line. AFTER CHANGING THIS, CHECK THE DASHBOARD SAYS MONDAY. Trust
 # the next-run line, not the expression.
 #
-# If you change the nightly expression, change NIGHTLY_CRON in src/index.js to
-# match or the watchdog run will be treated as the weekly run.
+# When the watchdog goes on: add "0 6 * * *" back here AND make sure
+# NIGHTLY_CRON in src/index.js is the identical string, or the nightly run gets
+# treated as the weekly run.
 [triggers]
-crons = ["0 6 * * *", "0 12 * * 2"]
+crons = ["0 12 * * 2"]
 
 [[d1_databases]]
 binding = "HON"
@@ -41,6 +47,5 @@ service = "cims-mailer"
 # cron log and send nothing, deliberately, rather than post an empty to[] that
 # cims-mailer rejects with "to[] required".
 SEND_TO_FLEET = "false"
-# Both the weekly email and the night digest go here until that changes.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
