@@ -3,11 +3,14 @@ main = "src/index.js"
 compatibility_date = "2026-09-09"
 compatibility_flags = ["nodejs_compat"]
 
-# Monday 12:00 UTC = 08:00 Miami (EDT). Miami is EST Nov-Mar, so this lands at
-# 07:00 local in winter. If Ray wants a hard 08:00 year round, add a second cron
-# at 13:00 UTC and gate on the month inside the handler.
+# CLOUDFLARE'S DAY-OF-WEEK IS 1-BASED FROM SUNDAY: 1=Sun, 2=Mon.
+# "0 12 * * 1" scheduled this for SUNDAY - confirmed against the dashboard's own
+# "next run" line, which read Sun 13 Sep. 12:00 UTC = 08:00 Miami (EDT); Miami is
+# EST Nov-Mar so in winter this lands at 07:00 local.
+# AFTER CHANGING THIS, CHECK THE DASHBOARD SAYS MONDAY. Trust the next-run line,
+# not the expression.
 [triggers]
-crons = ["0 12 * * 1"]
+crons = ["0 12 * * 2"]
 
 [[d1_databases]]
 binding = "HON"
@@ -19,13 +22,19 @@ binding = "ORDERS"
 database_name = "cims-order"
 database_id = "8a755d27-d679-4bdf-a53b-c210a4206fa7"
 
-[vars]
-# Flip to "true" only after /preview has been reviewed.
-SEND_TO_FLEET = "false"
-# Until then, the weekly email goes here instead of to 48 ships.
-DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
-VERSION = "0.1.0"
+# TRANSPORT: service binding, per the CIMS email standard section 4. cims-mailer
+# holds the ONLY Resend key in the estate and reads no Authorization header.
+# There is NO MAILER_URL and NO MAILER_TOKEN - do not add them back. A Resend key
+# was once pasted into a plaintext Worker variable here because this binding was
+# missing and the code invented a URL+token interface that does not exist.
+[[services]]
+binding = "MAILER"
+service = "cims-mailer"
 
-# Secrets (dashboard, or `wrangler secret put`):
-#   MAILER_URL
-#   MAILER_TOKEN
+[vars]
+# Per-ship addressing is NOT implemented. Setting this to "true" makes the cron
+# log and send nothing, deliberately, rather than post an empty to[] that
+# cims-mailer rejects with "to[] required".
+SEND_TO_FLEET = "false"
+DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
+VERSION = "0.2.0"

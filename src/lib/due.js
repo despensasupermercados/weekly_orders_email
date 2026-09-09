@@ -1,38 +1,43 @@
-// Which voyages are due, and which have nothing raised against them.
+// Which voyages are eligible for an order, and which of those are actually at risk.
 //
-// Unit of obligation = (ship, voyage). Only voyages carrying a HOTEL MONTHLY*
-// row expect a CIMS order: a ship loads 4-8 times a month but raises 5-7 orders
-// in six months. Treating every voyage as an obligation produces ~20 false
-// alarms per ship, which teaches the crew to ignore the email.
+// UNIT OF OBLIGATION = (ship, voyage).
 //
-// The deadline is the EARLIEST ORDER DUE DATE across that voyage's supply
-// streams. A voyage carries 2-22 of them; the earliest sits a median 9-14 days
-// before the hotel one, so acting on it is never late.
+// ELIGIBILITY. Ray, 9 Sep 2026: "For royal and celebrity we only use the
+// voyages under dry dock and assigned under hotel biweekly hotel." So the
+// eligible MOT is HOTEL BIWEEKLY HOTEL, NOT HOTEL MONTHLY. An earlier version
+// of this file filtered on HOTEL MONTHLY% while every non-Azamara row in
+// schedule_order carries HOTEL BIWEEKLY HOTEL, so ZERO Royal and Celebrity
+// voyages could ever be flagged and the weekly email was silently Azamara-only
+// while its header read like fleet coverage.
+// Keep the MONTHLY prefix in the filter too: Eclipse and Odyssey carry
+// "HOTEL MONTHLY LOCAL" and some ships still schedule against it.
 //
-// MOT NOTE: match HOTEL MONTHLY with a PREFIX, never an exact string. Eclipse
-// and Odyssey carry "HOTEL MONTHLY LOCAL" as a separate ordering stream, and an
-// exact match silently drops those voyages.
+// CADENCE. Eligibility is not obligation. Ships have a BIWEEKLY loading
+// opportunity and use roughly EVERY OTHER ONE: measured on Apex, Odyssey,
+// Summit and Eclipse, their ordered loadings sit 25-28 days apart. Treating
+// every eligible voyage as owed an order produced 7 false "MISSED" on a
+// six-ship sample. A miss is therefore a GAP longer than the ship's own normal
+// interval, not simply an eligible voyage with no order.
+//
+// STILL OPEN WITH RAY: whether every-other-biweekly is a rule with a defined
+// interval or just habit. Until he answers, MAX_GAP_DAYS is a deliberate
+// over-estimate so the check under-reports rather than cries wolf.
 
 export const WINDOW_DAYS = 7;
+export const MAX_GAP_DAYS = 35;
 
-// HOW WE KNOW A VOYAGE HAS AN ORDER.
-//
-// The cims-hon ingest keeps only 7 of the in-transit tab's 21 columns and drops
-// VoyageNum, so we cannot join on the voyage code. We join on the date instead:
-// an open order's ETA equals that voyage's LOADING DELIVERY DATE.
-//
-// Verified on Summit, 9 Sep 2026: all 5 of its ordered future voyages match
-// exactly, and the 2 it has not ordered (Feb, Mar 2027) match nothing. No false
-// positives, no false negatives.
-//
 // obp_intransit.eta is an EXCEL SERIAL IN A TEXT COLUMN ('46259'). Comparing it
-// as a string silently matches nothing and produces a confident wrong answer.
-// It cost us a "76 lines short across 33 ships" report that was pure artefact.
+// as a string silently matches nothing and produces a confident wrong answer:
+// it cost a "76 lines short across 33 ships" report that was pure artefact.
 // Always convert.
 const ETA_TO_DATE = "date('1899-12-30', '+' || CAST(i.eta AS INTEGER) || ' days')";
 
+// An open order's ETA equals that voyage's LOADING DELIVERY DATE. Verified on
+// Summit: all 5 of its ordered future voyages match exactly, the 2 it has not
+// ordered match nothing. VoyageNum would be a better key but cims-hon drops it
+// at ingest, and the Azamara HOPO <-> OBP voyage mapping is still open with Ray.
 const SQL = `
-WITH monthly AS (
+WITH eligible AS (
   SELECT ship,
          voyage,
          MIN(due_date)                  AS due_date,
@@ -42,63 +47,88 @@ WITH monthly AS (
          MAX(COALESCE(date_changed, 0)) AS date_changed,
          MAX(mot)                       AS mot
     FROM schedule_order
-   WHERE UPPER(REPLACE(mot, '-', ' ')) LIKE 'HOTEL MONTHLY%'
+   WHERE UPPER(REPLACE(mot, '-', ' ')) LIKE 'HOTEL BIWEEKLY HOTEL%'
+      OR UPPER(REPLACE(mot, '-', ' ')) LIKE 'HOTEL MONTHLY%'
       OR mot = 'AZAMARA BWS'
    GROUP BY ship, voyage
 )
-SELECT m.ship,
-       m.voyage,
-       m.due_date,
-       m.loading_delivery_date,
-       m.loading_port,
-       m.po_state,
-       m.date_changed,
-       m.mot,
-       CAST(julianday(m.due_date) - julianday(?1) AS INTEGER) AS days_to_due,
+SELECT e.ship, e.voyage, e.due_date, e.loading_delivery_date, e.loading_port,
+       e.po_state, e.date_changed, e.mot,
+       CAST(julianday(e.due_date) - julianday(?1) AS INTEGER) AS days_to_due,
        (SELECT COUNT(*)
           FROM obp_intransit i
-         WHERE i.ship = m.ship
+         WHERE i.ship = e.ship
            AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-           AND ${ETA_TO_DATE} = m.loading_delivery_date) AS order_lines
-  FROM monthly m
- WHERE m.loading_delivery_date >= ?1
- ORDER BY m.due_date`;
+           AND ${ETA_TO_DATE} = e.loading_delivery_date) AS order_lines
+  FROM eligible e
+ ORDER BY e.ship, e.loading_delivery_date`;
+
+const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 
 export async function voyageStates(hon, today) {
   const r = await hon.prepare(SQL).bind(today).all();
-  return (r.results || []).map((row) => ({ ...row, state: classify(row) }));
+  return classifyAll(r.results || [], today);
 }
 
-export function classify(row) {
-  // LIVE OBP DATA WINS. An open order landing on that voyage's loading date is
-  // hard evidence the order exists, whatever any schedule says about it.
-  //
-  // This matters most for Azamara. Ray hand-maintains the MLS, so a blank PO
-  // Number there means "Ray has not written the PO down yet", not necessarily
-  // "no order". Journey's October voyage is exactly that case on 9 Sep 2026:
-  // the MLS shows no PO, and OBP shows 9 open order lines arriving 7 Oct, the
-  // matching loading date. Trusting the MLS alone would have chased a printer
-  // who had already done the work - which is how you teach the fleet to ignore
-  // the email.
-  if (row.order_lines > 0) return 'ORDERED';
-  if (row.po_state && row.po_state !== 'none') return 'ORDERED';
+// NO PO = NO ORDER. That is Ray's rule and the weekly email states it to the
+// crew in as many words, so the code must not quietly invert it.
+//
+// For Azamara, a blank PO in Ray's hand-maintained MLS while OBP shows an order
+// landing on that loading date is a DISAGREEMENT BETWEEN SOURCES, not proof of
+// either. It goes to Ray as PO_NOT_RECORDED and never to the ship - chasing a
+// printer who already ordered is how the email loses its authority.
+export function classifyAll(rows, today) {
+  const byShip = new Map();
+  for (const r of rows) {
+    if (!byShip.has(r.ship)) byShip.set(r.ship, []);
+    byShip.get(r.ship).push(r);
+  }
 
-  if (row.days_to_due < 0) return 'MISSED';
-  if (row.days_to_due <= WINDOW_DAYS) return 'DUE NOW';
-  return 'upcoming';
+  const out = [];
+  for (const [, list] of byShip) {
+    list.sort((a, b) => (a.loading_delivery_date < b.loading_delivery_date ? -1 : 1));
+    let lastCovered = null; // last loading this ship actually has stock arriving for
+    for (const r of list) {
+      const azamara = r.mot === 'AZAMARA BWS';
+      const hasPo = Boolean(r.po_state) && r.po_state !== 'none';
+      const ordered = azamara ? hasPo : r.order_lines > 0;
+
+      let state;
+      if (ordered) {
+        state = 'ORDERED';
+        lastCovered = r.loading_delivery_date;
+      } else if (azamara && r.order_lines > 0) {
+        state = 'PO_NOT_RECORDED'; // Ray's problem, not the ship's
+        lastCovered = r.loading_delivery_date;
+      } else if (r.loading_delivery_date < today) {
+        state = 'past'; // already sailed, nothing useful to say
+      } else {
+        // Not ordered. Only a risk if skipping it opens a gap longer than this
+        // ship normally runs between loadings.
+        const gap = lastCovered ? days(r.loading_delivery_date, lastCovered) : null;
+        const atRisk = gap === null || gap > MAX_GAP_DAYS;
+        if (!atRisk) state = 'skippable'; // the every-other-loading pattern
+        else if (r.days_to_due < 0) state = 'MISSED';
+        else if (r.days_to_due <= WINDOW_DAYS) state = 'DUE NOW';
+        else state = 'upcoming';
+      }
+      out.push({
+        ...r,
+        state,
+        gap_days: lastCovered ? days(r.loading_delivery_date, lastCovered) : null,
+      });
+    }
+  }
+  return out.sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
 }
 
-// A voyage where the two sources disagree: the Azamara MLS has no PO written
-// against it, but OBP shows the order. Not a crew failure - a stale MLS. Worth
-// surfacing to Ray, never to the ship.
-export function poNotRecorded(rows) {
-  return rows.filter((r) => r.mot === 'AZAMARA BWS' && r.po_state === 'none' && r.order_lines > 0);
-}
-
-// What the weekly email actually carries: anything already past its due date
-// with nothing raised, plus anything falling due inside the window.
+// Goes to the ships.
 export function actionable(rows) {
-  return rows
-    .filter((r) => r.state === 'MISSED' || r.state === 'DUE NOW')
-    .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+  return rows.filter((r) => r.state === 'MISSED' || r.state === 'DUE NOW');
+}
+
+// Goes to Ray only: the MLS and OBP disagree about whether an order exists.
+// Called from /po-not-recorded so the discrepancy is surfaced, not discarded.
+export function poNotRecorded(rows) {
+  return rows.filter((r) => r.state === 'PO_NOT_RECORDED');
 }
