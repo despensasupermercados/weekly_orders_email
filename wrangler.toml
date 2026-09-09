@@ -4,20 +4,27 @@ compatibility_date = "2026-09-09"
 compatibility_flags = ["nodejs_compat"]
 
 # TWO SCHEDULES, one handler, split on event.cron inside scheduled().
-#   "0 6 * * *"   nightly 02:00 Miami - the watchdog. Repairs and reports.
-#   "0 12 * * 2"  Monday  08:00 Miami - the fleet email.
+#   "0 6 * * *"     nightly 02:00 Miami - the watchdog. Repairs and reports.
+#   "0 12 * * MON"  Monday  08:00 Miami - the fleet email.
 #
 # THE NIGHTLY STRING MUST EQUAL NIGHTLY_CRON IN src/index.js, CHARACTER FOR
 # CHARACTER. This trigger was once added here while src/lib/watchdog.js and the
 # cron split were still only on a laptop: the result was the WEEKLY EMAIL path
 # firing every night. If they ever disagree again, the same thing happens.
 #
-# CLOUDFLARE'S DAY-OF-WEEK IS 1-BASED FROM SUNDAY: 1=Sun, 2=Mon. "0 12 * * 1"
-# scheduled the weekly for SUNDAY - confirmed against the dashboard's own
-# "next run" line. AFTER CHANGING EITHER CRON, CHECK THE DASHBOARD'S NEXT-RUN
-# LINE. Trust that, not the expression.
+# THE WEEKLY USES THE NAME "MON", NOT A NUMBER, ON PURPOSE.
+# Cloudflare's day-of-week field is 1-7 with 1=SUNDAY (their own reference:
+# cloudflare/skills, references/cron-triggers). That is NOT the Unix convention
+# most people carry in their head, where 0=Sunday and 1=Monday. "0 12 * * 1"
+# therefore scheduled this for SUNDAY, which is what the dashboard's next-run
+# line showed. Writing MON removes the off-by-one entirely and survives anyone
+# who assumes the Unix base. Cloudflare accepts SUN-SAT names in this field.
+#
+# All Cloudflare crons are UTC, with no per-worker timezone. 12:00 UTC is 08:00
+# Miami on EDT; Miami is EST Nov-Mar, so in winter the weekly lands at 07:00
+# local. Leave it - an hour early is harmless, an hour late is not.
 [triggers]
-crons = ["0 6 * * *", "0 12 * * 2"]
+crons = ["0 6 * * *", "0 12 * * MON"]
 
 [[d1_databases]]
 binding = "HON"
@@ -52,4 +59,4 @@ SEND_TO_FLEET = "false"
 #                 alert becomes something he filters.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
 WATCHDOG_TO = "Miguel.Sanmartin@dg3.com"
-VERSION = "0.4.0"
+VERSION = "0.4.1"
