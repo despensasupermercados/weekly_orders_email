@@ -3,7 +3,7 @@
 // that a check which silently stops finding things is indistinguishable from a
 // healthy system, so each one is pinned.
 
-import { runWatchdog } from '../src/lib/watchdog.js';
+import { runWatchdog, ELIGIBLE_MOT_SQL } from '../src/lib/watchdog.js';
 import assert from 'node:assert';
 
 // Minimal D1 stand-in: matches on a distinctive fragment of each query.
@@ -51,13 +51,38 @@ const drift = await runWatchdog(
   TODAY, { repair: false });
 assert.ok(drift.findings.some((f) => f.check === 'eta_format'), 'eta format drift must be caught');
 
-// Out-of-scope supply streams are repaired, not just reported.
+// Out-of-scope rows WE wrote are repaired. Rows another app wrote are reported
+// and LEFT ALONE - a watchdog that quietly deletes a neighbour's data is worse
+// than the problem it solves. The live database had exactly this case: 10
+// Symphony rows written by cims-hon's own ingest, source 'email'.
 const log = [];
 const scoped = await runWatchdog(
-  { HON: fakeDb(withRow('WHERE NOT (', [{ mot: 'WINE', n: 40 }, { mot: 'MEDICAL', n: 12 }]), log) },
+  { HON: fakeDb(withRow('WHERE NOT (', [
+    { mot: 'WINE', source: 'ordering-schedule', n: 40 },
+    { mot: 'MEDICAL', source: 'email', n: 12 },
+  ]), log) },
   TODAY, { repair: true });
-assert.ok(scoped.repairs.some((r) => r.includes('52 out-of-scope')), 'must repair and report the count');
+assert.ok(scoped.repairs.some((r) => r.includes('40 out-of-scope')), 'must repair only our own 40 rows');
 assert.ok(log.some((s) => s.startsWith('DELETE FROM schedule_order')), 'must actually delete');
+assert.ok(scoped.findings.some((f) => f.check === 'scope' && f.detail.includes('NOT touched')),
+  "another app's 12 rows must be reported, never deleted");
+
+// THE BUG THAT WOULD HAVE DESTROYED DATA. Symphony's schedule carries
+// "HOTEL BIWEEKLY - HOTEL". The old normaliser turned the hyphen into a space,
+// left a DOUBLE space, failed the LIKE, and classified all 10 of Symphony's
+// real voyages as out-of-scope - which the repair step would then have deleted.
+const squash = (m) => m.toUpperCase().replace(/-/g, '').replace(/ /g, '');
+for (const mot of ['HOTEL BIWEEKLY HOTEL', 'HOTEL BIWEEKLY - HOTEL', 'HOTEL BIWEEKLY - HOTEL ',
+                   'HOTEL MONTHLY', 'HOTEL MONTHLY LOCAL']) {
+  assert.ok(squash(mot).startsWith('HOTELBIWEEKLYHOTEL') || squash(mot).startsWith('HOTELMONTHLY'),
+    `"${mot}" must be recognised as ours`);
+}
+for (const mot of ['HOTEL BIWEEKLY FOOD', 'HOTEL WEEKLY HOTEL', 'WINE', 'PHOTO MONTHLY']) {
+  assert.ok(!squash(mot).startsWith('HOTELBIWEEKLYHOTEL') && !squash(mot).startsWith('HOTELMONTHLY'),
+    `"${mot}" must NOT be treated as ours`);
+}
+assert.ok(ELIGIBLE_MOT_SQL.includes("REPLACE(REPLACE(mot,'-',''),' ','')"),
+  'the SQL must squash hyphens AND spaces, not swap hyphens for spaces');
 
 // A ship whose schedule has run out is invisible to the weekly check - the
 // worst state, because it looks identical to a ship with nothing due.
@@ -67,9 +92,11 @@ const expired = await runWatchdog(
   TODAY, { repair: false });
 assert.ok(expired.findings.some((f) => f.check === 'schedule_expired'), 'expired schedule must be critical');
 
-// Clean is clean: no findings, no repairs, nothing sent.
+// Clean is clean: only the coverage warning, no criticals, nothing repaired.
 const clean = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });
-assert.equal(clean.findings.length, 1, 'only the 10-of-48 coverage warning is expected here');
+assert.equal(clean.findings.length, 1, 'only the 1-of-48 coverage warning is expected here');
 assert.equal(clean.counts.critical, 0);
+assert.equal(clean.repairs.length, 0);
 
-console.log('ok - watchdog catches stale feed, format drift, scope leaks and expired schedules');
+console.log('ok - watchdog catches stale feed, format drift, scope leaks and expired schedules,');
+console.log('     repairs only its own rows, and recognises the hyphenated MOT variant');
