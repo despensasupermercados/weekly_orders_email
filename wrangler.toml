@@ -1,0 +1,31 @@
+name = "weekly-orders-email"
+main = "src/index.js"
+compatibility_date = "2026-09-09"
+compatibility_flags = ["nodejs_compat"]
+
+# Monday 12:00 UTC = 08:00 Miami (EDT). Miami is EST Nov-Mar, so this lands at
+# 07:00 local in winter. If Ray wants a hard 08:00 year round, add a second cron
+# at 13:00 UTC and gate on the month inside the handler.
+[triggers]
+crons = ["0 12 * * 1"]
+
+[[d1_databases]]
+binding = "HON"
+database_name = "cims-hon"
+database_id = "7b4387c8-c611-45f8-a2e8-58061989f833"
+
+[[d1_databases]]
+binding = "ORDERS"
+database_name = "cims-order"
+database_id = "8a755d27-d679-4bdf-a53b-c210a4206fa7"
+
+[vars]
+# Flip to "true" only after /preview has been reviewed.
+SEND_TO_FLEET = "false"
+# Until then, the weekly email goes here instead of to 48 ships.
+DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
+VERSION = "0.1.0"
+
+# Secrets (dashboard, or `wrangler secret put`):
+#   MAILER_URL
+#   MAILER_TOKEN
