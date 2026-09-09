@@ -8,6 +8,10 @@
 // The deadline is the EARLIEST ORDER DUE DATE across that voyage's supply
 // streams. A voyage carries 2-22 of them; the earliest sits a median 9-14 days
 // before the hotel one, so acting on it is never late.
+//
+// MOT NOTE: match HOTEL MONTHLY with a PREFIX, never an exact string. Eclipse
+// and Odyssey carry "HOTEL MONTHLY LOCAL" as a separate ordering stream, and an
+// exact match silently drops those voyages.
 
 export const WINDOW_DAYS = 7;
 
@@ -66,16 +70,29 @@ export async function voyageStates(hon, today) {
 }
 
 export function classify(row) {
-  // Azamara carries its own PO state from the MLS; everyone else is judged on
-  // whether an open order lands on that voyage's loading date.
-  if (row.mot === 'AZAMARA BWS') {
-    if (row.po_state && row.po_state !== 'none') return 'ORDERED';
-  } else if (row.order_lines > 0) {
-    return 'ORDERED';
-  }
+  // LIVE OBP DATA WINS. An open order landing on that voyage's loading date is
+  // hard evidence the order exists, whatever any schedule says about it.
+  //
+  // This matters most for Azamara. Ray hand-maintains the MLS, so a blank PO
+  // Number there means "Ray has not written the PO down yet", not necessarily
+  // "no order". Journey's October voyage is exactly that case on 9 Sep 2026:
+  // the MLS shows no PO, and OBP shows 9 open order lines arriving 7 Oct, the
+  // matching loading date. Trusting the MLS alone would have chased a printer
+  // who had already done the work - which is how you teach the fleet to ignore
+  // the email.
+  if (row.order_lines > 0) return 'ORDERED';
+  if (row.po_state && row.po_state !== 'none') return 'ORDERED';
+
   if (row.days_to_due < 0) return 'MISSED';
   if (row.days_to_due <= WINDOW_DAYS) return 'DUE NOW';
   return 'upcoming';
+}
+
+// A voyage where the two sources disagree: the Azamara MLS has no PO written
+// against it, but OBP shows the order. Not a crew failure - a stale MLS. Worth
+// surfacing to Ray, never to the ship.
+export function poNotRecorded(rows) {
+  return rows.filter((r) => r.mot === 'AZAMARA BWS' && r.po_state === 'none' && r.order_lines > 0);
 }
 
 // What the weekly email actually carries: anything already past its due date
