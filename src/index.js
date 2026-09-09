@@ -4,7 +4,7 @@ import {
 } from './lib/azamaraMls.js';
 import { htmlPartOf, attachmentsOf } from './lib/mime.js';
 import { voyageStates, actionable, poNotRecorded, dataFaults, missNote } from './lib/due.js';
-import { planFleetSend } from './lib/fleet.js';
+import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { renderWeekly } from './lib/email.js';
@@ -66,6 +66,18 @@ async function send(env, to, subject, html, templateId = 'orders-due-weekly') {
   // Never swallow this. A silent send failure is the same class of bug as a
   // silent parse failure: the system looks healthy and nobody is warned.
   return { sent: res.ok, status: res.status, body: body.slice(0, 300) };
+}
+
+// Length-independent compare. The value it guards is a read-only list of
+// mailboxes rather than anything that moves money, but a timing-leaky compare
+// is not cheaper to write than this one.
+function secretEquals(given, expected) {
+  const a = String(given == null ? '' : given);
+  const b = String(expected == null ? '' : expected);
+  if (!b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 async function buildWeekly(env, today) {
@@ -297,18 +309,32 @@ export default {
     }
 
     // WHO WOULD GET WHAT, before anything is sent. Run this and read it before
-    // ever setting SEND_TO_FLEET to true. Addresses are shown in full because
-    // the whole point is to check them against the real mailboxes.
+    // ever setting SEND_TO_FLEET to true.
+    //
+    // ADDRESSES ARE MASKED UNLESS ADMIN_KEY IS SET AND MATCHED. No endpoint on
+    // this Worker has any authentication, and a Workers Build publishes a
+    // preview URL for every commit, so an unmasked list here is every printer
+    // in the fleet, tied to their ship, on a public URL. Masked is still enough
+    // to check that a ship is mapped and that its domain is right.
     if (url.pathname === '/fleet') {
       const st = await voyageStates(env.HON, today);
       const plan = planFleetSend(actionable(st), env.FLEET_MAP);
+      const unlocked = Boolean(env.ADMIN_KEY) && secretEquals(url.searchParams.get('key'), env.ADMIN_KEY);
+      const show = (addrs) => (unlocked ? addrs : addrs.map(maskEmail));
       return json({
         today,
         send_to_fleet: env.SEND_TO_FLEET === 'true',
+        addresses: unlocked
+          ? 'full'
+          : env.ADMIN_KEY
+            ? 'masked - pass ?key=<ADMIN_KEY> to see them in full'
+            : 'masked - set ADMIN_KEY to be able to see them in full',
         mapped_ships: plan.mapped_ships,
-        malformed_entries: plan.malformed,
+        // Malformed entries are echoed back, and a malformed line may itself
+        // contain an address. Mask the whole line rather than leak it here.
+        malformed_entries: unlocked ? plan.malformed : plan.malformed.map((l) => l.replace(/\S+@\S+/g, '***')),
         would_send: plan.sendable.map((g) => ({
-          ship: g.ship, to: g.to, orders: g.rows.length,
+          ship: g.ship, to: show(g.to), orders: g.rows.length,
           due: g.rows.map((r) => `${r.due_date} ${r.state}`),
         })),
         // The half that matters most: due this week and unreachable.

@@ -71,7 +71,7 @@ likely to miss a container.
 | `/health` | deploy version, row counts, MOT coverage, addressing readiness |
 | `/preview` | the fleet email as HTML, without sending it |
 | `/preview-ship?ship=Apex` | one ship's own email, as that ship would receive it |
-| `/fleet` | who would be mailed, and which ships are unaddressable |
+| `/fleet` | who would be mailed, and which ships are unaddressable (addresses masked) |
 | `/states` | every eligible voyage and its classification |
 | `/azamara` | what the MLS parser currently holds |
 | `/po-not-recorded` | MLS and OBP disagree — Ray's list, never a ship's |
@@ -80,6 +80,20 @@ likely to miss a container.
 | `/misses` | why each miss happened (read-only) |
 | `/data-faults` | voyages with no due date — invisible to the weekly email |
 | `/watchdog` | every night check with repair **off**; `?html=1` renders the digest |
+
+### These endpoints are public
+
+No endpoint here has any authentication, and Cloudflare Workers Builds publishes a preview URL
+for every commit. Everything above is readable by anyone holding that URL.
+
+`/fleet` therefore **masks crew mailboxes by default** — unmasked it is a harvestable list of
+every printer in the fleet tied to the ship they sail on. Masked still shows the domain and
+whether a ship is mapped, which is what the endpoint is for. Set `ADMIN_KEY` as a secret and
+pass `?key=` to see them in full.
+
+The rest return operational data and no personal addresses. Locking them down is a separate
+decision, because it changes behaviour something may already depend on, and it has not been
+made here.
 
 `npm test` runs **every** `test/*.test.mjs`. It used to run only `parse.test.mjs` while three
 other suites sat green and unexecuted, which reads as coverage and is not. `test/run.mjs`

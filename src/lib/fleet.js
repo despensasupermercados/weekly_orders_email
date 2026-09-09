@@ -79,6 +79,25 @@ export function planFleetSend(rows, fleetMapText) {
   };
 }
 
+// The Worker's endpoints have no authentication of any kind, and a Cloudflare
+// Workers Build publishes a preview URL for every commit. /fleet therefore
+// returns crew mailboxes over a public URL to anyone who has, or guesses, that
+// address - a harvestable list of every printer in the fleet, tied to the ship
+// they sail on.
+//
+// Masking keeps what the endpoint is FOR - checking that a ship is mapped, that
+// the domain is right, that a typo is a typo - and drops what a scraper wants.
+// The unmasked list needs ADMIN_KEY.
+export function maskEmail(addr) {
+  const s = String(addr || '');
+  const at = s.lastIndexOf('@');
+  if (at < 1) return '***';
+  const local = s.slice(0, at);
+  const domain = s.slice(at); // kept whole: a wrong domain is the common error
+  if (local.length <= 2) return `${local[0]}***${domain}`;
+  return `${local.slice(0, 2)}***${local.slice(-1)}${domain}`;
+}
+
 // Deadline order, never alphabetical. The email's whole job is to put the next
 // cut-off first.
 const sortRows = (rows) =>

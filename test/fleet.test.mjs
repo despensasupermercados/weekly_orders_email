@@ -3,7 +3,7 @@
 // derived - only ever read from FLEET_MAP - because a guessed mailbox that
 // happens to exist delivers another company's operational data to a stranger.
 
-import { normShip, parseFleetMap, planFleetSend, isEmail } from '../src/lib/fleet.js';
+import { normShip, parseFleetMap, planFleetSend, isEmail, maskEmail } from '../src/lib/fleet.js';
 import assert from 'node:assert';
 
 // The three sources spell the same vessel three ways. If the join fails the
@@ -57,6 +57,20 @@ assert.equal(none.unmapped.length, 2);
 for (const g of plan.sendable) {
   assert.ok(g.rows.every((r) => normShip(r.ship) === normShip(g.ship)),
     'a ship email must contain only that ship');
+}
+
+// MASKING. /fleet is served over a public, unauthenticated URL - and Workers
+// Builds publishes a preview URL for every commit - so the default response
+// must not be a harvestable list of every printer in the fleet tied to a ship.
+// It must still be useful for the job it exists to do: spotting a wrong domain.
+assert.equal(maskEmail('allure.print@rccl.com'), 'al***t@rccl.com');
+assert.equal(maskEmail('ab@dg3.com'), 'a***@dg3.com', 'a short local part must not be reconstructable');
+assert.equal(maskEmail('not-an-address'), '***');
+assert.equal(maskEmail(''), '***');
+for (const a of ['allure.print@rccl.com', 'apex.hotel@celebrity.com']) {
+  const m = maskEmail(a);
+  assert.ok(m.endsWith(a.slice(a.lastIndexOf('@'))), 'the domain stays visible - a wrong domain is the common error');
+  assert.ok(!m.includes(a.slice(0, a.lastIndexOf('@'))), 'the local part must never survive whole');
 }
 
 console.log('ok - fleet addressing: names reconcile, unmapped ships are kept and reported,');

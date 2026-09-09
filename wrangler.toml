@@ -82,4 +82,18 @@ FLEET_MAP = ""
 #   {"waste_box": true, "waste_box_base": 12, "waste_box_azamara": 12}
 QUANTITY_RULES = ""
 
+# ADMIN_KEY unmasks the addresses on GET /fleet. Set it as a SECRET, not here.
+#
+# No endpoint on this Worker has any authentication, and Cloudflare Workers
+# Builds publishes a preview URL for every commit, so anything an endpoint
+# returns is returned to whoever has that URL. /fleet masks crew mailboxes by
+# default for that reason - unmasked it is a harvestable list of every printer
+# in the fleet tied to the ship they sail on. Masked is still enough to check
+# that a ship is mapped and that its domain is right.
+#
+# The other endpoints (/states /preview /misses /azamara /watchdog) are equally
+# public and return operational data, though no personal addresses. Locking
+# those down is a separate decision - it changes behaviour anyone may already
+# depend on - and has not been made here.
+
 VERSION = "0.5.0"
