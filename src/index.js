@@ -3,7 +3,7 @@ import {
   notesFromBody, saveAzamara,
 } from './lib/azamaraMls.js';
 import { htmlPartOf } from './lib/mime.js';
-import { voyageStates, actionable } from './lib/due.js';
+import { voyageStates, actionable, poNotRecorded } from './lib/due.js';
 import { renderWeekly } from './lib/email.js';
 
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -25,16 +25,35 @@ async function readAll(stream) {
   return out;
 }
 
+// TRANSPORT. Per the CIMS email standard section 4, every app sends through
+// cims-mailer via a SERVICE BINDING - env.MAILER.fetch('https://mailer/send').
+// There is no URL and no bearer token in this estate; cims-mailer holds the only
+// Resend key and reads no Authorization header. An earlier version of this file
+// invented MAILER_URL / MAILER_TOKEN, which is how a Resend key ended up pasted
+// into a plaintext Worker variable. Do not reintroduce them.
+//
+// cims-mailer's validate() hard-rejects a payload without templateId, and
+// ALLOWED_FROM holds exactly three senders. Anything a human is waiting on is
+// critical: true.
 async function send(env, to, subject, html) {
-  if (!env.MAILER_URL || !env.MAILER_TOKEN) {
-    return { sent: false, reason: 'MAILER_URL / MAILER_TOKEN not set' };
-  }
-  const r = await fetch(env.MAILER_URL, {
+  if (!env.MAILER) return { sent: false, reason: 'MAILER service binding not configured' };
+  const res = await env.MAILER.fetch('https://mailer/send', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${env.MAILER_TOKEN}` },
-    body: JSON.stringify({ app: 'weekly-orders-email', to, subject, html }),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      app: 'weekly-orders-email',
+      templateId: 'orders-due-weekly',
+      from: 'CIMS <cims@cims.work>',
+      to,
+      subject,
+      html,
+      critical: true,
+    }),
   });
-  return { sent: r.ok, status: r.status };
+  const body = await res.text().catch(() => '');
+  // Never swallow this. A silent send failure is the same class of bug as a
+  // silent parse failure: the system looks healthy and nobody is warned.
+  return { sent: res.ok, status: res.status, body: body.slice(0, 300) };
 }
 
 async function buildWeekly(env, today) {
@@ -71,7 +90,9 @@ export default {
 
     // REFUSE A PARTIAL WRITE. A run that finds the file but parses nothing, or
     // parses rows with no loading date, means the decode or the layout changed.
-    // Writing those rows corrupts schedule_order and the corruption is silent.
+    // Writing those rows corrupts schedule_order and the corruption is silent -
+    // a null loading date drops that ship out of the weekly email entirely,
+    // which is the exact failure this Worker exists to prevent.
     // Log loudly and change nothing.
     const usable = rows.filter((r) => r.due_date && r.loading_delivery_date);
     if (!rows.length || usable.length < rows.length) {
@@ -89,17 +110,30 @@ export default {
       (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
   },
 
-  // ---- Monday 08:00 Miami ----
+  // ---- Monday 08:00 Miami. See wrangler.toml: Cloudflare's day-of-week is
+  // 1-based from Sunday, so Monday is 2, not 1. ----
   async scheduled(event, env, ctx) {
     const today = iso(new Date());
     const { act, html } = await buildWeekly(env, today);
     if (!act.length) return; // nothing due, say nothing
 
-    const fleet = env.SEND_TO_FLEET === 'true';
-    const to = fleet ? null : (env.DRY_RUN_TO || '').split(',').map((s) => s.trim()).filter(Boolean);
-    // Fleet addressing is deliberately not implemented until SEND_TO_FLEET is
-    // reviewed: see README. Until then this goes to Miguel and Ray only.
-    ctx.waitUntil(send(env, to, `Orders due this week - ${act.length} to fix`, html));
+    // FLEET ADDRESSING IS NOT IMPLEMENTED. Setting SEND_TO_FLEET=true must not
+    // silently post an empty to[] that cims-mailer rejects with "to[] required".
+    // Fail loudly instead.
+    if (env.SEND_TO_FLEET === 'true') {
+      await logIngest(env, 'cron',
+        'SEND_TO_FLEET is true but per-ship addressing is not implemented. Nothing sent.');
+      return;
+    }
+    const to = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (!to.length) {
+      await logIngest(env, 'cron', 'DRY_RUN_TO is empty. Nothing sent.');
+      return;
+    }
+    ctx.waitUntil((async () => {
+      const r = await send(env, to, `Orders due this week - ${act.length} to fix`, html);
+      if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+    })());
   },
 
   async fetch(request, env) {
@@ -112,10 +146,14 @@ export default {
         version: env.VERSION || 'dev',
         today,
         send_to_fleet: env.SEND_TO_FLEET === 'true',
-        mailer_configured: Boolean(env.MAILER_URL && env.MAILER_TOKEN),
+        mailer_configured: Boolean(env.MAILER),
         schedule_rows: (await q('SELECT COUNT(*) n FROM schedule_order')).n,
         azamara_rows: (await q("SELECT COUNT(*) n FROM schedule_order WHERE source='azamara-mls'")).n,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
+        // Coverage, not just row counts. If this shows only AZAMARA BWS then the
+        // weekly email cannot flag a single Royal or Celebrity ship, whatever
+        // the row count says.
+        mots_present: (await q('SELECT GROUP_CONCAT(DISTINCT mot) m FROM schedule_order')).m,
       });
     }
 
@@ -132,13 +170,20 @@ export default {
       return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
+    // The MLS and OBP disagree about whether these orders exist. Ray's list,
+    // never the ships'. Exposed so the discrepancy is surfaced, not discarded.
+    if (url.pathname === '/po-not-recorded') {
+      const rows = await voyageStates(env.HON, today);
+      return json(poNotRecorded(rows));
+    }
+
     if (url.pathname === '/states') {
       const rows = await voyageStates(env.HON, today);
       return json(rows);
     }
 
     return new Response(
-      'weekly-orders-email\n\n/health  /preview  /states  /azamara\n',
+      'weekly-orders-email\n\n/health  /preview  /states  /azamara  /po-not-recorded\n',
       { headers: { 'content-type': 'text/plain' } }
     );
   },
