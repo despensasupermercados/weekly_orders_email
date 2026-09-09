@@ -49,8 +49,10 @@ To go live:
 
 1. Fill in **`FLEET_MAP`**: `Ship = address, address; Ship = address`. Newlines and `#`
    comments are allowed.
-2. Run **`GET /fleet`**. It prints exactly which ship would receive which address, and which
+2. Run **`GET /fleet`**. It prints which ship would be mailed at which address, and which
    ships have something due and **cannot be reached at all**. Read this before step 3.
+   Addresses are masked by default; set `ADMIN_KEY` as a secret and pass `?key=` to check them
+   character by character.
 3. Run **`GET /preview-ship?ship=Apex`** to see one crew's email as that crew would get it.
 4. Set `SEND_TO_FLEET = "true"`.
 
