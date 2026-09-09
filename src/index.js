@@ -2,6 +2,7 @@ import {
   isAzamaraMls, rowsFromHtml, rowsFromWorkbook, parseAzamaraRows,
   notesFromBody, saveAzamara,
 } from './lib/azamaraMls.js';
+import { htmlPartOf } from './lib/mime.js';
 import { voyageStates, actionable } from './lib/due.js';
 import { renderWeekly } from './lib/email.js';
 
@@ -42,33 +43,50 @@ async function buildWeekly(env, today) {
   return { rows, act, html: renderWeekly(act, rows, today) };
 }
 
+async function logIngest(env, sender, note) {
+  try {
+    await env.HON.prepare(
+      `INSERT INTO ingest_log (source, sender, note, ts) VALUES ('email', ?, ?, datetime('now'))`
+    ).bind(sender || 'unknown', note).run();
+  } catch (_) { /* logging must never block the ingest */ }
+}
+
 export default {
   // ---- Ray's Azamara MLS lands here ----
   async email(message, env) {
     const subject = message.headers.get('subject') || '';
-    let body = '';
-    try { body = new TextDecoder().decode(await readAll(message.raw)); } catch (_) { /* best effort */ }
 
-    if (!isAzamaraMls('', subject, body)) {
-      // Not ours. Leave it for the cims-hon route.
+    let raw = '';
+    try { raw = new TextDecoder().decode(await readAll(message.raw)); } catch (_) { /* best effort */ }
+
+    // DECODE BEFORE PARSING. Outlook sends quoted-printable or base64; handing
+    // raw MIME to the HTML parser drops rows and writes nulls. See lib/mime.js.
+    const body = htmlPartOf(raw) || raw;
+
+    if (!isAzamaraMls('', subject, body)) return; // not ours; cims-hon keeps its route
+
+    // The table is usually PASTED into the body, not attached - exactly the
+    // case the cims-hon handler returns early on.
+    const rows = parseAzamaraRows(rowsFromHtml(body));
+
+    // REFUSE A PARTIAL WRITE. A run that finds the file but parses nothing, or
+    // parses rows with no loading date, means the decode or the layout changed.
+    // Writing those rows corrupts schedule_order and the corruption is silent.
+    // Log loudly and change nothing.
+    const usable = rows.filter((r) => r.due_date && r.loading_delivery_date);
+    if (!rows.length || usable.length < rows.length) {
+      await logIngest(env, message.from,
+        `Azamara MLS REFUSED: parsed ${rows.length} rows, ${usable.length} usable ` +
+        `(need a loading date on every row). schedule_order left unchanged. ` +
+        `Body was ${raw.length} bytes, decoded to ${body.length}.`);
       return;
     }
 
-    // The table is usually PASTED into the body, not attached. That is exactly
-    // the case the cims-hon handler returns early on.
-    const rows = parseAzamaraRows(rowsFromHtml(body));
     const notes = notesFromBody(body.replace(/<[^>]+>/g, ' '));
-    if (!rows.length) return;
-
-    const r = await saveAzamara(env.HON, rows, 'azamara-mls');
-    await env.HON.prepare(
-      `INSERT INTO ingest_log (source, sender, note, ts)
-       VALUES ('email', ?, ?, datetime('now'))`
-    ).bind(
-      message.from || 'unknown',
+    const r = await saveAzamara(env.HON, usable, 'azamara-mls');
+    await logIngest(env, message.from,
       `Azamara MLS: ${r.written} rows, ${r.missing} with no PO` +
-        (notes.length ? ` | notes: ${notes.join(' // ')}` : '')
-    ).run().catch(() => {});
+      (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
   },
 
   // ---- Monday 08:00 Miami ----
