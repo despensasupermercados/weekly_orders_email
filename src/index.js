@@ -5,6 +5,15 @@ import {
 import { htmlPartOf } from './lib/mime.js';
 import { voyageStates, actionable, poNotRecorded } from './lib/due.js';
 import { renderWeekly } from './lib/email.js';
+import { runWatchdog } from './lib/watchdog.js';
+import { renderWatchdog } from './lib/watchdogEmail.js';
+
+// MUST match the nightly entry in wrangler.toml exactly. It is the only thing
+// telling the watchdog run apart from the Monday fleet run inside one
+// scheduled() handler. If they ever disagree, the nightly trigger runs the
+// WEEKLY EMAIL every night - which is exactly what happened when the cron was
+// added before this file was.
+const NIGHTLY_CRON = '0 6 * * *';
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const json = (o, s = 200) =>
@@ -35,14 +44,14 @@ async function readAll(stream) {
 // cims-mailer's validate() hard-rejects a payload without templateId, and
 // ALLOWED_FROM holds exactly three senders. Anything a human is waiting on is
 // critical: true.
-async function send(env, to, subject, html) {
+async function send(env, to, subject, html, templateId = 'orders-due-weekly') {
   if (!env.MAILER) return { sent: false, reason: 'MAILER service binding not configured' };
   const res = await env.MAILER.fetch('https://mailer/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       app: 'weekly-orders-email',
-      templateId: 'orders-due-weekly',
+      templateId,
       from: 'CIMS <cims@cims.work>',
       to,
       subject,
@@ -110,10 +119,40 @@ export default {
       (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
   },
 
-  // ---- Monday 08:00 Miami. See wrangler.toml: Cloudflare's day-of-week is
-  // 1-based from Sunday, so Monday is 2, not 1. ----
+  // ---- Two schedules on one handler, split by cron expression ----
+  //   "0 6 * * *"   nightly 02:00 Miami - the watchdog
+  //   "0 12 * * 2"  Monday  08:00 Miami - the fleet email
+  // Cloudflare's day-of-week is 1-based from Sunday, so Monday is 2, not 1.
   async scheduled(event, env, ctx) {
     const today = iso(new Date());
+
+    if (event.cron === NIGHTLY_CRON) {
+      const report = await runWatchdog(env, today, { repair: true });
+      await logIngest(env, 'watchdog',
+        report.healthy
+          ? 'night check clean'
+          : `night check: ${report.counts.critical} critical, ${report.counts.warn} warn, ${report.repairs.length} repaired`);
+      if (report.healthy) return; // silence means healthy
+
+      // The night check is an ENGINEERING digest - stale feeds, format drift,
+      // rows repaired. Ray does not need it and must not get it: he is the
+      // person the fleet email is signed by, and ops noise in his inbox is how
+      // a useful alert becomes something he filters. WATCHDOG_TO is Miguel only.
+      const to = (env.WATCHDOG_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
+      if (!to.length) {
+        await logIngest(env, 'watchdog', 'WATCHDOG_TO is empty. Findings logged, nothing sent.');
+        return;
+      }
+      ctx.waitUntil((async () => {
+        const subject = report.counts.critical
+          ? `Night check - ${report.counts.critical} need${report.counts.critical === 1 ? 's' : ''} a human`
+          : `Night check - ${report.counts.warn} warning${report.counts.warn === 1 ? '' : 's'}, ${report.repairs.length} repaired`;
+        const r = await send(env, to, subject, renderWatchdog(report), 'orders-watchdog-night');
+        if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
+      })());
+      return;
+    }
+
     const { act, html } = await buildWeekly(env, today);
     if (!act.length) return; // nothing due, say nothing
 
@@ -147,6 +186,7 @@ export default {
         today,
         send_to_fleet: env.SEND_TO_FLEET === 'true',
         mailer_configured: Boolean(env.MAILER),
+        watchdog_recipients: Boolean(env.WATCHDOG_TO),
         schedule_rows: (await q('SELECT COUNT(*) n FROM schedule_order')).n,
         azamara_rows: (await q("SELECT COUNT(*) n FROM schedule_order WHERE source='azamara-mls'")).n,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
@@ -177,13 +217,22 @@ export default {
       return json(poNotRecorded(rows));
     }
 
+    // Run every check with repair OFF, so findings can be read before anything
+    // is deleted. ?html=1 renders the digest exactly as it would be mailed.
+    if (url.pathname === '/watchdog') {
+      const report = await runWatchdog(env, today, { repair: false });
+      return url.searchParams.get('html') === '1'
+        ? new Response(renderWatchdog(report), { headers: { 'content-type': 'text/html; charset=utf-8' } })
+        : json(report);
+    }
+
     if (url.pathname === '/states') {
       const rows = await voyageStates(env.HON, today);
       return json(rows);
     }
 
     return new Response(
-      'weekly-orders-email\n\n/health  /preview  /states  /azamara  /po-not-recorded\n',
+      'weekly-orders-email\n\n/health  /preview  /states  /azamara  /po-not-recorded  /watchdog\n',
       { headers: { 'content-type': 'text/plain' } }
     );
   },
