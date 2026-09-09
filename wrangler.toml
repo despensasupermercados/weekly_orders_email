@@ -3,14 +3,19 @@ main = "src/index.js"
 compatibility_date = "2026-09-09"
 compatibility_flags = ["nodejs_compat"]
 
-# CLOUDFLARE'S DAY-OF-WEEK IS 1-BASED FROM SUNDAY: 1=Sun, 2=Mon.
-# "0 12 * * 1" scheduled this for SUNDAY - confirmed against the dashboard's own
-# "next run" line, which read Sun 13 Sep. 12:00 UTC = 08:00 Miami (EDT); Miami is
-# EST Nov-Mar so in winter this lands at 07:00 local.
-# AFTER CHANGING THIS, CHECK THE DASHBOARD SAYS MONDAY. Trust the next-run line,
-# not the expression.
+# TWO SCHEDULES, one handler, split on event.cron inside scheduled().
+#   "0 6 * * *"   nightly 02:00 Miami - the watchdog. Repairs and reports.
+#   "0 12 * * 2"  Monday  08:00 Miami - the fleet email.
+#
+# CLOUDFLARE'S DAY-OF-WEEK IS 1-BASED FROM SUNDAY: 1=Sun, 2=Mon. "0 12 * * 1"
+# scheduled the weekly for SUNDAY - confirmed against the dashboard's own
+# "next run" line. AFTER CHANGING THIS, CHECK THE DASHBOARD SAYS MONDAY. Trust
+# the next-run line, not the expression.
+#
+# If you change the nightly expression, change NIGHTLY_CRON in src/index.js to
+# match or the watchdog run will be treated as the weekly run.
 [triggers]
-crons = ["0 12 * * 2"]
+crons = ["0 6 * * *", "0 12 * * 2"]
 
 [[d1_databases]]
 binding = "HON"
@@ -32,9 +37,10 @@ binding = "MAILER"
 service = "cims-mailer"
 
 [vars]
-# Per-ship addressing is NOT implemented. Setting this to "true" makes the cron
-# log and send nothing, deliberately, rather than post an empty to[] that
+# Per-ship addressing is NOT implemented. Setting this to "true" makes the weekly
+# cron log and send nothing, deliberately, rather than post an empty to[] that
 # cims-mailer rejects with "to[] required".
 SEND_TO_FLEET = "false"
+# Both the weekly email and the night digest go here until that changes.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
