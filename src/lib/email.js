@@ -53,10 +53,26 @@ function rowHtml(row, i) {
   </td></tr>`;
 }
 
-export function renderWeekly(act, all, today) {
+// audience 'fleet' is the dry-run digest to Miguel and Ray and lists every ship.
+// audience 'ship' is what a printer actually receives: their vessel only, no
+// fleet counts, no other ship's business. The two must never be confused - a
+// crew member reading a fleet-wide table looks for their own line, does not
+// find it quickly, and stops opening the email.
+export function renderWeekly(act, all, today, opts = {}) {
+  const forShip = opts.audience === 'ship';
+  const shipName = opts.ship || '';
   const missed = act.filter((r) => r.state === 'MISSED').length;
   const rows = act.map(rowHtml).join('');
   const clean = all.filter((r) => r.state === 'ORDERED').length;
+  const heading = forShip
+    ? `${esc(shipName)} &mdash; order before your container closes`
+    : 'Order before your container closes';
+  const strap = forShip
+    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}`
+    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''} &middot; ${clean} ships clear`;
+  const intro = forShip
+    ? 'Everything below is for your ship and closes within the next seven days. Raise each order in OBP <strong>before the date shown</strong>.'
+    : 'Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders due this week</title></head>
@@ -77,19 +93,19 @@ export function renderWeekly(act, all, today) {
 </td></tr>
 
 <tr><td style="padding:26px 26px 6px;">
-<div style="font-family:${FH};font-size:22px;font-weight:600;color:${NAVY};line-height:1.25;">Order before your container closes</div>
-<div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;">Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''} &middot; ${clean} ships clear</div>
+<div style="font-family:${FH};font-size:22px;font-weight:600;color:${NAVY};line-height:1.25;">${heading}</div>
+<div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;">${strap}</div>
 </td></tr>
 
 <tr><td style="padding:16px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 12px;">Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.</p>
+<p style="margin:0 0 12px;">${intro}</p>
 <p style="margin:0 0 2px;">The due date is the last day the ship's inventory manager will accept an order for that container. After it, nothing can be added &mdash; it becomes an emergency shipment. An order without a PO is not an order.</p>
 </td></tr>
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 14px;">Not listed means nothing closes for you this week. Next run: <strong>Monday 08:00 Miami time</strong>.</p>
+<p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
 <p style="margin:0;">Thank you,<br><strong>Ray Guerra</strong><br><span style="color:${SLATE};">Supply Chain Manager &middot; DG3 Diversified Global Graphics Group</span></p>
 </td></tr>
 

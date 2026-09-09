@@ -37,7 +37,17 @@ const ETA_TO_DATE = "date('1899-12-30', '+' || CAST(i.eta AS INTEGER) || ' days'
 const SQL = `
 WITH eligible AS (
   SELECT ship,
-         voyage,
+         -- GROUP BY A KEY THAT IS NEVER NULL.
+         -- saveAzamara() writes the PO number into the voyage column, and the PO is NULL
+         -- exactly when po_state = 'none' - which IS the Azamara miss signal.
+         -- SQLite groups NULLs together, so GROUP BY ship, voyage collapsed
+         -- every un-PO'd loading a ship had into ONE row carrying only the
+         -- earliest MIN(due_date). Three missed Journey loadings arrived here
+         -- as one. The miss signal was deleting its own evidence.
+         -- Fall back to the loading date: for Azamara the loading IS the unit
+         -- of obligation, since there is no voyage number to key on.
+         COALESCE(voyage, loading_delivery_date, due_date) AS voyage_key,
+         MAX(voyage)                    AS voyage,
          MIN(due_date)                  AS due_date,
          MIN(loading_delivery_date)     AS loading_delivery_date,
          MIN(loading_port)              AS loading_port,
@@ -52,7 +62,7 @@ WITH eligible AS (
    WHERE UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELBIWEEKLYHOTEL%'
       OR UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELMONTHLY%'
       OR mot = 'AZAMARA BWS'
-   GROUP BY ship, voyage
+   GROUP BY ship, COALESCE(voyage, loading_delivery_date, due_date)
 )
 SELECT e.ship, e.voyage, e.due_date, e.loading_delivery_date, e.loading_port,
        e.po_state, e.date_changed, e.mot,
@@ -98,6 +108,7 @@ export function classifyAll(rows, today) {
     for (const r of list) {
       const azamara = r.mot === 'AZAMARA BWS';
       const hasPo = Boolean(r.po_state) && r.po_state !== 'none';
+      const gapAtEntry = lastCovered ? days(r.loading_delivery_date, lastCovered) : null;
       const ordered = azamara ? hasPo : r.order_lines > 0;
 
       let state;
@@ -109,6 +120,15 @@ export function classifyAll(rows, today) {
         lastCovered = r.loading_delivery_date;
       } else if (r.loading_delivery_date < today) {
         state = 'past'; // already sailed, nothing useful to say
+      } else if (!r.due_date) {
+        // NO DUE DATE = NOTHING TO TELL A SHIP.
+        // days_to_due is NULL when due_date is NULL, and `null <= WINDOW_DAYS`
+        // is TRUE in JavaScript because null coerces to 0. This voyage used to
+        // come out as DUE NOW and reach the crew as "Order due" with the date
+        // rendered as an empty string - a warning with no deadline in it, which
+        // hands back the "I didn't know when" answer this whole system exists
+        // to remove. It is an ingest fault, so it goes to engineering.
+        state = 'NO_DUE_DATE';
       } else {
         // Not ordered. Only a risk if skipping it opens a gap longer than this
         // ship normally runs between loadings.
@@ -135,7 +155,11 @@ export function classifyAll(rows, today) {
       out.push({
         ...r,
         state,
-        gap_days: lastCovered ? days(r.loading_delivery_date, lastCovered) : null,
+        // gapAtEntry, not the live `lastCovered`: an ORDERED row updates
+        // lastCovered to its own loading date above, so reading it here
+        // reported every ordered voyage as a zero-day gap from itself.
+        gap_days: gapAtEntry,
+        miss_note: missNote({ ...r, state }),
       });
     }
   }
@@ -151,4 +175,57 @@ export function actionable(rows) {
 // Called from /po-not-recorded so the discrepancy is surfaced, not discarded.
 export function poNotRecorded(rows) {
   return rows.filter((r) => r.state === 'PO_NOT_RECORDED');
+}
+
+// Voyages the ship can do nothing about because OUR data is wrong. They must
+// never reach a crew - a warning with no date in it is worse than silence - and
+// they must never be silently dropped either, which is what used to happen.
+export function dataFaults(rows) {
+  return rows.filter((r) => r.state === 'NO_DUE_DATE');
+}
+
+// WHY it was missed, not just that it was.
+//
+// `miss_note` is empty on every one of the 21 missed orders in cims-order, so
+// misses can be counted and never explained, and a miss you cannot explain
+// cannot be prevented. Everything below is derived from the row itself - no new
+// feed, no new question for Ray.
+//
+// This DERIVES the note. It deliberately does not write it: cims-order's rows
+// belong to cims-order, and the standing guardrail is that each app manages its
+// own. /misses exposes the values so a human can decide to load them.
+export function missNote(r) {
+  if (r.state !== 'MISSED' && r.state !== 'DUE NOW' && r.state !== 'PO_NOT_RECORDED') return null;
+  const bits = [];
+
+  if (r.state === 'PO_NOT_RECORDED') {
+    bits.push(`OBP shows ${r.order_lines} order line${r.order_lines === 1 ? '' : 's'} landing on ${r.loading_delivery_date} but the MLS has no PO against it`);
+    bits.push('sources disagree - a records fix, not a ship failure');
+    return bits.join('; ');
+  }
+
+  const late = r.days_to_due == null ? null : -r.days_to_due;
+  if (r.state === 'MISSED' && late != null) {
+    bits.push(`due ${r.due_date}, ${late} day${late === 1 ? '' : 's'} past the cut-off`);
+  } else if (r.due_date) {
+    bits.push(`due ${r.due_date}`);
+  }
+
+  if (r.gap_days == null) {
+    // No prior covered loading at all. Either the first voyage we can see, or a
+    // ship whose earlier orders have all been received and left the in-transit
+    // list. Worth saying, because it changes how much the gap figure is worth.
+    bits.push('no earlier covered loading in view, so the gap is unmeasured');
+  } else {
+    bits.push(`${r.gap_days} days since the last loading with stock arriving (normal interval is 25-28)`);
+  }
+
+  if (r.date_changed) bits.push('the due date had MOVED since the previous schedule publication');
+  if (r.mot === 'AZAMARA BWS') {
+    bits.push(r.po_state === 'none'
+      ? 'no PO on the MLS and nothing in OBP'
+      : `MLS po_state is "${r.po_state}"`);
+  }
+  if (r.loading_port) bits.push(`loads ${r.loading_port}`);
+  return bits.join('; ');
 }

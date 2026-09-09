@@ -59,4 +59,27 @@ SEND_TO_FLEET = "false"
 #                 alert becomes something he filters.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
 WATCHDOG_TO = "Miguel.Sanmartin@dg3.com"
-VERSION = "0.4.1"
+
+# PER-SHIP ADDRESSING. "Ship = address, address; Ship = address", newlines and
+# # comments allowed. An address is used ONLY if it appears here. Nothing in the
+# code derives a mailbox from a ship name: a guessed address either bounces,
+# which is useless, or lands in a real stranger's inbox carrying another
+# company's operational data, which is worse.
+#
+# A ship due this week with no entry here is NOT dropped - its rows go to
+# DRY_RUN_TO flagged as undeliverable, and the night check reports it.
+#
+# Read GET /fleet before setting SEND_TO_FLEET to true. It prints exactly which
+# ship would receive which address and which ships cannot be reached at all.
+FLEET_MAP = ""
+
+# QUANTITY RULES, off unless a named source confirms the numbers.
+# Colour completeness (four toners) needs no external figure and is ALWAYS on.
+# Waste-box counts and the USA/international buffers are quantities, and every
+# quantity in this estate has a source in the INV_ series. The figures in the
+# 9 Sep handover are a summary, not that source, so they stay off until Ray or
+# INV_04 confirms them. To enable, set this to for example:
+#   {"waste_box": true, "waste_box_base": 12, "waste_box_azamara": 12}
+QUANTITY_RULES = ""
+
+VERSION = "0.5.0"

@@ -18,13 +18,21 @@ function fakeDb(responses, log = []) {
         bind() { return this; },
         async first() { const v = pick(sql); return Array.isArray(v) ? v[0] : v; },
         async all() { const v = pick(sql); return { results: Array.isArray(v) ? v : (v ? [v] : []) }; },
-        async run() { log.push(sql.replace(/\s+/g, ' ').trim().slice(0, 60)); return {}; },
+        // The whole statement, not a 60-character prefix: the scoping bugs this
+        // file pins live in the WHERE clause and the subquery, not the first line.
+        async run() { log.push(sql.replace(/\s+/g, ' ').trim()); return {}; },
       };
     },
   };
 }
 
 const TODAY = '2026-09-10';
+
+// A consumption series that is boring on purpose: the anomaly check must find
+// nothing in it, so any finding in the "clean" case below is a real regression.
+const flatConsumption = ['09-01','09-02','09-03','09-04','09-05','09-06','09-07']
+  .map((d) => ({ ship: 'Summit', item: 'TONER TN-514K BLACK', date: `2026-${d}`, value: 12 }));
+
 const base = [
   ['MAX(snapshot_date) inv', { inv: '2026-09-10', it: '2026-09-10' }],
   ['SUM(CASE WHEN eta GLOB', { n: 2204, bad: 0 }],
@@ -33,9 +41,22 @@ const base = [
   ['HAVING COUNT(*) > 1', []],
   ['MAX(loading_delivery_date) last_load', [{ ship: 'Summit', last_load: '2027-03-28', rows_: 29 }]],
   ['COUNT(DISTINCT ship) n FROM par', { n: 48 }],
+  ["note LIKE 'weekly run%'", { ts: '2026-09-08 12:00:00' }],
   ["sender = 'cron' AND note LIKE '%send%'", { ts: '2026-09-08 12:00:00' }],
   ['%FAILED%', []],
   ['Azamara MLS REFUSED%', []],
+  // The ship-name join. Both sides spell Summit the same way, so nothing is
+  // unmatched and the check stays quiet.
+  ['DISTINCT ship FROM schedule_order', [{ ship: 'Summit' }]],
+  ['DISTINCT ship FROM obp_intransit', [{ ship: 'Summit' }]],
+  ['WITH eligible AS', []],
+  // Column probes. A probe that comes back empty means the check CANNOT RUN,
+  // which is reported - never treated as a clean result.
+  ['PRAGMA table_info(obp_intransit)',
+    ['ship', 'eta', 'snapshot_date', 'item_description', 'qty'].map((name) => ({ name }))],
+  ['PRAGMA table_info(consumption_snapshot)',
+    ['ship', 'item', 'snapshot_date', 'on_hand'].map((name) => ({ name }))],
+  ['FROM consumption_snapshot', flatConsumption.map((r) => ({ ...r }))],
 ];
 const withRow = (frag, val) => base.map(([f, v]) => (f === frag ? [f, val] : [f, v]));
 
@@ -92,9 +113,49 @@ const expired = await runWatchdog(
   TODAY, { repair: false });
 assert.ok(expired.findings.some((f) => f.check === 'schedule_expired'), 'expired schedule must be critical');
 
+// THE OTHER BUG THAT WOULD HAVE DESTROYED DATA. The de-dupe repair's DELETE
+// had no scope: its subquery grouped over the WHOLE table, so a duplicate among
+// OUR rows de-duplicated every other MOT and every other app's rows too.
+const dlog = [];
+await runWatchdog(
+  { HON: fakeDb(withRow('HAVING COUNT(*) > 1',
+    [{ ship: 'Journey', voyage: null, mot: 'AZAMARA BWS', due_date: '2026-10-02', n: 2 }]), dlog) },
+  TODAY, { repair: true });
+const del = dlog.find((q) => q.startsWith('DELETE FROM schedule_order') && q.includes('id NOT IN'));
+assert.ok(del, 'the de-dupe repair must still run');
+const fullDelete = dlog.filter((q) => q.startsWith('DELETE FROM schedule_order'));
+for (const q of fullDelete) {
+  assert.ok(!/DELETE FROM schedule_order WHERE id NOT IN/.test(q),
+    'the de-dupe DELETE must never be unscoped - it would reach other apps rows');
+}
+
+// Ships whose name does not match between the schedule and OBP read as MISSING
+// EVERYTHING, confidently and forever, because the whole ordered test is that
+// join. Silence there is the most expensive kind.
+const join = await runWatchdog(
+  { HON: fakeDb(withRow('DISTINCT ship FROM obp_intransit', [{ ship: 'Allure of the Seas' }])
+      .map(([f, v]) => (f === 'DISTINCT ship FROM schedule_order' ? [f, [{ ship: 'Odyssey' }]] : [f, v]))) },
+  TODAY, { repair: false });
+assert.ok(join.findings.some((f) => f.check === 'ship_join'),
+  'a schedule ship with no OBP name match must be reported');
+
+// A weekly cron that stops firing looks exactly like a quiet week. It must not.
+const silent = await runWatchdog(
+  { HON: fakeDb(withRow("note LIKE 'weekly run%'", { ts: null })) }, TODAY, { repair: false });
+assert.ok(silent.findings.some((f) => f.check === 'weekly_silent'),
+  'a weekly email that has never run must be reported');
+
+// A check that cannot read its columns must say CANNOT RUN, never come back
+// empty and be read as healthy.
+const blind = await runWatchdog(
+  { HON: fakeDb(withRow('PRAGMA table_info(consumption_snapshot)', [])) }, TODAY, { repair: false });
+assert.ok(blind.findings.some((f) => f.check === 'anomaly_blocked'),
+  'a missing table must be reported as blocked, not as clean');
+
 // Clean is clean: only the coverage warning, no criticals, nothing repaired.
 const clean = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });
-assert.equal(clean.findings.length, 1, 'only the 1-of-48 coverage warning is expected here');
+assert.equal(clean.findings.length, 1,
+  `only the 1-of-48 coverage warning is expected here, got: ${clean.findings.map((f) => f.check).join(', ')}`);
 assert.equal(clean.counts.critical, 0);
 assert.equal(clean.repairs.length, 0);
 

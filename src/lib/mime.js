@@ -81,3 +81,46 @@ export function htmlPartOf(raw) {
 }
 
 export const _internals = { decodeQuotedPrintable, decodeBase64, headerValue };
+
+// Attachments, by filename and decoded bytes.
+//
+// Ray was asked to attach the MLS as an .xlsx as well as pasting it, because
+// the attachment keeps the cell colours and colour is data in that file. The
+// Worker does not yet parse the workbook - rowsFromWorkbook() exists and takes
+// the xlsx library by injection, but no library is bundled - so the honest
+// behaviour is to SEE the attachment and say so. An attachment that arrives and
+// is silently ignored is the same failure that discarded eighteen ships'
+// schedules: the file was there, nothing read it, and nothing said anything.
+export function attachmentsOf(raw) {
+  const [head, body] = splitHeadBody(raw);
+  const ctype = headerValue(head, 'Content-Type');
+  const boundary = (ctype.match(/boundary\s*=\s*"?([^";\r\n]+)"?/i) || [])[1];
+  if (!boundary) return [];
+
+  const esc = boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = body.split(new RegExp(`--${esc}(?:--)?\\r?\\n`)).filter(Boolean);
+  const out = [];
+  for (const part of parts) {
+    if (!part || !part.trim()) continue;
+    const [ph, pb] = splitHeadBody(part);
+    const pct = headerValue(ph, 'Content-Type');
+    if (/multipart\//i.test(pct)) { out.push(...attachmentsOf(part)); continue; }
+
+    const disp = headerValue(ph, 'Content-Disposition');
+    const name =
+      (disp.match(/filename\s*=\s*"?([^";\r\n]+)"?/i) || [])[1] ||
+      (pct.match(/name\s*=\s*"?([^";\r\n]+)"?/i) || [])[1] || '';
+    // An inline text/html part is the message, not an attachment.
+    const isAttachment = /attachment/i.test(disp) || (name && !/^text\/(html|plain)/i.test(pct));
+    if (!isAttachment || !name) continue;
+
+    out.push({
+      filename: name.trim(),
+      contentType: pct.split(';')[0].trim(),
+      // Bytes are decoded but not parsed. Whoever wires the workbook path gets
+      // a buffer, not another decoding problem.
+      content: decodeBody(ph, pb),
+    });
+  }
+  return out;
+}

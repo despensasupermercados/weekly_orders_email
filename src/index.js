@@ -1,9 +1,12 @@
 import {
-  isAzamaraMls, rowsFromHtml, rowsFromWorkbook, parseAzamaraRows,
+  isAzamaraMls, rowsFromHtml, parseAzamaraRows,
   notesFromBody, saveAzamara,
 } from './lib/azamaraMls.js';
-import { htmlPartOf } from './lib/mime.js';
-import { voyageStates, actionable, poNotRecorded } from './lib/due.js';
+import { htmlPartOf, attachmentsOf } from './lib/mime.js';
+import { voyageStates, actionable, poNotRecorded, dataFaults, missNote } from './lib/due.js';
+import { planFleetSend } from './lib/fleet.js';
+import { quantityFindings, rulesFrom } from './lib/quantity.js';
+import { anomalyFindings } from './lib/anomaly.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
@@ -91,11 +94,32 @@ export default {
     // raw MIME to the HTML parser drops rows and writes nulls. See lib/mime.js.
     const body = htmlPartOf(raw) || raw;
 
-    if (!isAzamaraMls('', subject, body)) return; // not ours; cims-hon keeps its route
+    // Attachment names are part of the identity test. Ray was asked to attach
+    // the MLS as well as pasting it, and a mail whose subject drifted may still
+    // be identifiable by its filename.
+    const attachments = attachmentsOf(raw);
+    const names = attachments.map((a) => a.filename).join(' ');
+
+    if (!isAzamaraMls(names, subject, body)) {
+      // DO NOT DISCARD SILENTLY. On 9 Sep eighteen ships replied with their
+      // ordering schedules and every one was rejected and thrown away with no
+      // record: not parked, not queued, not recoverable. A one-line log costs
+      // nothing and turns "the files vanished" into "here is what arrived".
+      await logIngest(env, message.from,
+        `not an Azamara MLS, ignored: subject "${subject.slice(0, 90)}"` +
+        (names ? ` | attachments: ${names.slice(0, 140)}` : ' | no attachments'));
+      return; // cims-hon keeps its own route
+    }
 
     // The table is usually PASTED into the body, not attached - exactly the
     // case the cims-hon handler returns early on.
     const rows = parseAzamaraRows(rowsFromHtml(body));
+
+    // The workbook path exists (rowsFromWorkbook, xlsx injected by the caller)
+    // but no library is bundled into this Worker, so an attached .xlsx is NOT
+    // parsed. Say so rather than let it look handled: the attachment keeps the
+    // cell colours, and colour is data in this file.
+    const workbooks = attachments.filter((a) => /\.xlsx?$/i.test(a.filename));
 
     // REFUSE A PARTIAL WRITE. A run that finds the file but parses nothing, or
     // parses rows with no loading date, means the decode or the layout changed.
@@ -108,7 +132,11 @@ export default {
       await logIngest(env, message.from,
         `Azamara MLS REFUSED: parsed ${rows.length} rows, ${usable.length} usable ` +
         `(need a loading date on every row). schedule_order left unchanged. ` +
-        `Body was ${raw.length} bytes, decoded to ${body.length}.`);
+        `Body was ${raw.length} bytes, decoded to ${body.length}.` +
+        (workbooks.length
+          ? ` ${workbooks.length} workbook attachment(s) present (${workbooks.map((w) => w.filename).join(', ')}) ` +
+            `but the workbook parser is not wired in this Worker - the data may be in there.`
+          : ''));
       return;
     }
 
@@ -120,9 +148,13 @@ export default {
   },
 
   // ---- Two schedules on one handler, split by cron expression ----
-  //   "0 6 * * *"   nightly 02:00 Miami - the watchdog
-  //   "0 12 * * 2"  Monday  08:00 Miami - the fleet email
-  // Cloudflare's day-of-week is 1-based from Sunday, so Monday is 2, not 1.
+  //   "0 6 * * *"     nightly 02:00 Miami - the watchdog
+  //   "0 12 * * MON"  Monday  08:00 Miami - the fleet email
+  // The weekly uses the NAME "MON", not a number. Cloudflare's day-of-week
+  // field is 1-7 with 1 = SUNDAY, which is not the Unix convention most people
+  // carry in their head, and "0 12 * * 1" therefore scheduled this for Sunday.
+  // This comment said "0 12 * * 2" long after wrangler.toml had been corrected
+  // to MON; a stale comment about a cron is how the last cron bug survived.
   async scheduled(event, env, ctx) {
     const today = iso(new Date());
 
@@ -153,25 +185,86 @@ export default {
       return;
     }
 
-    const { act, html } = await buildWeekly(env, today);
-    if (!act.length) return; // nothing due, say nothing
+    const { rows, act, html } = await buildWeekly(env, today);
 
-    // FLEET ADDRESSING IS NOT IMPLEMENTED. Setting SEND_TO_FLEET=true must not
-    // silently post an empty to[] that cims-mailer rejects with "to[] required".
-    // Fail loudly instead.
-    if (env.SEND_TO_FLEET === 'true') {
-      await logIngest(env, 'cron',
-        'SEND_TO_FLEET is true but per-ship addressing is not implemented. Nothing sent.');
+    // LOG EVERY WEEKLY RUN, INCLUDING THE QUIET ONES.
+    // This used to return silently when nothing was due, which looks EXACTLY
+    // like the cron not firing - and the cron on this Worker has already been
+    // wrong twice. The watchdog's weekly_silent check reads this line, so a
+    // quiet Monday now proves the run happened instead of proving nothing.
+    const faults = dataFaults(rows);
+    await logIngest(env, 'cron',
+      `weekly run: ${act.length} actionable of ${rows.length} eligible voyages` +
+      (faults.length ? `, ${faults.length} with no due date (engineering)` : ''));
+    if (!act.length) return; // nothing due, say nothing to anybody
+
+    const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
+
+    // ---- DRY RUN: the whole fleet list, to Miguel and Ray only ----
+    if (env.SEND_TO_FLEET !== 'true') {
+      if (!supervisors.length) {
+        await logIngest(env, 'cron', 'DRY_RUN_TO is empty. Nothing sent.');
+        return;
+      }
+      ctx.waitUntil((async () => {
+        const r = await send(env, supervisors, `Orders due this week - ${act.length} to fix`, html);
+        if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+      })());
       return;
     }
-    const to = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
-    if (!to.length) {
-      await logIngest(env, 'cron', 'DRY_RUN_TO is empty. Nothing sent.');
-      return;
+
+    // ---- LIVE: one email per ship, to that ship only ----
+    //
+    // An address is used only if a human put it in FLEET_MAP. Nothing here
+    // derives a mailbox from a ship name: a guessed address either bounces,
+    // which is useless, or reaches a real stranger carrying another company's
+    // operational data, which is worse than useless.
+    //
+    // A ship with no mapping is NOT dropped. Its rows are still in the full
+    // fleet list that goes to the supervisors, the subject line counts them,
+    // and a log line names them - because the ships nobody can reach are the
+    // ones most likely to miss a container.
+    const plan = planFleetSend(act, env.FLEET_MAP);
+    if (!plan.sendable.length) {
+      await logIngest(env, 'cron',
+        `SEND_TO_FLEET is true but NONE of the ${plan.unmapped.length} ships due this week ` +
+        `has an address in FLEET_MAP (${plan.mapped_ships} ships mapped in total). ` +
+        `Nothing sent to the fleet.`);
     }
     ctx.waitUntil((async () => {
-      const r = await send(env, to, `Orders due this week - ${act.length} to fix`, html);
-      if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+      let sent = 0;
+      const failed = [];
+      for (const group of plan.sendable) {
+        const n = group.rows.length;
+        const r = await send(
+          env,
+          group.to,
+          `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`,
+          renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship })
+        );
+        if (r.sent) sent++;
+        else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
+      }
+      // One line per run, not one per ship: the log is evidence, not a feed.
+      await logIngest(env, 'cron',
+        `weekly fleet send: ${sent} of ${plan.sendable.length} ships mailed` +
+        (plan.unmapped.length ? `, ${plan.unmapped.length} unaddressable` : '') +
+        (plan.malformed.length ? `, ${plan.malformed.length} malformed FLEET_MAP entries` : ''));
+      for (const f of failed) await logIngest(env, 'cron', `weekly send FAILED: ${f}`);
+
+      // The supervisors always get the full picture, live or not.
+      if (supervisors.length) {
+        const unreachable = plan.unmapped.flatMap((g) => g.rows);
+        const r = await send(env, supervisors,
+          `Orders due this week - ${act.length} to fix, ${sent} ships mailed` +
+          (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
+          html);
+        if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
+        if (unreachable.length) {
+          await logIngest(env, 'cron',
+            `NOT DELIVERED - no FLEET_MAP entry: ${plan.unmapped.map((g) => g.ship).join(', ')}`);
+        }
+      }
     })());
   },
 
@@ -181,6 +274,7 @@ export default {
 
     if (url.pathname === '/health') {
       const q = async (sql) => (await env.HON.prepare(sql).first()) || {};
+      const fleetMap = planFleetSend([], env.FLEET_MAP);
       return json({
         version: env.VERSION || 'dev',
         today,
@@ -194,7 +288,93 @@ export default {
         // weekly email cannot flag a single Royal or Celebrity ship, whatever
         // the row count says.
         mots_present: (await q('SELECT GROUP_CONCAT(DISTINCT mot) m FROM schedule_order')).m,
+        // Addressing readiness. send_to_fleet true with fleet_mapped 0 means
+        // the Monday cron will reach nobody, which is worth seeing here rather
+        // than discovering from an empty inbox on Tuesday.
+        fleet_mapped: fleetMap.mapped_ships,
+        fleet_map_malformed: fleetMap.malformed.length,
       });
+    }
+
+    // WHO WOULD GET WHAT, before anything is sent. Run this and read it before
+    // ever setting SEND_TO_FLEET to true. Addresses are shown in full because
+    // the whole point is to check them against the real mailboxes.
+    if (url.pathname === '/fleet') {
+      const st = await voyageStates(env.HON, today);
+      const plan = planFleetSend(actionable(st), env.FLEET_MAP);
+      return json({
+        today,
+        send_to_fleet: env.SEND_TO_FLEET === 'true',
+        mapped_ships: plan.mapped_ships,
+        malformed_entries: plan.malformed,
+        would_send: plan.sendable.map((g) => ({
+          ship: g.ship, to: g.to, orders: g.rows.length,
+          due: g.rows.map((r) => `${r.due_date} ${r.state}`),
+        })),
+        // The half that matters most: due this week and unreachable.
+        unaddressable: plan.unmapped.map((g) => ({
+          ship: g.ship, orders: g.rows.length,
+          due: g.rows.map((r) => `${r.due_date} ${r.state}`),
+        })),
+      });
+    }
+
+    // A ship's own email, exactly as that ship would receive it. ?ship=Apex
+    if (url.pathname === '/preview-ship') {
+      const want = url.searchParams.get('ship') || '';
+      const st = await voyageStates(env.HON, today);
+      const plan = planFleetSend(actionable(st), env.FLEET_MAP);
+      const g = [...plan.sendable, ...plan.unmapped]
+        .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
+      if (!want || !g) {
+        return json({
+          error: want ? `no ship matching "${want}" has anything due this week` : 'pass ?ship=',
+          available: [...plan.sendable, ...plan.unmapped].map((x) => x.ship),
+        }, 404);
+      }
+      return new Response(
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship }),
+        { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
+
+    // Does the order that exists actually contain what the ship needs?
+    // ran:false is NOT a clean bill of health - read `reason`.
+    if (url.pathname === '/quantity') {
+      const st = await voyageStates(env.HON, today);
+      return json(await quantityFindings(env.HON, st, rulesFrom(env.QUANTITY_RULES)));
+    }
+
+    // Inventory readings that do not look like this ship's own history.
+    if (url.pathname === '/anomalies') {
+      return json(await anomalyFindings(env.HON));
+    }
+
+    // WHY each miss happened, derived from the row itself.
+    //
+    // This READS ONLY. cims-order's miss ledger belongs to cims-order and the
+    // standing guardrail is that each app manages its own rows, so nothing here
+    // writes `miss_note` - it produces the values a human can decide to load.
+    if (url.pathname === '/misses') {
+      const st = await voyageStates(env.HON, today);
+      const notable = st.filter((r) => r.miss_note);
+      return json({
+        today,
+        population: st.length,
+        explained: notable.length,
+        note: 'read-only: cims-order owns the miss ledger, this Worker does not write to it',
+        misses: notable.map((r) => ({
+          ship: r.ship, voyage: r.voyage, state: r.state,
+          due_date: r.due_date, loading_delivery_date: r.loading_delivery_date,
+          miss_note: r.miss_note,
+        })),
+      });
+    }
+
+    // Voyages our own data has broken - no due date, so nothing can be told to
+    // a ship. Engineering's list, never the crew's.
+    if (url.pathname === '/data-faults') {
+      const st = await voyageStates(env.HON, today);
+      return json({ today, population: st.length, faults: dataFaults(st) });
     }
 
     if (url.pathname === '/azamara') {
@@ -232,7 +412,19 @@ export default {
     }
 
     return new Response(
-      'weekly-orders-email\n\n/health  /preview  /states  /azamara  /po-not-recorded  /watchdog\n',
+      'weekly-orders-email\n\n' +
+      '/health         deploy version, row counts, MOT coverage, addressing readiness\n' +
+      '/preview        the fleet email as HTML, without sending it\n' +
+      '/preview-ship   ?ship=Apex - one ship\'s own email, as that ship would get it\n' +
+      '/fleet          who would be mailed, and which ships are unaddressable\n' +
+      '/states         every eligible voyage and its classification\n' +
+      '/azamara        what the MLS parser currently holds\n' +
+      '/po-not-recorded  MLS and OBP disagree - Ray\'s list, never a ship\'s\n' +
+      '/quantity       does the order that exists contain all four toners\n' +
+      '/anomalies      inventory readings unlike this ship\'s own history\n' +
+      '/misses         why each miss happened (read-only, cims-order owns the ledger)\n' +
+      '/data-faults    voyages with no due date - invisible to the weekly email\n' +
+      '/watchdog       every night check with repair OFF; ?html=1 renders the digest\n',
       { headers: { 'content-type': 'text/plain' } }
     );
   },

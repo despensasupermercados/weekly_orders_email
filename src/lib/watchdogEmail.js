@@ -27,6 +27,14 @@ const CHECK_LABEL = {
   schedule_expiring: 'Schedule running out',
   send_failed: 'Weekly email failed',
   ingest_refused: 'Ingest refused a file',
+  ship_join: 'Ship names do not match',
+  weekly_silent: 'Weekly email did not run',
+  no_due_date: 'Voyage with no due date',
+  quantity: 'Order is incomplete',
+  quantity_blocked: 'Completeness check blocked',
+  anomaly: 'Inventory anomaly',
+  anomaly_blocked: 'Anomaly check blocked',
+  self_check: 'The check itself failed',
 };
 
 function block(title, colour, bg, items) {
