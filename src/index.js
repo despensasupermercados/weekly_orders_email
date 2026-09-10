@@ -349,7 +349,12 @@ export default {
             'unauthenticated. Set ADMIN_KEY as a Worker secret, then pass ?key=<ADMIN_KEY>.',
         }, 503);
       }
-      if (!secretEquals(url.searchParams.get('key'), env.ADMIN_KEY)) {
+      // Header OR query. A browser can only do the query form, which is what
+      // Miguel needs, but a query string lands in browser history and in every
+      // access log that records a URL. Anything scripted should send the header
+      // instead - the same shape cims-hon already uses for x-ingest-token.
+      const given = request.headers.get('x-admin-key') || url.searchParams.get('key');
+      if (!secretEquals(given, env.ADMIN_KEY)) {
         return json({ error: 'unauthorized', detail: 'pass ?key=<ADMIN_KEY>' }, 401);
       }
     }

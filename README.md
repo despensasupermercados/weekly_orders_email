@@ -107,7 +107,10 @@ likely to miss a container.
 ### These endpoints need `ADMIN_KEY`
 
 Every endpoint above except `/health` **refuses to serve without `ADMIN_KEY`**. Set it as a
-Worker secret and pass `?key=<ADMIN_KEY>`.
+Worker secret, then pass it either as the `x-admin-key` header or as `?key=<ADMIN_KEY>`.
+Use the header for anything scripted: a key in a query string is recorded in browser
+history and in every access log that keeps URLs. The query form exists because a browser
+address bar cannot send a header.
 
 They used to be public, and an earlier version of this file recorded that as a decision left
 untaken. It stopped being defensible on 10 Sep 2026, within an hour: `azamara@cims.work` now

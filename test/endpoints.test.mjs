@@ -44,3 +44,16 @@ assert.ok(ok !== 401 && ok !== 503, 'a correct key must pass the gate');
 
 console.log('ok - endpoints: fleet data refuses to serve without ADMIN_KEY, a wrong or absent');
 console.log('     key is rejected, and /health stays open so the deploy check still works');
+
+// The header form, for anything scripted. A key in a query string is recorded
+// in browser history and in access logs; the header is not. Both work, because
+// a browser can only send the query form.
+const hdr = await worker.fetch(
+  new Request('https://w.example/states', { headers: { 'x-admin-key': 'the-real-key' } }),
+  { ADMIN_KEY: 'the-real-key' }).then((r) => r.status).catch(() => 'threw');
+assert.ok(hdr !== 401 && hdr !== 503, 'x-admin-key must be accepted');
+const badHdr = await worker.fetch(
+  new Request('https://w.example/states', { headers: { 'x-admin-key': 'nope' } }),
+  { ADMIN_KEY: 'the-real-key' });
+assert.equal(badHdr.status, 401, 'a wrong header key is still rejected');
+console.log('ok - endpoints: x-admin-key works too, so a script need not put the key in a URL');
