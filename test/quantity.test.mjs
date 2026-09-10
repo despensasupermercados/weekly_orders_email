@@ -72,9 +72,12 @@ const paperOnly = analyseOrder({
 });
 assert.equal(at(paperOnly, 'NO_TONER').severity, 'warn');
 
-// QUANTITY RULES ARE OFF BY DEFAULT. Waste-box counts come from a handover
-// summary, not from a named source, and this estate's first law is that no
-// number is invented. They stay off until Ray or INV_04 confirms them.
+// THE WASTE-BOX RULE IS OFF, AND NOT BECAUSE THE NUMBER IS UNSOURCED.
+// An earlier version of this file said it was. That was wrong: Ray confirmed 12
+// base and 24 on high volume, and INV_06 says exactly 12. It is off because 12
+// is a PAR - what should be ABOARD - while this check reads an ORDER LINE.
+// Comparing an order quantity to a par level is a unit error that would fire on
+// every correctly sized top-up.
 assert.equal(DEFAULT_RULES.waste_box, false);
 assert.equal(DEFAULT_RULES.buffers, false);
 assert.equal(DEFAULT_RULES.colour_completeness, true, 'four colours needs no external figure');
@@ -89,4 +92,4 @@ assert.ok(at(noWaste, 'NO_WASTE_BOX'), 'once enabled, a missing waste box is rep
 assert.equal(rulesFrom('{not json')._invalid, true);
 
 console.log('ok - completeness: a missing colour is critical, an unreadable line is a question,');
-console.log('     and no quantity rule runs on a number without a named source');
+console.log('     and a waste box no longer masks the colour it was hiding');
