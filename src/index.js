@@ -326,6 +326,34 @@ export default {
     const url = new URL(request.url);
     const today = url.searchParams.get('today') || iso(new Date());
 
+    // EVERY OPERATIONAL ENDPOINT IS NOW BEHIND ADMIN_KEY.
+    //
+    // These were public, and that was documented as a decision left untaken
+    // because locking them down changes behaviour something may depend on. On
+    // 10 Sep the calculus changed inside an hour: azamara@cims.work now routes
+    // fleet mail to this Worker, and Workers Builds publishes a preview URL for
+    // every commit. /states, /misses and /azamara return the fleet's ordering
+    // position, ship by ship, to anyone holding one of those URLs. That is a
+    // competitor's view of another company's supply chain.
+    //
+    // FAIL CLOSED. With no ADMIN_KEY set, these refuse rather than serve. An
+    // access control that quietly disables itself when unconfigured is not one.
+    // The crons do not come through fetch(), so the Monday email and the night
+    // check are unaffected either way.
+    const PUBLIC = new Set(['/health', '/']);
+    if (!PUBLIC.has(url.pathname)) {
+      if (!env.ADMIN_KEY) {
+        return json({
+          error: 'ADMIN_KEY is not set',
+          detail: 'This endpoint returns fleet operational data and refuses to serve it ' +
+            'unauthenticated. Set ADMIN_KEY as a Worker secret, then pass ?key=<ADMIN_KEY>.',
+        }, 503);
+      }
+      if (!secretEquals(url.searchParams.get('key'), env.ADMIN_KEY)) {
+        return json({ error: 'unauthorized', detail: 'pass ?key=<ADMIN_KEY>' }, 401);
+      }
+    }
+
     if (url.pathname === '/health') {
       const q = async (sql) => (await env.HON.prepare(sql).first()) || {};
       const fleetMap = planFleetSend([], env.FLEET_MAP);
