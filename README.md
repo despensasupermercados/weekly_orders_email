@@ -17,9 +17,30 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 1. **Cloudflare dashboard → Workers & Pages → Create → Connect to Git**, pick
    `despensasupermercados/weekly_orders_email`, accept the defaults. Every push deploys from then on.
-2. **Email → Email Routing → add a rule** sending a copy of the Azamara MLS mail to this Worker.
-   Easiest is to have Ray also cc `azamara@cims.work` and point that address here, so the
-   existing `obp@cims.work` routing is left alone.
+2. **Create the `azamara@cims.work` routing rule.** This is the one step that has actually
+   failed. Ray was asked to cc the address before the address existed, and on 10 Sep 2026 his
+   MLS bounced back to him:
+
+   ```
+   <azamara@cims.work>: host route1.mx.cloudflare.net said:
+       550 5.1.1 Address does not exist
+   ```
+
+   That error comes from Cloudflare, not from DG3: the MX for `cims.work` is Email Routing and
+   Email Routing has no rule for `azamara`. In the dashboard, on the `cims.work` zone:
+
+   | | |
+   |---|---|
+   | Email → Email Routing → Routing rules → **Create address** | |
+   | Custom address | `azamara@cims.work` |
+   | Action | **Send to a Worker** |
+   | Destination | `weekly-orders-email` |
+
+   Leave the existing `obp@cims.work` rule alone — it belongs to `cims-hon`.
+
+   Then **verify, do not assume**: send any mail to `azamara@cims.work` and check
+   `GET /health`. `mail_received` must go above zero. It counts mails that reached *this*
+   Worker, so it is the only field on that endpoint that proves the route exists.
 
 There is **no mail secret to add.** Sending goes through the `MAILER` service binding to
 `cims-mailer`, which holds the only Resend key in the estate and reads no `Authorization`
@@ -70,7 +91,7 @@ likely to miss a container.
 
 | | |
 |---|---|
-| `/health` | deploy version, row counts, MOT coverage, addressing readiness |
+| `/health` | deploy version, row counts, MOT coverage, addressing readiness, **whether any mail has ever arrived** |
 | `/preview` | the fleet email as HTML, without sending it |
 | `/preview-ship?ship=Apex` | one ship's own email, as that ship would receive it |
 | `/fleet` | who would be mailed, and which ships are unaddressable (addresses masked) |
@@ -161,6 +182,14 @@ mean is dragged by the very outlier it is meant to find. It also reports **how l
 figure has been standing, which was the number that actually mattered on Pursuit.
 
 ## Known gaps
+
+- **`azamara_rows` on `/health` is not evidence the ingest works.** On 10 Sep 2026 it read 14
+  while not one MLS had ever reached this Worker — those rows arrived by another path and
+  nothing can refresh them, so an Azamara date that moves will not be seen. `mail_received` and
+  `last_azamara_mls` are the fields that answer the question `azamara_rows` looks like it
+  answers. The night check reads the same three facts and separates them, because "the route
+  does not exist", "mail arrives but never parses" and "Ray stopped sending" are three
+  different people's problems and a bare silence names none of them.
 
 - **The workbook path is not wired.** An attached `.xlsx` is detected and named in the ingest
   log, not parsed. Bundling an xlsx library into the Worker is the remaining work.

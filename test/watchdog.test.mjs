@@ -3,7 +3,7 @@
 // that a check which silently stops finding things is indistinguishable from a
 // healthy system, so each one is pinned.
 
-import { runWatchdog, ELIGIBLE_MOT_SQL } from '../src/lib/watchdog.js';
+import { runWatchdog, ELIGIBLE_MOT_SQL, AZAMARA_MAX_SILENCE_DAYS } from '../src/lib/watchdog.js';
 import assert from 'node:assert';
 
 // Minimal D1 stand-in: matches on a distinctive fragment of each query.
@@ -45,6 +45,10 @@ const base = [
   ["sender = 'cron' AND note LIKE '%send%'", { ts: '2026-09-08 12:00:00' }],
   ['%FAILED%', []],
   ['Azamara MLS REFUSED%', []],
+  // The mail route. In the clean fixture an MLS arrived recently and mail is
+  // reaching the Worker, so check 9 stays quiet.
+  ["note LIKE 'Azamara MLS:%'", { ts: '2026-09-01 08:00:00' }],
+  ["sender NOT IN ('cron', 'watchdog')", { n: 6, ts: '2026-09-01 08:00:00' }],
   // The ship-name join. Both sides spell Summit the same way, so nothing is
   // unmatched and the check stays quiet.
   ['DISTINCT ship FROM schedule_order', [{ ship: 'Summit' }]],
@@ -151,6 +155,47 @@ const blind = await runWatchdog(
   { HON: fakeDb(withRow('PRAGMA table_info(consumption_snapshot)', [])) }, TODAY, { repair: false });
 assert.ok(blind.findings.some((f) => f.check === 'anomaly_blocked'),
   'a missing table must be reported as blocked, not as clean');
+
+// THE ROUTE THAT NEVER EXISTED. On 10 Sep 2026 Ray's MLS bounced with
+// 550 5.1.1 "Address does not exist": azamara@cims.work had no Email Routing
+// rule, so no mail ever reached this Worker. Every check was clean and /health
+// showed 14 azamara-mls rows, because those had been loaded by another path.
+// A feed that has NEVER delivered must not read as a feed with nothing to say.
+const noRoute = await runWatchdog(
+  { HON: fakeDb(withRow("sender NOT IN ('cron', 'watchdog')", { n: 0, ts: null })
+      .map(([f, v]) => (f === "note LIKE 'Azamara MLS:%'" ? [f, { ts: null }] : [f, v]))) },
+  TODAY, { repair: false });
+const route = noRoute.findings.find((f) => f.check === 'mail_route');
+assert.ok(route, 'a Worker that has never received mail must say so');
+assert.equal(route.severity, 'critical');
+assert.ok(/azamara@cims\.work/.test(route.detail),
+  'the finding must name the address whose route is missing, not just "no mail"');
+
+// A DIFFERENT FAULT WITH THE SAME SYMPTOM. Mail is arriving and none of it
+// parses as an MLS: the route is fine and the identity test or the format is
+// not. Telling Miguel to go fix a Cloudflare rule here would waste the day.
+const noMls = await runWatchdog(
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'", { ts: null })) }, TODAY, { repair: false });
+const parse = noMls.findings.find((f) => f.check === 'mail_route');
+assert.ok(parse, 'mail that never parses as an MLS must be reported');
+assert.ok(!/Email Routing/.test(parse.detail),
+  'this case must NOT blame the route - mail is arriving');
+assert.ok(/ingest_log/.test(parse.detail), 'it must point at the rejected-mail log');
+
+// Ray publishes monthly. Silence past that window is the feed stopping.
+const staleMls = await runWatchdog(
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'", { ts: '2026-06-01 08:00:00' })) },
+  TODAY, { repair: false });
+assert.ok(staleMls.findings.some((f) => f.check === 'mail_route' && f.detail.includes('101 days ago')),
+  'an MLS that stopped arriving must be reported with its age');
+
+// ...and a publication inside the window is silence, not a finding. A check
+// that fires on a healthy month is filtered within two.
+const freshMls = await runWatchdog(
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'",
+    { ts: '2026-08-20 08:00:00' })) }, TODAY, { repair: false });
+assert.ok(!freshMls.findings.some((f) => f.check === 'mail_route'),
+  `${AZAMARA_MAX_SILENCE_DAYS} days is the window, and 21 is inside it`);
 
 // Clean is clean: only the coverage warning, no criticals, nothing repaired.
 const clean = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });

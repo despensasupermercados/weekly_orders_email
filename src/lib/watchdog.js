@@ -28,6 +28,16 @@ export const ELIGIBLE_MOT_SQL = `(
 // report those and leave them alone.
 export const OWNED_SOURCES = "('azamara-mls', 'ordering-schedule')";
 
+// ingest_log IS SHARED. cims-hon's own obp@cims.work route writes into the same
+// table - on 10 Sep 2026 it held forty-odd mails from ships' printers, none of
+// them ours. So "has any mail arrived?" is not a question this Worker can answer
+// by counting rows in that table: it has to count its OWN rows. Everything
+// index.js logs carries this source, and the mail-route check below reads it.
+export const INGEST_SOURCE = 'weekly-orders-email';
+
+// Ray publishes the Azamara MLS monthly. A month plus a week of slack.
+export const AZAMARA_MAX_SILENCE_DAYS = 40;
+
 import { voyageStates, dataFaults, escalations, MISSED_CREW_DAYS } from './due.js';
 import { quantityFindings, rulesFrom } from './quantity.js';
 import { anomalyFindings } from './anomaly.js';
@@ -190,7 +200,52 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       ORDER BY ts DESC LIMIT 5`, today);
   for (const r of refused) add('critical', 'ingest_refused', `${r.ts}: ${r.note}`);
 
-  // ---- 9. Does the ship name in the schedule match the ship name in OBP? ----
+  // ---- 9. Is any mail reaching this Worker at all? ----
+  // THE FAILURE THIS EXISTS FOR. On 10 Sep 2026 Ray's MLS bounced back to Ray:
+  //   550 5.1.1 Address does not exist  (route1.mx.cloudflare.net)
+  // The Cloudflare Email Routing rule for azamara@cims.work had never been
+  // created, so the mail never reached this Worker's email() handler. Not one
+  // MLS has ever been ingested here. Every other check ran clean, because a
+  // feed that has NEVER delivered looks exactly like a feed with nothing new
+  // to say - and /health reported 14 azamara-mls rows the whole time, because
+  // those were loaded by another path. Ray found out. This system did not.
+  //
+  // The three cases are kept apart on purpose: each one is a different person
+  // doing a different thing, and "the feed is quiet" tells nobody which.
+  //   nothing has ever arrived   -> the ROUTE does not exist    (Cloudflare)
+  //   mail arrives, no MLS in it -> the route works, the identity test or the
+  //                                 format does not             (code, or Ray)
+  //   an MLS arrived, long ago   -> Ray has stopped sending     (Ray)
+  const lastMls = await one(hon,
+    `SELECT MAX(ts) ts FROM ingest_log WHERE note LIKE 'Azamara MLS:%'`);
+  const inbound = await one(hon,
+    `SELECT COUNT(*) n, MAX(ts) ts FROM ingest_log
+      WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`);
+  const mlsAge = lastMls.ts
+    ? Math.round((Date.parse(today) - Date.parse(String(lastMls.ts).slice(0, 10))) / 86400000)
+    : null;
+
+  if (!inbound.n) {
+    add('critical', 'mail_route',
+      'no email has EVER reached this Worker. The Azamara MLS arrives by mail and nothing else ' +
+      'feeds it, so this is not a quiet month - the Email Routing rule for azamara@cims.work is ' +
+      'missing or points elsewhere. A bounce on 10 Sep 2026 read 550 5.1.1 "Address does not ' +
+      'exist". Any azamara-mls rows already in schedule_order came from another path and are ' +
+      'frozen: nothing can refresh them, and a date that moves will not be seen.');
+  } else if (mlsAge === null) {
+    add('critical', 'mail_route',
+      `${inbound.n} emails have reached this Worker and NOT ONE was recognised as an Azamara MLS ` +
+      `(the most recent arrived ${inbound.ts}). The route works; the subject and attachment test ` +
+      `or Ray's format does not. Every rejected mail is in ingest_log with its subject - read ` +
+      `those before changing the test.`);
+  } else if (mlsAge > AZAMARA_MAX_SILENCE_DAYS) {
+    add('critical', 'mail_route',
+      `the last Azamara MLS was ingested ${lastMls.ts}, ${mlsAge} days ago. Ray publishes it ` +
+      `monthly, so more than ${AZAMARA_MAX_SILENCE_DAYS} days means it has stopped arriving and ` +
+      `the Azamara due dates are going stale.`);
+  }
+
+  // ---- 10. Does the ship name in the schedule match the ship name in OBP? ----
   // The whole "is it ordered" test is a join on ship name. If the two sources
   // ever spell a ship differently - "Allure of the Seas" against "Allure" -
   // that ship's order_lines is 0 for every voyage and it is reported as MISSING
@@ -210,7 +265,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       `${unmatched.slice(0, 8).join(', ')}${unmatched.length > 8 ? ', ...' : ''}`);
   }
 
-  // ---- 10. Did the weekly run happen at all? ----
+  // ---- 11. Did the weekly run happen at all? ----
   // The weekly cron used to return silently when nothing was due, which is
   // indistinguishable from the cron never firing. That is not hypothetical: a
   // cron on this Worker has already been wrong twice, once pointing at Sunday
@@ -228,7 +283,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       `the last weekly run was ${lastWeekly.ts} (${weeklyAge} days ago) - the Monday cron has stopped`);
   }
 
-  // ---- 11 to 13. Everything that needs the classified voyage list ----
+  // ---- 12 to 14. Everything that needs the classified voyage list ----
   // Wrapped: a failure in an added check must never stop the repairs above from
   // being reported. A watchdog that dies mid-run is a watchdog that lies.
   let states = null;
@@ -239,7 +294,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   }
 
   if (states) {
-    // 11. Rows with no due date. They cannot be shown to a ship - a deadline
+    // 12. Rows with no due date. They cannot be shown to a ship - a deadline
     // warning with no deadline in it is the exact excuse this system removes -
     // so they are an ingest fault and they belong here, not in the fleet email.
     const faults = dataFaults(states);
@@ -261,7 +316,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
         `${stale.slice(0, 5).map((f) => `${f.ship} due ${f.due_date}`).join(', ')}`);
     }
 
-    // 12. Does the order that exists contain what the ship needs?
+    // 13. Does the order that exists contain what the ship needs?
     try {
       const q = await quantityFindings(hon, states, rulesFrom(env.QUANTITY_RULES));
       if (!q.ran) {
@@ -276,7 +331,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     }
   }
 
-  // 13. Inventory anomalies against each ship's own trailing history.
+  // 14. Inventory anomalies against each ship's own trailing history.
   try {
     const a = await anomalyFindings(hon);
     if (!a.ran) add('warn', 'anomaly_blocked', `anomaly check did not run - ${a.reason}`);

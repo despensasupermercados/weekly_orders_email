@@ -8,7 +8,7 @@ import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { renderWeekly } from './lib/email.js';
-import { runWatchdog } from './lib/watchdog.js';
+import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 
 // MUST match the nightly entry in wrangler.toml exactly. It is the only thing
@@ -86,11 +86,16 @@ async function buildWeekly(env, today) {
   return { rows, act, html: renderWeekly(act, rows, today) };
 }
 
+// ingest_log IS SHARED with cims-hon, whose own obp@cims.work route writes rows
+// that look exactly like ours once source said 'email' for both. It did, and the
+// result was that this Worker could not tell "no mail has ever reached me" from
+// "forty mails arrived, none of them mine" - the difference between a missing
+// Cloudflare route and a broken parser. Tag our own rows. See watchdog check 9.
 async function logIngest(env, sender, note) {
   try {
     await env.HON.prepare(
-      `INSERT INTO ingest_log (source, sender, note, ts) VALUES ('email', ?, ?, datetime('now'))`
-    ).bind(sender || 'unknown', note).run();
+      `INSERT INTO ingest_log (source, sender, note, ts) VALUES (?, ?, ?, datetime('now'))`
+    ).bind(INGEST_SOURCE, sender || 'unknown', note).run();
   } catch (_) { /* logging must never block the ingest */ }
 }
 
@@ -311,6 +316,15 @@ export default {
         watchdog_recipients: Boolean(env.WATCHDOG_TO),
         schedule_rows: (await q('SELECT COUNT(*) n FROM schedule_order')).n,
         azamara_rows: (await q("SELECT COUNT(*) n FROM schedule_order WHERE source='azamara-mls'")).n,
+        // THE ROW COUNT ABOVE IS NOT PROOF THE INGEST WORKS. On 10 Sep 2026 it
+        // read 14 while not one MLS had ever reached this Worker - those rows
+        // came in by another path and nothing could refresh them. The mail route
+        // is a separate fact and has to be shown as one.
+        mail_received: (await q(
+          `SELECT COUNT(*) n FROM ingest_log
+            WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`)).n,
+        last_azamara_mls: (await q(
+          "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS:%'")).d,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
         // Coverage, not just row counts. If this shows only AZAMARA BWS then the
         // weekly email cannot flag a single Royal or Celebrity ship, whatever
