@@ -28,7 +28,7 @@ export const ELIGIBLE_MOT_SQL = `(
 // report those and leave them alone.
 export const OWNED_SOURCES = "('azamara-mls', 'ordering-schedule')";
 
-import { voyageStates, dataFaults } from './due.js';
+import { voyageStates, dataFaults, escalations, MISSED_CREW_DAYS } from './due.js';
 import { quantityFindings, rulesFrom } from './quantity.js';
 import { anomalyFindings } from './anomaly.js';
 import { normShip } from './fleet.js';
@@ -245,8 +245,20 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     const faults = dataFaults(states);
     if (faults.length) {
       add('critical', 'no_due_date',
-        `${faults.length} of ${states.length} eligible voyages have NO due date and are invisible to the ` +
-        `weekly email: ${faults.slice(0, 5).map((f) => `${f.ship} ${f.loading_delivery_date}`).join(', ')}`);
+        `${faults.length} of ${states.length} eligible voyages are UNUSABLE - no due date or no loading ` +
+        `date - so they can neither be checked nor told to a ship: ` +
+        `${faults.slice(0, 5).map((f) => `${f.ship} ${f.loading_delivery_date || 'no loading date'} (${f.state})`).join(', ')}`);
+    }
+
+    // Past the cut-off long enough that no crew can act. These leave the weekly
+    // email on purpose; if they left it silently as well, a missed container
+    // would simply stop being mentioned by anything.
+    const stale = escalations(states);
+    if (stale.length) {
+      add('critical', 'escalation',
+        `${stale.length} voyages are more than ${MISSED_CREW_DAYS} days past their cut-off. The ship cannot ` +
+        `order these now - they need an emergency-freight decision: ` +
+        `${stale.slice(0, 5).map((f) => `${f.ship} due ${f.due_date}`).join(', ')}`);
     }
 
     // 12. Does the order that exists contain what the ship needs?

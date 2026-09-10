@@ -103,7 +103,11 @@ export function classifyAll(rows, today) {
 
   const out = [];
   for (const [, list] of byShip) {
-    list.sort((a, b) => (a.loading_delivery_date < b.loading_delivery_date ? -1 : 1));
+    // A comparator that returns 1 for equal elements is INCONSISTENT, and the
+    // whole gap test depends on this order. Return 0 on a tie.
+    list.sort((a, b) =>
+      a.loading_delivery_date < b.loading_delivery_date ? -1
+        : a.loading_delivery_date > b.loading_delivery_date ? 1 : 0);
     let lastCovered = null; // last loading this ship actually has stock arriving for
     for (const r of list) {
       const azamara = r.mot === 'AZAMARA BWS';
@@ -118,6 +122,14 @@ export function classifyAll(rows, today) {
       } else if (azamara && r.order_lines > 0) {
         state = 'PO_NOT_RECORDED'; // Ray's problem, not the ship's
         lastCovered = r.loading_delivery_date;
+      } else if (!r.loading_delivery_date) {
+        // NO LOADING DATE = THE ORDERED TEST CANNOT RUN.
+        // order_lines joins obp_intransit.eta to this column, so a NULL here
+        // matches nothing and the voyage reads as unordered no matter how much
+        // stock is arriving. Every such row was a guaranteed false MISSED, and
+        // the crew email then printed "loads TBC" with an empty date after it.
+        // Our data is broken, not the ship's ordering.
+        state = 'NO_LOADING_DATE';
       } else if (r.loading_delivery_date < today) {
         state = 'past'; // already sailed, nothing useful to say
       } else if (!r.due_date) {
@@ -159,16 +171,43 @@ export function classifyAll(rows, today) {
         // lastCovered to its own loading date above, so reading it here
         // reported every ordered voyage as a zero-day gap from itself.
         gap_days: gapAtEntry,
-        miss_note: missNote({ ...r, state }),
+        // gap_days MUST be passed in. missNote() reads r.gap_days, and the raw
+        // SQL row has no such column, so every note said "the gap is unmeasured"
+        // even when the gap was measured and was the whole point of the note.
+        miss_note: missNote({ ...r, state, gap_days: gapAtEntry }),
       });
     }
   }
   return out.sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
 }
 
+// A MISSED voyage stays MISSED until it sails, and its loading can be months
+// out. Left alone, actionable() put the same dead line in front of the same
+// crew every Monday for two months.
+//
+// The due date is HARD. Once it has passed the printer cannot raise that order,
+// so the crew's action changes from "order this" to "somebody decide about
+// emergency freight" - and that decision is Ray's and Miguel's, not the ship's.
+// Repeating an instruction nobody can act on is precisely how this email gets
+// filtered, which is the one failure the whole design is built to avoid.
+//
+// So a fresh miss goes to the ship, and a stale one becomes an ESCALATION.
+// Nothing is dropped: escalations() is reported to the supervisors and the
+// night check, and every MISSED row stays MISSED in /states and /misses.
+export const MISSED_CREW_DAYS = 21;
+
+const staleMiss = (r) =>
+  r.state === 'MISSED' && r.days_to_due != null && r.days_to_due < -MISSED_CREW_DAYS;
+
 // Goes to the ships.
 export function actionable(rows) {
-  return rows.filter((r) => r.state === 'MISSED' || r.state === 'DUE NOW');
+  return rows.filter((r) => (r.state === 'MISSED' && !staleMiss(r)) || r.state === 'DUE NOW');
+}
+
+// Past the cut-off long enough that the ship can do nothing. Goes to Ray and
+// Miguel, never to a crew.
+export function escalations(rows) {
+  return rows.filter(staleMiss);
 }
 
 // Goes to Ray only: the MLS and OBP disagree about whether an order exists.
@@ -181,7 +220,7 @@ export function poNotRecorded(rows) {
 // never reach a crew - a warning with no date in it is worse than silence - and
 // they must never be silently dropped either, which is what used to happen.
 export function dataFaults(rows) {
-  return rows.filter((r) => r.state === 'NO_DUE_DATE');
+  return rows.filter((r) => r.state === 'NO_DUE_DATE' || r.state === 'NO_LOADING_DATE');
 }
 
 // WHY it was missed, not just that it was.

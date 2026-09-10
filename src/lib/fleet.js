@@ -40,7 +40,20 @@ export function parseFleetMap(text) {
     // A ship name with no address is worse than no entry at all: it looks
     // configured and delivers nothing.
     if (!ship || !addrs.length || !addrs.every(isEmail)) { bad.push(line); continue; }
-    map.set(normShip(ship), { ship, to: addrs });
+
+    // TWO ENTRIES THAT NORMALISE TO THE SAME KEY MUST NOT SILENTLY OVERWRITE.
+    // map.set() kept the last one and dropped the first without a word. That is
+    // either a human listing a ship twice - in which case an address they meant
+    // to use is gone - or two different ships normalising together, in which
+    // case one crew would receive the other crew's orders. Refuse both, report
+    // both, and let the ship fall through to "unaddressable", which is loud.
+    const key = normShip(ship);
+    if (map.has(key)) {
+      bad.push(`${line}   << duplicate of "${map.get(key).ship}" - BOTH IGNORED`);
+      map.delete(key);
+      continue;
+    }
+    map.set(key, { ship, to: addrs });
   }
   return { map, bad };
 }

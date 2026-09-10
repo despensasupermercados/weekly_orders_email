@@ -106,7 +106,11 @@ export function judgeSeries(series, opts = DEFAULTS) {
 export function findAnomalies(rows, opts = DEFAULTS) {
   const by = new Map();
   for (const r of rows) {
-    const k = `${r.ship} ${r.item}`;
+    // A SPACE IS NOT A SAFE DELIMITER. ("Apex", "TONER BLACK") and
+    // ("Apex TONER", "BLACK") produce the same key, which silently merges two
+    // series and poisons both medians. Use a byte that cannot occur in a
+    // description.
+    const k = `${r.ship}\u0000${r.item}`;
     if (!by.has(k)) by.set(k, { ship: r.ship, item: r.item, series: [] });
     by.get(k).series.push({ date: r.date, value: r.value });
   }
@@ -158,6 +162,9 @@ const DATE_COLS = ['snapshot_date', 'date', 'as_of', 'ts'];
 // reported after a fortnight instead of nagging forever.
 export const WINDOW_SNAPSHOTS = 14;
 
+// Above this the read is refused rather than truncated. See the check below.
+export const MAX_ROWS = 200000;
+
 export async function anomalyFindings(hon, opts = DEFAULTS) {
   const probe = await require_(hon, 'consumption_snapshot', ['ship']);
   if (!probe.ok) return { ran: false, reason: probe.reason, findings: [] };
@@ -190,10 +197,26 @@ export async function anomalyFindings(hon, opts = DEFAULTS) {
            ${valueCol} AS value
       FROM consumption_snapshot
      WHERE ${dateCol} IN (SELECT d FROM recent)
-       AND ${valueCol} IS NOT NULL`;
+       AND ${valueCol} IS NOT NULL
+     LIMIT ${MAX_ROWS}`;
 
   const r = await hon.prepare(sql).all();
   const rows = r.results || [];
+  // UNBOUNDED READ. consumption_snapshot is 48 ships x every part x 14
+  // snapshots. On the real table that is a six-figure row count pulled into a
+  // Worker at 02:00, and if it blows the memory or D1's response limit the
+  // whole night check dies. Refuse loudly rather than truncate: a median taken
+  // over an arbitrary slice of a ship's history is a confident wrong answer,
+  // which is the failure this project keeps paying for.
+  if (rows.length >= MAX_ROWS) {
+    return {
+      ran: false,
+      findings: [],
+      reason: `consumption_snapshot returned ${rows.length} rows over ${WINDOW_SNAPSHOTS} snapshots, at or above the ` +
+        `${MAX_ROWS} cap. Judging a subset would give a wrong median, so nothing was judged. ` +
+        `Narrow the scope (fewer snapshots, or item classes that matter) before trusting this check.`,
+    };
+  }
   // An empty read here is itself a finding. The feed check in the watchdog only
   // watches obp_*; consumption_snapshot could stop arriving unnoticed.
   if (!rows.length) {

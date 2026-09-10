@@ -3,7 +3,7 @@ import {
   notesFromBody, saveAzamara,
 } from './lib/azamaraMls.js';
 import { htmlPartOf, attachmentsOf } from './lib/mime.js';
-import { voyageStates, actionable, poNotRecorded, dataFaults, missNote } from './lib/due.js';
+import { voyageStates, actionable, poNotRecorded, dataFaults, escalations, MISSED_CREW_DAYS } from './lib/due.js';
 import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
@@ -205,9 +205,11 @@ export default {
     // wrong twice. The watchdog's weekly_silent check reads this line, so a
     // quiet Monday now proves the run happened instead of proving nothing.
     const faults = dataFaults(rows);
+    const stale = escalations(rows);
     await logIngest(env, 'cron',
       `weekly run: ${act.length} actionable of ${rows.length} eligible voyages` +
-      (faults.length ? `, ${faults.length} with no due date (engineering)` : ''));
+      (stale.length ? `, ${stale.length} past the cut-off by more than ${MISSED_CREW_DAYS} days (escalation, not the crew's)` : '') +
+      (faults.length ? `, ${faults.length} unusable rows (engineering)` : ''));
     if (!act.length) return; // nothing due, say nothing to anybody
 
     const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -246,16 +248,26 @@ export default {
     ctx.waitUntil((async () => {
       let sent = 0;
       const failed = [];
+      // EVERY SEND IS ISOLATED. send() awaits a fetch on the MAILER binding, and
+      // a fetch REJECTS on a transport error rather than returning a status. One
+      // such rejection used to abort this loop, so ship 12 failing meant ships
+      // 13 to 48 were never mailed, no failure was logged, and the supervisor
+      // digest below never ran either - a silent partial send, which is the one
+      // outcome worse than not sending at all.
       for (const group of plan.sendable) {
         const n = group.rows.length;
-        const r = await send(
-          env,
-          group.to,
-          `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`,
-          renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship })
-        );
-        if (r.sent) sent++;
-        else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
+        try {
+          const r = await send(
+            env,
+            group.to,
+            `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`,
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship })
+          );
+          if (r.sent) sent++;
+          else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
+        } catch (e) {
+          failed.push(`${group.ship} -> ${group.to.join(',')}: threw ${String((e && e.message) || e)}`);
+        }
       }
       // One line per run, not one per ship: the log is evidence, not a feed.
       await logIngest(env, 'cron',
@@ -267,11 +279,15 @@ export default {
       // The supervisors always get the full picture, live or not.
       if (supervisors.length) {
         const unreachable = plan.unmapped.flatMap((g) => g.rows);
-        const r = await send(env, supervisors,
-          `Orders due this week - ${act.length} to fix, ${sent} ships mailed` +
-          (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
-          html);
-        if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
+        try {
+          const r = await send(env, supervisors,
+            `Orders due this week - ${act.length} to fix, ${sent} ships mailed` +
+            (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
+            html);
+          if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
+        } catch (e) {
+          await logIngest(env, 'cron', `weekly supervisor send THREW: ${String((e && e.message) || e)}`);
+        }
         if (unreachable.length) {
           await logIngest(env, 'cron',
             `NOT DELIVERED - no FLEET_MAP entry: ${plan.unmapped.map((g) => g.ship).join(', ')}`);
@@ -396,11 +412,24 @@ export default {
       });
     }
 
-    // Voyages our own data has broken - no due date, so nothing can be told to
-    // a ship. Engineering's list, never the crew's.
+    // Voyages our own data has broken - no due date or no loading date, so
+    // nothing can be told to a ship. Engineering's list, never the crew's.
     if (url.pathname === '/data-faults') {
       const st = await voyageStates(env.HON, today);
       return json({ today, population: st.length, faults: dataFaults(st) });
+    }
+
+    // Past the cut-off by more than MISSED_CREW_DAYS. The ship cannot raise
+    // these any more, so they stop going to the crew and become a decision for
+    // Ray and Miguel about emergency freight. Never dropped, just re-addressed.
+    if (url.pathname === '/escalations') {
+      const st = await voyageStates(env.HON, today);
+      return json({
+        today,
+        crew_window_days: MISSED_CREW_DAYS,
+        note: 'the due date is hard - a crew cannot act on these, so they leave the weekly email',
+        escalations: escalations(st),
+      });
     }
 
     if (url.pathname === '/azamara') {
@@ -449,7 +478,8 @@ export default {
       '/quantity       does the order that exists contain all four toners\n' +
       '/anomalies      inventory readings unlike this ship\'s own history\n' +
       '/misses         why each miss happened (read-only, cims-order owns the ledger)\n' +
-      '/data-faults    voyages with no due date - invisible to the weekly email\n' +
+      '/data-faults    voyages with no due or loading date - unusable, engineering only\n' +
+      '/escalations    misses too old for a crew to act on - Ray and Miguel decide\n' +
       '/watchdog       every night check with repair OFF; ?html=1 renders the digest\n',
       { headers: { 'content-type': 'text/plain' } }
     );

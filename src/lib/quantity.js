@@ -47,6 +47,26 @@ const SUFFIX_TO_COLOUR = { K: 'black', C: 'cyan', M: 'magenta', Y: 'yellow' };
 const IS_TONER = /\btoner\b/i;
 const IS_WASTE = /\bwaste\b.*\b(box|bottle|container|toner)\b|\bwb[-\s]?\d/i;
 
+// THE WORD "TONER" IS NOT THE SAME THING AS "A TONER CARTRIDGE".
+//
+// This check was dead on every real order and the test fixture hid it. A
+// WASTE TONER BOX contains the word toner, so it was counted as a toner line;
+// it has no colour, so it landed in `unknown`; and one unknown line suppresses
+// the missing-colour finding entirely. Every real order carries a waste box,
+// so the headline check - "an order can be raised on time and still be missing
+// cyan" - reported TONER_UNREADABLE instead of MISSING_COLOUR, always. Proven
+// against a four-colour order plus a waste box: cyan removed, still no
+// MISSING_COLOUR.
+//
+// The same trap is set by every other part with "toner" in its name. A filter,
+// a hopper or a duct is a Part, not a colour, and none of them should be able
+// to silence the check.
+const TONER_NOT_A_CARTRIDGE =
+  /\b(waste|filter|hopper|duct|assy|assembly|unit|motor|sensor|gear|seal|screw|guide|cover|holder|cleaner|blade|auger|conveyance|suction)\b/i;
+
+const isColourCartridge = (d) =>
+  IS_TONER.test(d) && !IS_WASTE.test(d) && !TONER_NOT_A_CARTRIDGE.test(d);
+
 export function colourOf(description) {
   const d = String(description || '');
   for (const [colour, re] of Object.entries(COLOUR_WORD)) if (re.test(d)) return colour;
@@ -88,7 +108,7 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
   const say = (code, severity, detail) =>
     out.push({ ship, loading_delivery_date, code, severity, detail });
 
-  const toner = lines.filter((l) => IS_TONER.test(l.description));
+  const toner = lines.filter((l) => isColourCartridge(l.description));
 
   if (rules.colour_completeness) {
     if (!toner.length) {

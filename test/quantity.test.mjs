@@ -35,13 +35,30 @@ assert.equal(
   analyseOrder({ ship: 'Apex', loading_delivery_date: '2026-10-09', lines: COLOURS.map((_, i) => toner('KCMY'[i])) })
     .length, 0, 'a complete order must produce no findings at all');
 
+// THE BUG THAT MADE THIS CHECK DEAD ON EVERY REAL ORDER.
+// A WASTE TONER BOX contains the word "toner", so it counted as a toner line;
+// it has no colour, so it landed in `unknown`; and one unknown line suppresses
+// the missing-colour finding. Every real order carries a waste box, so the
+// headline check reported TONER_UNREADABLE instead of MISSING_COLOUR, always.
+// The original fixture used four clean cartridges and nothing else, which is
+// not what an order looks like.
+const realOrder = [toner('K'), toner('C'), toner('M'), toner('Y'),
+  { description: 'WASTE TONER BOX WB-505', qty: 12 },
+  { description: 'TONER SUCTION FILTER', qty: 1 }];
+assert.equal(analyseOrder({ ship: 'Apex', loading_delivery_date: '2026-10-09', lines: realOrder }).length, 0,
+  'a complete order must stay silent even with a waste box and a toner filter on it');
+const realNoCyan = realOrder.filter((l) => !l.description.includes('514C'));
+assert.equal(at(analyseOrder({ ship: 'Apex', loading_delivery_date: '2026-10-09', lines: realNoCyan }), 'MISSING_COLOUR').severity,
+  'critical', 'a missing cyan must survive the waste box that used to mask it');
+
 // An unreadable description means WE could not tell, not that the ship failed.
 // Calling a colour missing on the strength of a description we did not parse is
-// how a check loses its authority in one email.
+// how a check loses its authority in one email. This must be a real CARTRIDGE
+// whose colour will not parse, not a part that merely has "toner" in its name.
 const unreadable = analyseOrder({
   ship: 'Summit',
   loading_delivery_date: '2026-10-09',
-  lines: [toner('K'), toner('C'), toner('M'), { description: 'TONER ASSY SPARE 4062-3001', qty: 1 }],
+  lines: [toner('K'), toner('C'), toner('M'), { description: 'TONER CARTRIDGE 4062-3001', qty: 1 }],
 });
 assert.ok(at(unreadable, 'TONER_UNREADABLE'), 'an unparseable toner line must be reported as unreadable');
 assert.ok(!at(unreadable, 'MISSING_COLOUR'),
