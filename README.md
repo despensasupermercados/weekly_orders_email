@@ -137,10 +137,16 @@ differently on purpose:
 - **Colour completeness** and **an order with no toner at all** are self-evident from the
   order lines. A four-colour press needs four colours. No external figure is required, so
   these are **always on**.
-- **Waste-box counts** and the **USA/international buffers** are quantities, and every
-  quantity in this estate has a named source in the `INV_` series. The figures in the 9 Sep
-  handover are a summary, not that source, so they are **off by default**. Enable them via
-  `QUANTITY_RULES` once Ray or `INV_04` confirms them.
+- **The waste-box rule** stays **off**, and not because the number is unsourced. Ray
+  confirmed 12 base and 24 on high volume, and `INV_06` says the waste box is exactly 12.
+  It is off because 12 is a **par** — what should be *aboard* — and this check reads an
+  **order line**. Comparing an order quantity to a par level is a unit error that would fire
+  on every correctly sized top-up. Enabling it needs the on-hand figure too.
+- **There is no USA/international buffer**, on purpose. The 9 Sep handover called the +3/+4 a
+  nationality rule and an earlier version of this file repeated that. The CIMS Brain corrected
+  it on 7 Sep 2026: transit time exists per port for 192 ports in days, and the buffer follows
+  **delivery frequency and transit time, not nationality** — all five open ports are +3.
+  Implementing it needs the 192-port transit table, still unparsed in R2.
 
 A check that cannot read its columns reports **CANNOT RUN**, never a clean zero. `ran: false`
 on `/quantity` or `/anomalies` is not a clean bill of health — read `reason`.

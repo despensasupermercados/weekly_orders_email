@@ -73,13 +73,17 @@ WATCHDOG_TO = "Miguel.Sanmartin@dg3.com"
 # ship would receive which address and which ships cannot be reached at all.
 FLEET_MAP = ""
 
-# QUANTITY RULES, off unless a named source confirms the numbers.
-# Colour completeness (four toners) needs no external figure and is ALWAYS on.
-# Waste-box counts and the USA/international buffers are quantities, and every
-# quantity in this estate has a source in the INV_ series. The figures in the
-# 9 Sep handover are a summary, not that source, so they stay off until Ray or
-# INV_04 confirms them. To enable, set this to for example:
-#   {"waste_box": true, "waste_box_base": 12, "waste_box_azamara": 12}
+# QUANTITY RULES. Colour completeness (four toners) needs no external figure
+# and is ALWAYS on. The waste-box rule stays OFF, and NOT because the number is
+# unsourced - Ray confirmed 12 base / 24 on high volume, and INV_06 says the
+# waste box is exactly 12. It is off because 12 is a PAR (what should be
+# ABOARD) and this check reads an ORDER LINE. Comparing an order quantity to a
+# par level is a unit error that would fire on every correct top-up.
+#
+# There is no USA/international buffer setting on purpose. The Brain corrected
+# that on 7 Sep 2026: the +3/+4 follows per-port TRANSIT TIME and delivery
+# frequency, not nationality - all five open ports are +3. Implementing it
+# needs the 192-port transit table, still unparsed in R2.
 QUANTITY_RULES = ""
 
 # ADMIN_KEY unmasks the addresses on GET /fleet. Set it as a SECRET, not here.

@@ -12,12 +12,30 @@
 //   * Colour completeness and "an order with no toner at all" are self-evident
 //     from the order lines. A four-colour press needs four colours. No external
 //     figure is required and none is assumed.
-//   * The waste-box counts and the USA/international buffers are QUANTITIES,
-//     and every quantity in this estate has a named source in the INV_ series
-//     that this Worker cannot read. The numbers below come from the 9 Sep 2026
-//     handover note, which is a summary, not the canonical source. They are
-//     therefore OFF by default. Turn them on only after Ray or INV_04 confirms
-//     them, by setting QUANTITY_RULES.
+//   * The waste-box count is a QUANTITY, and it stays OFF. See below - the
+//     figure is confirmed but it is the wrong KIND of number for this check.
+//
+// TWO THINGS THE CIMS BRAIN CORRECTS, READ BEFORE TOUCHING THE RULES:
+//
+//  1. THE +3/+4 IS NOT A NATIONALITY RULE. The 9 Sep handover called it a
+//     "USA / international buffer" and this file repeated that. The Brain
+//     corrected it on 7 Sep 2026: transit time exists per port for 192 ports,
+//     in days, and the buffer follows DELIVERY FREQUENCY and transit time, not
+//     which country the port is in - all five open ports are +3 regardless of
+//     nationality [recDYPEyS01bhp6vR, recO6GtPOyx4uTxYM "THE TONER BUFFER
+//     FOLLOWS DELIVERY FREQUENCY, NOT NATIONALITY", Resolved]. A buffer rule
+//     built on nationality would be wrong on its face, so it is not implemented
+//     here at all. It needs the per-port transit table out of the MLS, which is
+//     still unparsed in R2 [recURyIyYDn8O3yHh, Open].
+//
+//  2. "WASTE BOX 12" IS A PAR, NOT AN ORDER QUANTITY. Ray confirmed the figure
+//     - 12 base, 24 permitted on high volume [recGzzU4LphovQ1ne, recarBWzogzbK7BFO,
+//     and INV_06 "Waste box is EXACTLY 12"] - so the number is no longer
+//     unsourced. But a par is what should be ABOARD, and this check reads an
+//     ORDER LINE. Comparing an order quantity to a par level is a unit error,
+//     and it would fire on every correctly sized top-up. Enabling waste_box
+//     needs the on-hand figure as well as the order, which this module does not
+//     read. Until then it stays off, and the reason is the unit, not the source.
 //
 // That split is deliberate. The alternative - shipping a plausible-looking
 // number - is exactly how this project produced four confident wrong answers in
@@ -82,9 +100,9 @@ export const DEFAULT_RULES = {
   waste_box_base: 12,
   waste_box_high_volume: 24,
   waste_box_azamara: 12,
+  // NOT IMPLEMENTED, and deliberately not named after a country. See note 1
+  // above: the buffer is a per-port transit-time rule, not a nationality rule.
   buffers: false,
-  buffer_usa: 3,
-  buffer_international: 4,
 };
 
 export function rulesFrom(json) {
