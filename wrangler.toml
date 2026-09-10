@@ -53,12 +53,40 @@ SEND_TO_FLEET = "false"
 
 # WHO GETS WHAT. Two different audiences, deliberately separated.
 #   DRY_RUN_TO  - the FLEET email while it is still in dry run. Miguel and Ray.
-#   WATCHDOG_TO - the night check. ENGINEERING ONLY, Miguel. Ray does not need
-#                 stale-feed and format-drift alerts; he is the person the fleet
-#                 email is signed by, and ops noise in his inbox is how a useful
-#                 alert becomes something he filters.
+#   WATCHDOG_TO - the night check. EMPTY ON PURPOSE. See below.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
-WATCHDOG_TO = "Miguel.Sanmartin@dg3.com"
+
+# THE NIGHT CHECK NO LONGER EMAILS ANYONE. Miguel's decision, 10 Sep 2026,
+# after the first digest ever sent.
+#
+# The digest was not wrong - it reported that Allure's schedule ended
+# 2026-04-05 and that 21 of 48 ships had a schedule loaded at all. Both true,
+# both serious. It was addressed to the wrong person at the wrong hour: the
+# fix for either is a schedule from Ray, not a decision Miguel takes at 03:00,
+# and this watchdog HAS NO STATE - it cannot tell that it said the same thing
+# yesterday, so a standing condition would have arrived nightly forever. A
+# nightly mail that always arrives is one that gets filtered, and a filtered
+# watchdog is worse than none: it looks like cover and provides none.
+#
+# scheduled() already handles this value being empty: findings are still
+# computed, repairs still run, and the outcome is written to ingest_log as
+# "WATCHDOG_TO is empty. Findings logged, nothing sent." NOTHING IS LOST HERE,
+# only unaddressed. GET /watchdog still runs every check with repair off.
+#
+# WHAT READS IT NOW: a nightly Claude session hits /watchdog, holds the
+# previous night's findings, and raises only what is NEW or needs a human
+# decision. That reader is outside this Worker.
+#
+# THE RISK THAT CREATES, stated plainly because it is the cost of this choice:
+# this Worker can no longer tell anyone anything by itself. If that reader
+# stops running, the night check goes quiet and the quiet looks identical to
+# healthy - the same ambiguity that let the azamara@cims.work route not exist
+# for weeks while every check reported clean. The reader is therefore required
+# to report on a fixed weekly cadence even when it has nothing to say, so that
+# its silence is itself the alarm.
+#
+# TO PUT IT BACK: restore the address below. One line, no code change.
+WATCHDOG_TO = ""
 
 # PER-SHIP ADDRESSING. "Ship = address, address; Ship = address", newlines and
 # # comments allowed. An address is used ONLY if it appears here. Nothing in the
