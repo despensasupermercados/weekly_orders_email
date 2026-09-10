@@ -99,9 +99,13 @@ async function logIngest(env, sender, note) {
   } catch (_) { /* logging must never block the ingest */ }
 }
 
-export default {
-  // ---- Ray's Azamara MLS lands here ----
-  async email(message, env) {
+// A DELIVERED MAIL MUST NEVER LEAVE NO TRACE. Every path below ends in a
+// logIngest call - but only if it reaches one. htmlPartOf, attachmentsOf and
+// parseAzamaraRows all run BEFORE the first log line and none of them is total.
+// One throw and a mail Cloudflare accepted disappears with no row, no bounce
+// and no error anyone reads, which is indistinguishable from the route not
+// existing. That ambiguity is exactly what cost two days on 10 Sep.
+async function ingestEmail(message, env) {
     const subject = message.headers.get('subject') || '';
 
     let raw = '';
@@ -162,6 +166,23 @@ export default {
     await logIngest(env, message.from,
       `Azamara MLS: ${r.written} rows, ${r.missing} with no PO` +
       (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
+}
+
+export default {
+  // ---- Ray's Azamara MLS lands here ----
+  //
+  // Log the throw, then RETHROW. Rethrowing makes Cloudflare treat the message
+  // as failed, which bounces it to the sender. A bounce is loud and lands with
+  // the one person who can resend it. Swallowing would be quieter and would
+  // lose Ray's file.
+  async email(message, env) {
+    try {
+      await ingestEmail(message, env);
+    } catch (e) {
+      await logIngest(env, message.from,
+        `email handler THREW, message NOT ingested: ${String((e && e.stack) || e).slice(0, 400)}`);
+      throw e;
+    }
   },
 
   // ---- Two schedules on one handler, split by cron expression ----
