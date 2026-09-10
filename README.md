@@ -104,6 +104,15 @@ likely to miss a container.
 | `/data-faults` | voyages with no due date — invisible to the weekly email |
 | `/watchdog` | every night check with repair **off**; `?html=1` renders the digest |
 
+### A push to a branch does NOT change what the live URL serves
+
+Workers Builds deploys a **preview** for a branch push and reaches **production only from
+`main`**. The build log says "production/builds/..." either way, which is what made this
+worth writing down: a security change sitting green on a branch is not in force. On
+10 Sep the `ADMIN_KEY` gate was called live on the strength of a green branch build while
+`weekly-orders-email.sanmartin.workers.dev` was still serving `/states` to anyone who
+asked. Check the Worker's Deployments tab, not the pull request.
+
 ### These endpoints need `ADMIN_KEY`
 
 Every endpoint above except `/health` **refuses to serve without `ADMIN_KEY`**. Set it as a
