@@ -59,4 +59,45 @@ SEND_TO_FLEET = "false"
 #                 alert becomes something he filters.
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
 WATCHDOG_TO = "Miguel.Sanmartin@dg3.com"
-VERSION = "0.4.1"
+
+# PER-SHIP ADDRESSING. "Ship = address, address; Ship = address", newlines and
+# # comments allowed. An address is used ONLY if it appears here. Nothing in the
+# code derives a mailbox from a ship name: a guessed address either bounces,
+# which is useless, or lands in a real stranger's inbox carrying another
+# company's operational data, which is worse.
+#
+# A ship due this week with no entry here is NOT dropped - its rows go to
+# DRY_RUN_TO flagged as undeliverable, and the night check reports it.
+#
+# Read GET /fleet before setting SEND_TO_FLEET to true. It prints exactly which
+# ship would receive which address and which ships cannot be reached at all.
+FLEET_MAP = ""
+
+# QUANTITY RULES. Colour completeness (four toners) needs no external figure
+# and is ALWAYS on. The waste-box rule stays OFF, and NOT because the number is
+# unsourced - Ray confirmed 12 base / 24 on high volume, and INV_06 says the
+# waste box is exactly 12. It is off because 12 is a PAR (what should be
+# ABOARD) and this check reads an ORDER LINE. Comparing an order quantity to a
+# par level is a unit error that would fire on every correct top-up.
+#
+# There is no USA/international buffer setting on purpose. The Brain corrected
+# that on 7 Sep 2026: the +3/+4 follows per-port TRANSIT TIME and delivery
+# frequency, not nationality - all five open ports are +3. Implementing it
+# needs the 192-port transit table, still unparsed in R2.
+QUANTITY_RULES = ""
+
+# ADMIN_KEY unmasks the addresses on GET /fleet. Set it as a SECRET, not here.
+#
+# No endpoint on this Worker has any authentication, and Cloudflare Workers
+# Builds publishes a preview URL for every commit, so anything an endpoint
+# returns is returned to whoever has that URL. /fleet masks crew mailboxes by
+# default for that reason - unmasked it is a harvestable list of every printer
+# in the fleet tied to the ship they sail on. Masked is still enough to check
+# that a ship is mapped and that its domain is right.
+#
+# The other endpoints (/states /preview /misses /azamara /watchdog) are equally
+# public and return operational data, though no personal addresses. Locking
+# those down is a separate decision - it changes behaviour anyone may already
+# depend on - and has not been made here.
+
+VERSION = "0.5.0"
