@@ -164,15 +164,70 @@ function gridHtml(all, today, forShip, shipName) {
       `font-size:12px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(ship)}</td>${cells}</tr>`;
   }).join('');
 
+  // THIS IS AN X-RAY, NOT A TO-DO LIST.
+  //
+  //   "It cannot tell the fleet about 6-month orders that have not been placed.
+  //    If, in November, that ship doesn't have any order, then it's kind of an
+  //    X-ray on the next month, on the next 6 months."
+  //
+  // Nobody has placed a November order in September and nobody should have. A
+  // grid that marks those months as outstanding is crying wolf 180 days out,
+  // and a printer who is told off for something that is not yet their job stops
+  // reading. The section shows the SHAPE of coverage - where stock is landing
+  // and where the calendar is bare - and says in its own first line that a bare
+  // future month is normal.
   const title = forShip ? 'Your next six months' : 'The fleet, next six months';
   return `
 <tr><td style="padding:26px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Loading dates, not due dates. <strong>skip</strong> is a loading your ship does not use &mdash; the cadence is every other one.</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Reference only &mdash; nothing here needs action today. Loading dates, not due dates. <strong>An empty month further out is normal</strong>: those orders are not raised yet. <strong>skip</strong> is a loading ${forShip ? 'your ship does' : 'that ship does'} not use, since the cadence is every other one.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
 <tr><th align="left" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:${SLATE};padding:0 8px 7px 2px;">Ship</th>${head}</tr>
 ${body}
 </table></td></tr>`;
+}
+
+// WILL YOU RUN OUT BEFORE THE NEXT CONTAINER. This is the section the email
+// was missing, and it is the one that matches the objective's demand for "these
+// exact items":
+//
+//   "You have an order coming Wednesday, and you're going to run out of black
+//    toner. You either fix it now, or you wait until the next biweekly order."
+//
+// It reports a DATE, never a quantity. Par is what should be aboard and an
+// order line is a different number; the crew converts two facts - what is on
+// board, what it burns a month - into an order in seconds, and nobody has to
+// sign off on arithmetic they did not write.
+//
+// Ordered soonest-dry first, because that is the order a printer acts in.
+function runsOutHtml(findings, forShip, shipName) {
+  const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
+  if (!list.length) return '';
+  const rows = list.map((f, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    // RED only when nothing at all is on order for it. If something is coming,
+    // late is amber: the crew can still add a line to an open order.
+    const [fg, bg, label] = f.next_loading
+      ? [AMBER, AMBER_BG, 'ADD NOW']
+      : [RED, RED_BG, 'NOTHING ON ORDER'];
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:10px;border-bottom:1px solid ${BORDER};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(f.ship)} &middot; ${esc(f.item)}</td>
+<td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;">${label}</span></td>
+</tr></table>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board, using about <strong>${Math.round(f.rate)}</strong> a month &mdash; runs out around <strong>${fmt(f.stockout)}</strong>.</div>
+<div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
+      ? `The next delivery that could carry it lands ${fmt(f.next_loading)}. Add it to that order before it closes.`
+      : 'Nothing is on order for it at all.'}</div>
+</td></tr>`;
+  }).join('');
+  const title = forShip ? 'You will run out of these' : 'Running out before the next delivery';
+  return `
+<tr><td style="padding:24px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Usage is ${forShip ? 'your' : "each ship's"} own, the greater of last month or the three-month average. Adding a line to an order that has not closed costs nothing. Missing it means waiting for the loading after.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
+</td></tr>`;
 }
 
 // SHIPS WITH NO ORDERING SCHEDULE. 25 of 48 have none, and until now they got
@@ -218,10 +273,12 @@ export function renderWeekly(act, all, today, opts = {}) {
   // That is the header contradicting the body, and the body is the part that
   // matters.
   const gapCount = (opts.gaps || []).filter((g) => !forShip || g.ship === shipName).length;
+  const dryCount = (opts.runsOut || []).filter((f) => !forShip || f.ship === shipName).length;
   const gapBit = gapCount ? ` &middot; ${gapCount} gap${gapCount === 1 ? '' : 's'} to confirm` : '';
+  const dryBit = dryCount ? ` &middot; ${dryCount} running out` : '';
   const strap = forShip
-    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${gapBit}`
-    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${gapBit} &middot; ${clean} ships clear`;
+    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${dryBit}${gapBit}`
+    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${dryBit}${gapBit} &middot; ${clean} ships clear`;
   const intro = forShip
     ? 'Everything below is for your ship and closes within the next seven days. Raise each order in OBP <strong>before the date shown</strong>.'
     : 'Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.';
@@ -248,6 +305,7 @@ ${legendHtml()}
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
 
+${runsOutHtml(opts.runsOut, forShip, shipName)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
 ${gridHtml(all, today, forShip, shipName)}
 

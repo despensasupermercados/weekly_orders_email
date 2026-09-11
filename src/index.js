@@ -8,6 +8,7 @@ import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { unscheduledGaps } from './lib/fallback.js';
+import { fleetRunway } from './lib/runwayDb.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
@@ -99,7 +100,18 @@ async function buildWeekly(env, today) {
     await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
   }
 
-  return { rows, act, gaps, html: renderWeekly(act, rows, today, { gaps }) };
+  // WILL THEY RUN OUT BEFORE THE NEXT CONTAINER. The item-level half of the
+  // objective's "this ship, this voyage, these exact items, this date".
+  let runsOut = [];
+  try {
+    const r = await fleetRunway(env.HON, today);
+    if (r.ran) runsOut = r.findings;
+    else await logIngest(env, 'cron', `runway check did not run: ${r.reason}`);
+  } catch (e) {
+    await logIngest(env, 'cron', `runway check threw: ${String(e && e.message || e)}`);
+  }
+
+  return { rows, act, gaps, runsOut, html: renderWeekly(act, rows, today, { gaps, runsOut }) };
 }
 
 // ingest_log IS SHARED with cims-hon, whose own obp@cims.work route writes rows
@@ -260,7 +272,7 @@ export default {
     // schedule - the run ended here and not one of those ships heard anything.
     // The schedule-free check was dead on arrival, restoring the exact silence
     // it was written to remove.
-    if (!act.length && !gaps.length) return; // genuinely nothing to say
+    if (!act.length && !gaps.length && !runsOut.length) return; // genuinely nothing to say
 
     const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
 
@@ -313,7 +325,7 @@ export default {
             n
               ? `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`
               : `${group.ship}: a gap in your deliveries`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps })
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut })
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
