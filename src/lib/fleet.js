@@ -67,13 +67,24 @@ export function isEmail(s) {
 // Groups the week's actionable rows by ship and resolves each to an address.
 // Returns BOTH halves - what can be sent and what cannot - because the half
 // that cannot be sent is the half that needs a human.
-export function planFleetSend(rows, fleetMapText) {
+// gaps: schedule-free findings for ships that have NO ordering schedule. They
+// carry no voyage rows, so a ship whose only finding is a delivery gap has an
+// empty rows[] - and would never have been planned at all if this function only
+// looked at `rows`. That ship then receives nothing, which is the silence
+// [recOxbIZytNBd64AM] names as the failure the system exists to remove. The 25
+// ships in that position are exactly the ones with no schedule.
+export function planFleetSend(rows, fleetMapText, gaps = []) {
   const { map, bad } = parseFleetMap(fleetMapText);
   const byShip = new Map();
   for (const r of rows) {
     const key = normShip(r.ship);
     if (!byShip.has(key)) byShip.set(key, { ship: r.ship, rows: [] });
     byShip.get(key).rows.push(r);
+  }
+  for (const g of gaps || []) {
+    if (!g || !g.ship) continue;
+    const key = normShip(g.ship);
+    if (!byShip.has(key)) byShip.set(key, { ship: g.ship, rows: [] });
   }
 
   const sendable = [];

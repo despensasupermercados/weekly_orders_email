@@ -146,6 +146,35 @@ ${body}
 </table></td></tr>`;
 }
 
+// SHIPS WITH NO ORDERING SCHEDULE. 25 of 48 have none, and until now they got
+// nothing at all - which reads exactly like "nothing is due for you". The
+// objective record calls that out by name: silence is how an order gets
+// forgotten and an emergency shipment gets paid.
+//
+// This section is deliberately quieter than the action list above it. Without a
+// schedule there is no due date, so it can never say "order by". It asks a
+// question of someone who knows the answer, and says on its face that the
+// evidence is thinner. An instruction we cannot stand behind would cost more
+// credibility than the warning is worth.
+function gapsHtml(gaps, forShip, shipName) {
+  const list = (gaps || []).filter((g) => !forShip || g.ship === shipName);
+  if (!list.length) return '';
+  const rows = list.map((g, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:9px 10px;border-bottom:1px solid ${BORDER};">
+<div style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(g.ship)}</div>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmt(g.after_delivery)}</strong> and <strong>${fmt(g.next_delivery)}</strong> &mdash; ${g.gap_days} days, against this ship's usual ${g.own_interval}.</div>
+</td></tr>`;
+  }).join('');
+  const title = forShip ? 'A gap in your deliveries' : 'Ships with no ordering schedule';
+  return `
+<tr><td style="padding:24px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Read from open orders only, because no ordering schedule is loaded for ${forShip ? 'your ship' : 'these ships'}. There is no due date to quote, so this is a question rather than an instruction: <strong>if a loading in that gap was meant to be ordered, it has not been.</strong></div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
+</td></tr>`;
+}
+
 // find it quickly, and stops opening the email.
 export function renderWeekly(act, all, today, opts = {}) {
   const forShip = opts.audience === 'ship';
@@ -156,9 +185,14 @@ export function renderWeekly(act, all, today, opts = {}) {
   const heading = forShip
     ? `${esc(shipName)} &mdash; order before your container closes`
     : 'Order before your container closes';
+  // A SHIP WHOSE ONLY FINDING IS A DELIVERY GAP MUST NOT READ "0 to raise".
+  // That is the header contradicting the body, and the body is the part that
+  // matters.
+  const gapCount = (opts.gaps || []).filter((g) => !forShip || g.ship === shipName).length;
+  const gapBit = gapCount ? ` &middot; ${gapCount} gap${gapCount === 1 ? '' : 's'} to confirm` : '';
   const strap = forShip
-    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}`
-    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''} &middot; ${clean} ships clear`;
+    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${gapBit}`
+    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${gapBit} &middot; ${clean} ships clear`;
   const intro = forShip
     ? 'Everything below is for your ship and closes within the next seven days. Raise each order in OBP <strong>before the date shown</strong>.'
     : 'Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.';
@@ -184,6 +218,7 @@ ${mastRows()}
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
 
+${gapsHtml(opts.gaps, forShip, shipName)}
 ${gridHtml(all, today, forShip, shipName)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">

@@ -7,6 +7,7 @@ import { voyageStates, actionable, poNotRecorded, dataFaults, escalations, MISSE
 import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
+import { unscheduledGaps } from './lib/fallback.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
@@ -83,7 +84,22 @@ function secretEquals(given, expected) {
 async function buildWeekly(env, today) {
   const rows = await voyageStates(env.HON, today);
   const act = actionable(rows);
-  return { rows, act, html: renderWeekly(act, rows, today) };
+
+  // THE 25 SHIPS WITH NO ORDERING SCHEDULE. Without this they appear nowhere in
+  // this email, which reads to a printer exactly like "nothing is due for you".
+  // [recOxbIZytNBd64AM] names that silence as the failure the whole system
+  // exists to remove. A throw here must not take the email with it: a partial
+  // email beats none, and beats one that quietly loses a section.
+  let gaps = [];
+  try {
+    const g = await unscheduledGaps(env.HON, today);
+    if (g.ran) gaps = g.findings;
+    else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
+  } catch (e) {
+    await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
+  }
+
+  return { rows, act, gaps, html: renderWeekly(act, rows, today, { gaps }) };
 }
 
 // ingest_log IS SHARED with cims-hon, whose own obp@cims.work route writes rows
@@ -264,7 +280,7 @@ export default {
     // fleet list that goes to the supervisors, the subject line counts them,
     // and a log line names them - because the ships nobody can reach are the
     // ones most likely to miss a container.
-    const plan = planFleetSend(act, env.FLEET_MAP);
+    const plan = planFleetSend(act, env.FLEET_MAP, gaps);
     if (!plan.sendable.length) {
       await logIngest(env, 'cron',
         `SEND_TO_FLEET is true but NONE of the ${plan.unmapped.length} ships due this week ` +
@@ -286,8 +302,10 @@ export default {
           const r = await send(
             env,
             group.to,
-            `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship })
+            n
+              ? `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`
+              : `${group.ship}: a gap in your deliveries`,
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps })
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -433,7 +451,12 @@ export default {
     if (url.pathname === '/preview-ship') {
       const want = url.searchParams.get('ship') || '';
       const st = await voyageStates(env.HON, today);
-      const plan = planFleetSend(actionable(st), env.FLEET_MAP);
+      // A ship with no ordering schedule has no voyage rows at all, so without
+      // the gaps it is not in the plan and /preview-ship answers "nothing due"
+      // for 25 of 48 ships - the same silence, in the tool built to check for it.
+      const gq = await unscheduledGaps(env.HON, today).catch(() => ({ ran: false, findings: [] }));
+      const gp = gq.ran ? gq.findings : [];
+      const plan = planFleetSend(actionable(st), env.FLEET_MAP, gp);
       const g = [...plan.sendable, ...plan.unmapped]
         .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
       if (!want || !g) {
@@ -443,7 +466,7 @@ export default {
         }, 404);
       }
       return new Response(
-        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship }),
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp }),
         { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
