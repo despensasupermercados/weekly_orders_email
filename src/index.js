@@ -251,8 +251,16 @@ export default {
     await logIngest(env, 'cron',
       `weekly run: ${act.length} actionable of ${rows.length} eligible voyages` +
       (stale.length ? `, ${stale.length} past the cut-off by more than ${MISSED_CREW_DAYS} days (escalation, not the crew's)` : '') +
+      (gaps.length ? `, ${gaps.length} delivery gaps on ships with no schedule` : '') +
       (faults.length ? `, ${faults.length} unusable rows (engineering)` : ''));
-    if (!act.length) return; // nothing due, say nothing to anybody
+
+    // NOTHING DUE **AND** NO GAPS. I broke this an hour after building the
+    // fallback: the early return tested act.length alone, so on a week like
+    // this one - 0 actionable, 15 delivery gaps across the 25 ships with no
+    // schedule - the run ended here and not one of those ships heard anything.
+    // The schedule-free check was dead on arrival, restoring the exact silence
+    // it was written to remove.
+    if (!act.length && !gaps.length) return; // genuinely nothing to say
 
     const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
 

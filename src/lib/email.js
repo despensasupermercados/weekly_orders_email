@@ -29,13 +29,42 @@ const fmt = (isoDate) => {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// ONE CODE, NOT THREE. [recQ2a7KrEQhosimV, point 3]: "The three-state legend is
+// the same red / yellow / green language as OBP and as the weekly email. Keep
+// the language consistent across all three so the crew learn one code, not
+// three." The crew already read below / correct / above on the statistics file
+// and in OBP.
+//
+// This email used RED for anything inside three days and AMBER beyond it, and
+// NO GREEN ANYWHERE. Every row a printer saw was an alarm colour, there was no
+// "you are covered" state at all, and the vocabulary was a third one they had
+// to learn on top of the two they use. Red for a deadline five days out also
+// spends the colour that has to mean "too late" - after which nothing is left
+// to say it with.
+export const LEGEND = [
+  [RED, RED_BG, 'Below', 'past the cut-off, or nothing on board'],
+  [AMBER, AMBER_BG, 'Order now', 'below the required amount for this loading'],
+  [GREEN_INK, '#EAF5E6', 'Correct', 'an order is raised and arriving'],
+];
+
 function chip(row) {
+  // RED is reserved for past the cut-off. Nothing a crew can still act on is
+  // red, because then red stops meaning "too late".
   if (row.state === 'MISSED') return [RED, RED_BG, 'OVERDUE'];
+  if (row.state === 'ORDERED') return [GREEN_INK, '#EAF5E6', 'ORDERED'];
   const d = row.days_to_due;
   if (d <= 0) return [RED, RED_BG, 'TODAY'];
-  if (d <= 3) return [RED, RED_BG, `${d} DAY${d > 1 ? 'S' : ''}`];
-  return [AMBER, AMBER_BG, `${d} DAYS`];
+  return [AMBER, AMBER_BG, d === 1 ? '1 DAY' : `${d} DAYS`];
 }
+
+// Stated in the email, in the crew's own words, so the colour is readable by
+// someone who has never seen this email before.
+const legendHtml = () => `
+<tr><td style="padding:14px 26px 0;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${LEGEND.map(([fg, bg, label, what]) =>
+  `<td style="padding:0 14px 0 0;"><span style="font-family:${FB};font-size:10px;font-weight:600;color:${fg};background:${bg};padding:2px 6px;">${label}</span>` +
+  `<span style="font-family:${FB};font-size:10px;color:${SLATE};padding-left:5px;">${what}</span></td>`).join('')}</tr></table>
+</td></tr>`;
 
 function rowHtml(row, i) {
   const [fg, bg, label] = chip(row);
@@ -210,6 +239,7 @@ ${mastRows()}
 <div style="font-family:${FH};font-size:22px;font-weight:600;color:${NAVY};line-height:1.25;">${heading}</div>
 <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;">${strap}</div>
 </td></tr>
+${legendHtml()}
 
 <tr><td style="padding:16px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
 <p style="margin:0 0 12px;">${intro}</p>

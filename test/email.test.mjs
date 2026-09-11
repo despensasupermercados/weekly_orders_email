@@ -90,3 +90,36 @@ for (const stale of ['#F4F5F7', '#8F231A', '#8A5B00']) {
 }
 console.log('ok - email: the six-month grid is present and ship-scoped, the letterhead is the');
 console.log('     canonical file, and the brand tokens match the convention');
+
+// ONE CODE, NOT THREE [recQ2a7KrEQhosimV point 3]: "the same red / yellow /
+// green language as OBP and as the weekly email. Keep the language consistent
+// across all three so the crew learn one code, not three."
+import { LEGEND } from '../src/lib/email.js';
+const RED_HEX = '#96281B';
+assert.equal(LEGEND.length, 3, 'three states, the same three the crew already read');
+
+// GREEN MUST EXIST. This email had red and amber only, so every row a printer
+// saw was an alarm colour and there was no "you are covered" state at all -
+// which is the state most of the fleet is in.
+assert.ok(withGrid.includes('#3E7F2E'), 'the green state must appear');
+
+// RED IS RESERVED FOR PAST THE CUT-OFF. It used to fire on anything inside
+// three days, which spends the colour that has to mean "too late" on something
+// the crew can still fix - and then nothing is left to say "too late" with.
+const soon = renderWeekly(
+  [{ ...row('Apex', '2026-09-13', '2026-09-28'), state: 'DUE NOW', days_to_due: 2 }],
+  all, '2026-09-11');
+// The legend always renders red once, so count rather than test presence: a
+// calm week shows red in the key and nowhere else.
+const redCount = (html) => html.split(RED_HEX).length - 1;
+assert.equal(redCount(soon), 1, 'a deadline two days out is amber; red appears only in the legend');
+assert.ok(soon.includes('#B7791F'), 'it is the amber act-now state');
+assert.ok(redCount(overdue) > 1, 'past the cut-off is red in the row, not just the legend');
+
+// The legend is stated in the email, so the colour is readable by someone who
+// has never opened one of these before.
+for (const word of ['Order now', 'Correct']) {
+  assert.ok(withGrid.includes(word), `the legend must name the state "${word}"`);
+}
+console.log('ok - email: red/yellow/green matches the code the crew already read on OBP,');
+console.log('     red is reserved for past the cut-off, and the legend is stated');
