@@ -7,9 +7,16 @@
 //  - Say nothing when there is nothing due. A weekly email that always fires
 //    gets filtered within a month.
 
-const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946';
-const SLATE = '#6B7280', CLOUD = '#F4F5F7', BORDER = '#E5E7EB', BODY = '#374151';
-const RED = '#8F231A', RED_BG = '#FBE7E4', AMBER = '#8A5B00', AMBER_BG = '#FBF0D8';
+// BRAND TOKENS ARE NOT A PALETTE TO TASTE. These are the values in
+// EMAIL-CONVENTION section 3, and three of them had drifted here: cloud was
+// #F4F5F7, red was #8F231A, amber was #8A5B00. Small drifts are exactly how
+// fifteen competing letterheads happened once already.
+import { mastRows } from '../cims-mast.js';
+
+const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946', GREEN_INK = '#3E7F2E';
+const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
+const RED = '#96281B', RED_BG = '#FBE7E4', AMBER = '#B7791F', AMBER_BG = '#FBF0D8';
+const GREY = '#9CA3AF';
 const FH = "'Outfit',Helvetica,Arial,sans-serif";
 const FB = "'DM Sans',Helvetica,Arial,sans-serif";
 
@@ -57,6 +64,88 @@ function rowHtml(row, i) {
 // audience 'ship' is what a printer actually receives: their vessel only, no
 // fleet counts, no other ship's business. The two must never be confused - a
 // crew member reading a fleet-wide table looks for their own line, does not
+// THE SIX-MONTH GRID. The Brain's locked decision for this email is "action
+// list first, SIX-MONTH GRID AS REFERENCE", and the grid was simply missing:
+// the email showed only what closes in the next seven days.
+//
+// Why it matters more than it looks. The action list answers "what do I do this
+// week". The grid answers the question a printer actually has - "when is my next
+// one, and did I already cover it" - and it is the only place a ship can see the
+// biweekly cadence, which is the thing nobody believes until they see their own
+// loadings sitting 25 to 28 days apart. It also makes an expired schedule
+// visible as empty months rather than as silence.
+const MON_LABEL = (d) => `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
+
+const CELL = {
+  ORDERED:          [GREEN_INK, '#EAF5E6', 'ordered'],
+  'DUE NOW':        [AMBER,     AMBER_BG,  'due'],
+  MISSED:           [RED,       RED_BG,    'missed'],
+  PO_NOT_RECORDED:  [SLATE,     CLOUD,     'PO?'],
+  upcoming:         [SLATE,     '#FFFFFF', 'due'],
+  skippable:        [GREY,      '#FFFFFF', 'skip'],
+  past:             [GREY,      '#FFFFFF', 'past'],
+  NO_DUE_DATE:      [RED,       RED_BG,    'no date'],
+  NO_LOADING_DATE:  [RED,       RED_BG,    'no date'],
+};
+
+// Six months starting with the month `today` falls in.
+function monthKeys(today) {
+  const [y, m] = today.split('-').map(Number);
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(Date.UTC(y, m - 1 + i, 1));
+    out.push({ key: d.toISOString().slice(0, 7), label: MON_LABEL(d) });
+  }
+  return out;
+}
+
+function gridHtml(all, today, forShip, shipName) {
+  const months = monthKeys(today);
+  const inWindow = all.filter((r) => r.loading_delivery_date
+    && months.some((mo) => r.loading_delivery_date.startsWith(mo.key))
+    && (!forShip || r.ship === shipName));
+  if (!inWindow.length) return '';
+
+  const ships = [...new Set(inWindow.map((r) => r.ship))].sort();
+  const head = months.map((mo) =>
+    `<th align="center" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;` +
+    `text-transform:uppercase;color:${SLATE};padding:0 4px 7px;">${mo.label}</th>`).join('');
+
+  const body = ships.map((ship, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    const cells = months.map((mo) => {
+      const hits = inWindow
+        .filter((r) => r.ship === ship && r.loading_delivery_date.startsWith(mo.key))
+        .sort((a, b) => (a.loading_delivery_date < b.loading_delivery_date ? -1
+          : a.loading_delivery_date > b.loading_delivery_date ? 1 : 0));
+      if (!hits.length) {
+        return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:6px 4px;` +
+          `font-family:${FB};font-size:11px;color:${BORDER};">&mdash;</td>`;
+      }
+      const pills = hits.map((r) => {
+        const [fg, bg, label] = CELL[r.state] || [SLATE, '#FFFFFF', r.state];
+        const day = Number(r.loading_delivery_date.slice(8, 10));
+        return `<div style="font-family:${FB};font-size:10px;line-height:1.35;color:${fg};` +
+          `background:${bg};padding:2px 5px;margin:1px 0;white-space:nowrap;">` +
+          `${day} ${label}</div>`;
+      }).join('');
+      return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 4px;">${pills}</td>`;
+    }).join('');
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:6px 8px 6px 2px;font-family:${FB};` +
+      `font-size:12px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(ship)}</td>${cells}</tr>`;
+  }).join('');
+
+  const title = forShip ? 'Your next six months' : 'The fleet, next six months';
+  return `
+<tr><td style="padding:26px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Loading dates, not due dates. <strong>skip</strong> is a loading your ship does not use &mdash; the cadence is every other one.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+<tr><th align="left" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:${SLATE};padding:0 8px 7px 2px;">Ship</th>${head}</tr>
+${body}
+</table></td></tr>`;
+}
+
 // find it quickly, and stops opening the email.
 export function renderWeekly(act, all, today, opts = {}) {
   const forShip = opts.audience === 'ship';
@@ -81,16 +170,7 @@ export function renderWeekly(act, all, today, opts = {}) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLOUD}"><tr><td align="center" style="padding:26px 10px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
 
-<tr><td style="padding:0;font-size:0;line-height:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="60%" height="4" bgcolor="${NAVY}" style="background:${NAVY};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-<td width="40%" height="4" bgcolor="${GREEN}" style="background:${GREEN};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-</tr></table></td></tr>
-
-<tr><td bgcolor="${DEEP}" style="background:${DEEP};padding:22px 26px;">
-<div style="font-family:${FH};font-size:20px;font-weight:700;letter-spacing:5px;color:#FFFFFF;line-height:1;">CIMS</div>
-<div style="width:78px;height:2px;background:${GREEN};font-size:0;line-height:0;margin:8px 0 5px;">&nbsp;</div>
-<div style="font-family:${FH};font-size:7px;font-weight:600;letter-spacing:2.2px;color:#95A0AD;line-height:1;">CRUISE INDUSTRY MANAGED SERVICES</div>
-</td></tr>
+${mastRows()}
 
 <tr><td style="padding:26px 26px 6px;">
 <div style="font-family:${FH};font-size:22px;font-weight:600;color:${NAVY};line-height:1.25;">${heading}</div>
@@ -103,6 +183,8 @@ export function renderWeekly(act, all, today, opts = {}) {
 </td></tr>
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
+
+${gridHtml(all, today, forShip, shipName)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
 <p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
