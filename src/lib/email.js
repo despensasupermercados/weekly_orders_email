@@ -7,13 +7,50 @@
 //  - Say nothing when there is nothing due. A weekly email that always fires
 //    gets filtered within a month.
 
-const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946';
-const SLATE = '#6B7280', CLOUD = '#F4F5F7', BORDER = '#E5E7EB', BODY = '#374151';
-const RED = '#8F231A', RED_BG = '#FBE7E4', AMBER = '#8A5B00', AMBER_BG = '#FBF0D8';
+// BRAND TOKENS ARE NOT A PALETTE TO TASTE. These are the values in
+// EMAIL-CONVENTION section 3, and three of them had drifted here: cloud was
+// #F4F5F7, red was #8F231A, amber was #8A5B00. Small drifts are exactly how
+// fifteen competing letterheads happened once already.
+import { mastRows } from '../cims-mast.js';
+import { byFleetOrder } from './fleetStatus.js';
+
+const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946', GREEN_INK = '#3E7F2E';
+const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
+const RED = '#96281B', RED_BG = '#FBE7E4', AMBER = '#B7791F', AMBER_BG = '#FBF0D8';
+const GREY = '#9CA3AF';
 const FH = "'Outfit',Helvetica,Arial,sans-serif";
 const FB = "'DM Sans',Helvetica,Arial,sans-serif";
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// THE WEEKDAY IS THE PART A CREW ACTUALLY HOLDS IN THEIR HEAD.
+// "23 Sep" is an abstraction you have to look up. "Wed 23" is a day you either
+// have already lived or can count to on your fingers, and on a ship - where the
+// date blurs and the day does not - it is the only half of the date that means
+// anything without a calendar. Miguel asked for this format by name.
+const dowOf = (isoDate) => {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+};
+// "Wed 23" - inside the seven-day window, where the month is never in doubt.
+const fmtDow = (isoDate) => (isoDate ? `${dowOf(isoDate)} ${Number(isoDate.slice(8, 10))}` : '');
+// "Wed 23 Sep" - anywhere the date could be next month or later.
+const fmtDowFull = (isoDate) => (isoDate ? `${fmtDow(isoDate)} ${MONTHS[Number(isoDate.slice(5, 7)) - 1]}` : '');
+
+// A DATE BLOCK, NOT A DATE IN A SENTENCE. A reader who does not read still
+// parses a calendar tile: weekday, number, month, stacked. It carries the
+// row's colour, so the deadline and its urgency are one object rather than two
+// things to connect.
+function dateBlock(isoDate, fg, bg) {
+  if (!isoDate) return '';
+  return `<td width="62" bgcolor="${bg}" style="background:${bg};width:62px;padding:7px 4px;text-align:center;">
+<div style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:1.2px;color:${fg};line-height:1.2;">${dowOf(isoDate).toUpperCase()}</div>
+<div style="font-family:${FH};font-size:24px;font-weight:700;color:${fg};line-height:1.1;">${Number(isoDate.slice(8, 10))}</div>
+<div style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;color:${fg};line-height:1.2;">${MONTHS[Number(isoDate.slice(5, 7)) - 1].toUpperCase()}</div>
+</td>`;
+}
 const fmt = (isoDate) => {
   if (!isoDate) return '';
   const [y, m, d] = isoDate.split('-').map(Number);
@@ -22,13 +59,45 @@ const fmt = (isoDate) => {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// ONE CODE, NOT THREE. [recQ2a7KrEQhosimV, point 3]: "The three-state legend is
+// the same red / yellow / green language as OBP and as the weekly email. Keep
+// the language consistent across all three so the crew learn one code, not
+// three." The crew already read below / correct / above on the statistics file
+// and in OBP.
+//
+// This email used RED for anything inside three days and AMBER beyond it, and
+// NO GREEN ANYWHERE. Every row a printer saw was an alarm colour, there was no
+// "you are covered" state at all, and the vocabulary was a third one they had
+// to learn on top of the two they use. Red for a deadline five days out also
+// spends the colour that has to mean "too late" - after which nothing is left
+// to say it with.
+// THE WORDS ARE A REMINDER, NOT A LESSON. Each state carried a full clause of
+// explanation - "past the cut-off, or nothing on board" - which wrapped to two
+// lines and pushed the first real row off the first screen. The colour is the
+// code the crew already read on OBP; two or three words is all the key needs.
+export const LEGEND = [
+  [RED, RED_BG, 'LATE', 'past the due date'],
+  [AMBER, AMBER_BG, 'ORDER NOW', 'before the due date'],
+  [GREEN_INK, '#EAF5E6', 'OK', 'on order'],
+];
+
 function chip(row) {
+  // RED is reserved for past the cut-off. Nothing a crew can still act on is
+  // red, because then red stops meaning "too late".
   if (row.state === 'MISSED') return [RED, RED_BG, 'OVERDUE'];
+  if (row.state === 'ORDERED') return [GREEN_INK, '#EAF5E6', 'ORDERED'];
   const d = row.days_to_due;
   if (d <= 0) return [RED, RED_BG, 'TODAY'];
-  if (d <= 3) return [RED, RED_BG, `${d} DAY${d > 1 ? 'S' : ''}`];
-  return [AMBER, AMBER_BG, `${d} DAYS`];
+  return [AMBER, AMBER_BG, d === 1 ? '1 DAY' : `${d} DAYS`];
 }
+
+// Stated in the email, in the crew's own words, so the colour is readable by
+// someone who has never seen this email before.
+const legendHtml = () => `
+<tr><td style="padding:12px 26px 0;font-family:${FB};font-size:11px;color:${SLATE};line-height:2.1;">${
+  LEGEND.map(([fg, bg, label, what]) =>
+    `<span style="white-space:nowrap;"><span style="font-weight:700;letter-spacing:.4px;color:${fg};background:${bg};padding:2px 6px;">${label}</span> ${what}</span>`
+  ).join('&nbsp;&nbsp; ')}</td></tr>`;
 
 function rowHtml(row, i) {
   const [fg, bg, label] = chip(row);
@@ -39,17 +108,24 @@ function rowHtml(row, i) {
   const what = row.state === 'MISSED'
     ? 'No order raised and the due date has passed.'
     : 'No order raised yet.';
-  return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:14px;border-bottom:1px solid ${BORDER};">
+  // THE DEADLINE LEADS. It used to be the third line, inside a sentence, after
+  // the ship name and a restatement of what the reader could already see from
+  // the colour. The date block is now the first thing in the row and carries
+  // the row's colour, so "when" and "how urgent" are one object.
+  return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:0;border-bottom:1px solid ${BORDER};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
-      <td align="right"><span style="display:inline-block;background:${bg};color:${fg};font-family:${FB};font-size:11px;font-weight:700;letter-spacing:.8px;padding:4px 10px;">${label}</span></td>
+      ${dateBlock(row.due_date, fg, bg)}
+      <td style="padding:10px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
+          <td align="right"><span style="background:${bg};color:${fg};font-family:${FB};font-size:11px;font-weight:700;letter-spacing:.8px;padding:3px 9px;white-space:nowrap;">${label}</span></td>
+        </tr></table>
+        <div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:4px;">${what}</div>
+        <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:5px;line-height:1.5;">
+          Loads ${fmtDowFull(row.loading_delivery_date)} &middot; ${esc(row.loading_port || 'port TBC')}${row.voyage ? ` &middot; ${esc(row.voyage)}` : ''}
+        </div>${moved}
+      </td>
     </tr></table>
-    <div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:4px;">${what}</div>
-    <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;line-height:1.5;">
-      Order due <strong style="color:${fg};">${fmt(row.due_date)}</strong>
-      &middot; loads ${esc(row.loading_port || 'TBC')} ${fmt(row.loading_delivery_date)}
-      ${row.voyage ? `&middot; ${esc(row.voyage)}` : ''}
-    </div>${moved}
   </td></tr>`;
 }
 
@@ -57,52 +133,360 @@ function rowHtml(row, i) {
 // audience 'ship' is what a printer actually receives: their vessel only, no
 // fleet counts, no other ship's business. The two must never be confused - a
 // crew member reading a fleet-wide table looks for their own line, does not
+// THE SIX-MONTH GRID. The Brain's locked decision for this email is "action
+// list first, SIX-MONTH GRID AS REFERENCE", and the grid was simply missing:
+// the email showed only what closes in the next seven days.
+//
+// Why it matters more than it looks. The action list answers "what do I do this
+// week". The grid answers the question a printer actually has - "when is my next
+// one, and did I already cover it" - and it is the only place a ship can see the
+// biweekly cadence, which is the thing nobody believes until they see their own
+// loadings sitting 25 to 28 days apart. It also makes an expired schedule
+// visible as empty months rather than as silence.
+const MON_LABEL = (d) => `${MONTHS[d.getMonth()]}`;
+
+// Six months starting with the month `today` falls in.
+function monthKeys(today) {
+  const [y, m] = today.split('-').map(Number);
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(Date.UTC(y, m - 1 + i, 1));
+    out.push({ key: d.toISOString().slice(0, 7), label: MON_LABEL(d), year: d.getUTCFullYear() });
+  }
+  return out;
+}
+
+// COVERAGE, NOT A TABLE OF LABELS.
+//
+// The first version was a grid of chips reading "12 ordered", "26 skip". Three
+// things were wrong with it and only one was cosmetic.
+//
+// 1. "12 ordered" IS A DATE AND READS AS A QUANTITY. The 12th, ordered. A
+//    printer scanning it sees twelve units ordered. There is no worse failure
+//    in an operational email than a number that means something else.
+// 2. "skip" IS NOT DATA. It is the absence of an obligation, and it filled half
+//    the grid. Forty-odd cells telling the reader "this one does not concern
+//    you" is forty-odd cells of nothing.
+// 3. EVERY CELL HAD EQUAL WEIGHT. About 130 green chips and three amber ones,
+//    so the eye had nowhere to land and the three that mattered were the
+//    hardest to find. That is the catalogued failure: eight hues when the
+//    story is one number. The fix is EMPHASIS - quiet everything that is fine,
+//    and let the holes be the only thing carrying colour.
+//
+// So: ships that are covered every month collapse into ONE LINE of names. Only
+// ships with a hole get a row. The row is six fixed cells, equal height, months
+// anchored above them, so the eye tracks straight down a column. Nothing inside
+// a covered cell - there is nothing to say about it.
+const monthsOf = (rows) => {
+  const by = new Map();
+  for (const r of rows) {
+    if (!r.loading_delivery_date) continue;
+    const k = r.loading_delivery_date.slice(0, 7);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  }
+  return by;
+};
+
+// What one ship's month cell has to say. Order matters: an action outranks
+// coverage, because a month can hold both.
+function cellState(rowsThisMonth, gapsThisMonth) {
+  const act = rowsThisMonth.find((r) => r.state === 'MISSED')
+    || rowsThisMonth.find((r) => r.state === 'DUE NOW');
+  if (act) {
+    const day = Number(act.loading_delivery_date.slice(8, 10));
+    return act.state === 'MISSED'
+      ? { bg: RED_BG, fg: RED, text: `${day} late` }
+      : { bg: AMBER_BG, fg: AMBER, text: `${day} order` };
+  }
+  if (gapsThisMonth.length) return { bg: AMBER_BG, fg: AMBER, text: 'gap' };
+  if (rowsThisMonth.some((r) => r.state === 'ORDERED')) {
+    return { bg: '#EAF5E6', fg: GREEN_INK, text: '' };
+  }
+  return null; // nothing scheduled: normal this far out, and it stays quiet
+}
+
+function coverageHtml(all, today, forShip, shipName, gaps) {
+  const months = monthKeys(today);
+  const keys = new Set(months.map((m) => m.key));
+  const rows = all.filter((r) => r.loading_delivery_date && keys.has(r.loading_delivery_date.slice(0, 7))
+    && (!forShip || r.ship === shipName));
+  if (!rows.length) return '';
+
+  const gapList = (gaps || []).filter((g) => !forShip || g.ship === shipName);
+  const ships = [...new Set(rows.map((r) => r.ship))].sort(byFleetOrder);
+
+  const built = ships.map((ship) => {
+    const by = monthsOf(rows.filter((r) => r.ship === ship));
+    const cells = months.map((mo) => cellState(
+      by.get(mo.key) || [],
+      gapList.filter((g) => g.ship === ship && String(g.next_delivery || '').slice(0, 7) === mo.key)));
+    return { ship, cells, needsEye: cells.some((c) => c && c.text) };
+  });
+
+  // EMPHASIS. A ship with nothing to act on is a name, not a row.
+  const calm = built.filter((b) => !b.needsEye);
+  const loud = built.filter((b) => b.needsEye);
+
+  // ONE SHIP NEEDS NO SHIP COLUMN. On a ship's own email the name column held a
+  // single word under a "SHIP" header and ate 40% of the width, so six months
+  // were squeezed into the right-hand half of a page about one vessel. Dropped,
+  // and the months take the whole width.
+  const W = forShip ? Math.floor(100 / months.length) : 13;
+  // THE YEAR, ONCE, WHERE IT CHANGES. Repeating "26" on all six columns is five
+  // characters of noise per row of the header; dropping it entirely leaves a
+  // reader guessing which January. Mark it only when it turns over.
+  const y0 = months[0].year;
+  const head = months.map((mo) =>
+    `<th width="${W}%" align="center" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;` +
+    `color:${SLATE};padding:0 2px 6px;white-space:nowrap;">${mo.label.toUpperCase()}` +
+    (mo.year !== y0 ? `<span style="font-weight:400;color:#B6BCC4;"> '${String(mo.year).slice(2)}</span>` : '') +
+    `</th>`).join('');
+
+  // A CALM WEEK IS ONE LINE, NOT TWENTY-TWO ROWS. If no ship has anything to act
+  // on, a full grid of green says exactly what a sentence says, at twenty times
+  // the length, and trains the reader to scroll past the section for good. A
+  // ship's own email always keeps its row: one row is its whole reference.
+  if (!forShip && !loud.length) {
+    return `
+<tr><td style="padding:26px 26px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Coverage &mdash; next six months</div>
+<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships on an ordering schedule have a delivery booked every month to ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
+</td></tr>`;
+  }
+
+  const body = (loud.length ? loud : built).map((b, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    const cells = b.cells.map((c) => {
+      if (!c) {
+        return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
+          `<div style="height:${forShip ? 30 : 20}px;line-height:${forShip ? 30 : 20}px;font-family:${FB};font-size:11px;color:#D7DBE0;">&middot;</div></td>`;
+      }
+      return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
+        `<div bgcolor="${c.bg}" style="background:${c.bg};height:${forShip ? 30 : 20}px;line-height:${forShip ? 30 : 20}px;font-family:${FB};` +
+        `font-size:11px;font-weight:${c.text ? 700 : 400};color:${c.fg};white-space:nowrap;">${c.text || '&nbsp;'}</div></td>`;
+    }).join('');
+    const name = forShip ? '' :
+      `<td bgcolor="${zb}" style="background:${zb};padding:5px 8px 5px 2px;font-family:${FB};` +
+      `font-size:13px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(b.ship)}</td>`;
+    return `<tr>${name}${cells}</tr>`;
+  }).join('');
+
+  // A PICTURE PLUS ONE SENTENCE. A strip shows the shape; it does not say what
+  // the shape means, and a reader who is unsure does not act. On a ship's own
+  // email that sentence is the point: how far the cover reaches, in words.
+  let shipLine = '';
+  if (forShip && built.length) {
+    const b = built[0];
+    let lastCovered = -1;
+    b.cells.forEach((c, k) => { if (c) lastCovered = k; });
+    const firstHole = b.cells.findIndex((c) => c && c.text);
+    const say = (t) => `<div style="font-family:${FB};font-size:14px;color:${BODY};padding:12px 4px 0;">${t}</div>`;
+    if (firstHole >= 0) {
+      shipLine = say(`Act in <strong>${months[firstHole].label} ${months[firstHole].year}</strong>.`);
+    } else if (lastCovered >= 0) {
+      shipLine = say(`Stock is on the way up to <strong>${months[lastCovered].label} ${months[lastCovered].year}</strong>.` +
+        (lastCovered < months.length - 1
+          ? ' Nothing is booked after that yet. That is normal &mdash; those orders are not raised.'
+          : ''));
+    }
+  }
+
+  const calmLine = (loud.length && calm.length)
+    ? `<div style="font-family:${FB};font-size:12px;color:${SLATE};padding:10px 4px 0;">` +
+      `<strong style="color:${GREEN_INK};">${calm.length} ship${calm.length === 1 ? '' : 's'} covered every month:</strong> ` +
+      `${calm.map((b) => esc(b.ship)).join(', ')}.</div>`
+    : '';
+
+  const title = forShip ? 'Your next six months' : 'Coverage &mdash; next six months';
+  return `
+<tr><td style="padding:26px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;table-layout:fixed;">
+<tr>${forShip ? '' : `<th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>`}${head}</tr>
+${body}
+</table>${shipLine}${calmLine}</td></tr>`;
+}
+
+// WILL YOU RUN OUT BEFORE THE NEXT CONTAINER. The section that matches the
+// objective's demand for "these exact items":
+//
+//   "You have an order coming Wednesday, and you're going to run out of black
+//    toner. You either fix it now, or you wait until the next biweekly order."
+//
+// It reports a DATE, never a quantity. Par is what should be aboard and an
+// order line is a different number; the crew turns two facts - what is on
+// board, what it burns a month - into an order in seconds.
+function runsOutHtml(findings, forShip, shipName) {
+  const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
+  if (!list.length) return '';
+  const rows = list.map((f, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    // RED only when nothing at all is on order for it. If something is coming,
+    // late is amber: the crew can still add a line to an open order.
+    const [fg, bg, label] = f.next_loading
+      ? [AMBER, AMBER_BG, 'ADD NOW']
+      : [RED, RED_BG, 'NOT ON ORDER'];
+    // The ship name is redundant on a ship's own email, and repeating it on
+    // every row is the kind of noise that makes a page feel long.
+    const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:0;border-bottom:1px solid ${BORDER};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+${dateBlock(f.stockout, fg, bg)}
+<td style="padding:9px 12px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+  <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
+  <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
+  </tr></table>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;">Empty about <strong>${fmtDowFull(f.stockout)}</strong> &middot; <strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month</div>
+  <div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
+      ? `Next delivery ${fmtDowFull(f.next_loading)}. Add it to that order.`
+      : 'Nothing on order for it.'}</div>
+</td></tr></table>
+</td></tr>`;
+  }).join('');
+  const title = forShip ? 'You will run out of these' : 'Running out before the next delivery';
+  return `
+<tr><td style="padding:24px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Adding a line to an order that is still open costs nothing. Miss it and the ship waits for the next loading.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
+</td></tr>`;
+}
+
+// SHIPS WITH NO ORDERING SCHEDULE. 25 of 48 have none, and until now they got
+// nothing at all - which reads exactly like "nothing is due for you". The
+// objective record calls that out by name: silence is how an order gets
+// forgotten and an emergency shipment gets paid.
+//
+// This section is deliberately quieter than the action list above it. Without a
+// schedule there is no due date, so it can never say "order by". It asks a
+// question of someone who knows the answer, and says on its face that the
+// evidence is thinner. An instruction we cannot stand behind would cost more
+// credibility than the warning is worth.
+function gapsHtml(gaps, forShip, shipName) {
+  const list = (gaps || []).filter((g) => !forShip || g.ship === shipName);
+  if (!list.length) return '';
+  const rows = list.map((g, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:9px 10px;border-bottom:1px solid ${BORDER};">
+<div style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(g.ship)}</div>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmtDowFull(g.after_delivery)}</strong> and <strong>${fmtDowFull(g.next_delivery)}</strong> &mdash; ${g.gap_days} days, against this ship's usual ${g.own_interval}.</div>
+</td></tr>`;
+  }).join('');
+  const title = forShip ? 'A gap in your deliveries' : 'Ships with no ordering schedule';
+  return `
+<tr><td style="padding:24px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Read from open orders only, because no ordering schedule is loaded for ${forShip ? 'your ship' : 'these ships'}. There is no due date to quote, so this is a question rather than an instruction: <strong>if a loading in that gap was meant to be ordered, it has not been.</strong></div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
+</td></tr>`;
+}
+
 // find it quickly, and stops opening the email.
 export function renderWeekly(act, all, today, opts = {}) {
   const forShip = opts.audience === 'ship';
   const shipName = opts.ship || '';
   const missed = act.filter((r) => r.state === 'MISSED').length;
   const rows = act.map(rowHtml).join('');
-  const clean = all.filter((r) => r.state === 'ORDERED').length;
+  // "102 ships clear" ON A 48-SHIP FLEET. This counted ORDERED **voyages** and
+  // printed them as ships, so the header of the email announced a number that
+  // cannot exist. A reader who spots that stops believing the rest of the page,
+  // and they are right to. Count ships.
+  const troubled = new Set([
+    ...act.map((r) => r.ship),
+    ...(opts.runsOut || []).map((f) => f.ship),
+    ...(opts.gaps || []).map((g) => g.ship),
+  ]);
+  // AND COUNT THE RIGHT SHIPS. `all` is the classified voyage rows, which exist
+  // only for ships with an ordering schedule - 27 of the 47 in service. So a
+  // fleet email read "18 of 27 ships clear" while the runway check had in fact
+  // measured all 48 and the gap check another 19. The denominator has to be
+  // every ship this run actually looked at, or the header is quietly reporting
+  // on a smaller fleet than the one reading it.
+  const checked = new Set([
+    ...all.map((r) => r.ship),
+    ...(opts.checked || []),
+  ]);
+  const clean = [...checked].filter((sh) => !troubled.has(sh)).length;
+  // WRITTEN FOR THE PERSON WHO READS IT. The crew are Filipino printer
+  // specialists reading English as a second language, often on a phone, at the
+  // start of a shift. The old version opened with two dense paragraphs of
+  // policy before a single actionable line, and sentences like "the last day
+  // the ship's inventory manager will accept an order for that container" -
+  // three subordinate clauses deep.
+  //
+  // Short words. One idea a line. The instruction first, the policy in the
+  // small print at the bottom where it belongs. Everything the reader needs in
+  // the first screen: is there something for me, what, and by when.
+  // A SHIP WHOSE ONLY FINDING IS A DELIVERY GAP MUST NOT READ "0 to do". That
+  // is the header contradicting the body, and the body is the part that matters.
+  const gapCount = (opts.gaps || []).filter((g) => !forShip || g.ship === shipName).length;
+  const dryCount = (opts.runsOut || []).filter((f) => !forShip || f.ship === shipName).length;
+  const todo = act.length + dryCount + gapCount;
+  // NAME THE WINDOW, NOT THE SEND DATE. "Orders due - 11 Sep" is the day the
+  // email went out, which tells the reader nothing about what it covers. This
+  // report looks at the next seven days, so it should say which seven: a crew
+  // member who knows the window knows whether their date is inside it without
+  // working anything out.
+  const last = new Date(Date.parse(today + 'T00:00:00Z') + 6 * 86400000).toISOString().slice(0, 10);
+  const window = `${fmtDowFull(today)} to ${fmtDowFull(last)}`;
   const heading = forShip
-    ? `${esc(shipName)} &mdash; order before your container closes`
-    : 'Order before your container closes';
-  const strap = forShip
-    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}`
-    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''} &middot; ${clean} ships clear`;
-  const intro = forShip
-    ? 'Everything below is for your ship and closes within the next seven days. Raise each order in OBP <strong>before the date shown</strong>.'
-    : 'Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.';
+    ? `${esc(shipName)} &mdash; ${todo} to do`
+    : 'Orders due this week';
+  const gapBit = gapCount ? ` &middot; ${gapCount} gap${gapCount === 1 ? '' : 's'} to confirm` : '';
+  const dryBit = dryCount ? ` &middot; ${dryCount} running out` : '';
+  const bits = [
+    act.length ? `${act.length} to order` : null,
+    missed ? `${missed} late` : null,
+    dryCount ? `${dryCount} running out` : null,
+    gapCount ? `${gapCount} to check` : null,
+  ].filter(Boolean);
+  const counts = forShip
+    ? (bits.join(' &middot; ') || 'Nothing to do this week')
+    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${checked.size} ships clear`;
+  const strap = `${window} &middot; ${counts}`;
+  // THE PREHEADER IS THE FIRST AND OFTEN THE ONLY LINE READ. On a phone it sits
+  // next to the subject in the inbox list, before anyone opens anything. It was
+  // hardcoded to act.length, so the 12 Sep fleet email - 39 items running out
+  // across 15 ships, 3 gaps to confirm - announced itself as
+  // "0 orders to raise before the container closes." An email that argues
+  // against its own contents in the inbox list does not get opened again.
+  const plain = [
+    act.length ? `${act.length} to order` : null,
+    dryCount ? `${dryCount} running out` : null,
+    gapCount ? `${gapCount} to check` : null,
+  ].filter(Boolean).join(', ');
+  const preheader = todo
+    ? `${todo} to do this week: ${plain}.`
+    : 'Nothing closes for you this week.';
+  const intro = 'Order in OBP <strong>before the date shown</strong>.';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders due this week</title></head>
 <body style="margin:0;padding:0;background:${CLOUD};" bgcolor="${CLOUD}">
-<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">${act.length} order${act.length === 1 ? '' : 's'} to raise before the container closes.</div>
+<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLOUD}"><tr><td align="center" style="padding:26px 10px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
 
-<tr><td style="padding:0;font-size:0;line-height:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="60%" height="4" bgcolor="${NAVY}" style="background:${NAVY};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-<td width="40%" height="4" bgcolor="${GREEN}" style="background:${GREEN};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-</tr></table></td></tr>
-
-<tr><td bgcolor="${DEEP}" style="background:${DEEP};padding:22px 26px;">
-<div style="font-family:${FH};font-size:20px;font-weight:700;letter-spacing:5px;color:#FFFFFF;line-height:1;">CIMS</div>
-<div style="width:78px;height:2px;background:${GREEN};font-size:0;line-height:0;margin:8px 0 5px;">&nbsp;</div>
-<div style="font-family:${FH};font-size:7px;font-weight:600;letter-spacing:2.2px;color:#95A0AD;line-height:1;">CRUISE INDUSTRY MANAGED SERVICES</div>
-</td></tr>
+${mastRows()}
 
 <tr><td style="padding:26px 26px 6px;">
 <div style="font-family:${FH};font-size:22px;font-weight:600;color:${NAVY};line-height:1.25;">${heading}</div>
 <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;">${strap}</div>
 </td></tr>
+${legendHtml()}
 
-<tr><td style="padding:16px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 12px;">${intro}</p>
-<p style="margin:0 0 2px;">The due date is the last day the ship's inventory manager will accept an order for that container. After it, nothing can be added &mdash; it becomes an emergency shipment. An order without a PO is not an order.</p>
+<tr><td style="padding:14px 26px 0;font-family:${FB};font-size:15px;line-height:1.5;color:${BODY};">
+<p style="margin:0;">${intro}</p>
 </td></tr>
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
+
+${runsOutHtml(opts.runsOut, forShip, shipName)}
+${gapsHtml(opts.gaps, forShip, shipName)}
+${coverageHtml(all, today, forShip, shipName, opts.gaps)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
 <p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
@@ -110,7 +494,9 @@ export function renderWeekly(act, all, today, opts = {}) {
 </td></tr>
 
 <tr><td style="padding:22px 26px 28px;"><div style="border-top:1px solid ${BORDER};padding-top:13px;font-family:${FB};font-size:11px;line-height:1.65;color:#9CA3AF;">
-Due dates come from your ship's Ordering Schedule (Azamara: Delivery date to BWS on the monthly MLS). A voyage counts as ordered when an open order in OBP arrives on that loading date. If a line looks wrong, reply and the source will be checked before the next run.
+<strong>After the due date, nothing can be added to that container.</strong> It becomes an emergency shipment.<br>
+<strong>No PO means no order.</strong><br><br>
+Dates come from your ship's Ordering Schedule. Azamara uses the BWS delivery date on Ray's monthly schedule. A loading counts as ordered when an open order in OBP arrives on that date. If a line looks wrong, reply and we check it before the next run.
 </div></td></tr>
 
 </table></td></tr></table></body></html>`;
