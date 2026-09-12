@@ -117,5 +117,10 @@ export async function fleetRunway(hon, today, opts = {}) {
   live.sort((a, b) => byFleetOrder(a.ship, b.ship)
     || (a.stockout < b.stockout ? -1 : a.stockout > b.stockout ? 1 : 0));
   const findingsOut = live;
-  return { ran: true, reason: null, measured: rows.length, ships: new Set(rows.map((r) => r.ship)).size, findings: findingsOut };
+  // The NAMES, not just the count. The fleet email's "X of Y ships clear" needs
+  // to know which ships were actually looked at; without this it fell back to
+  // the ships that have an ordering schedule and reported on a smaller fleet
+  // than the one reading it.
+  const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
+  return { ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut };
 }

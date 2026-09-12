@@ -142,6 +142,6 @@ export async function unscheduledGaps(hon, today, opts = {}) {
     };
   }
 
-  const ships = new Set(rows.map((r) => r.ship)).size;
-  return { ran: true, reason: null, ships, findings: gapFindings(rows, today, opts) };
+  const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
+  return { ran: true, reason: null, ships: shipNames.length, shipNames, findings: gapFindings(rows, today, opts) };
 }

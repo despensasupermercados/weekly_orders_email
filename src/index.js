@@ -91,10 +91,15 @@ async function buildWeekly(env, today) {
   // [recOxbIZytNBd64AM] names that silence as the failure the whole system
   // exists to remove. A throw here must not take the email with it: a partial
   // email beats none, and beats one that quietly loses a section.
+  // Every ship this run actually examined, so the header can say "X of Y ships
+  // clear" about the real fleet rather than about whichever subset one query
+  // happened to return.
+  const checked = new Set(rows.map((r) => r.ship));
+
   let gaps = [];
   try {
     const g = await unscheduledGaps(env.HON, today);
-    if (g.ran) gaps = g.findings;
+    if (g.ran) { gaps = g.findings; for (const sh of g.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
   } catch (e) {
     await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
@@ -105,13 +110,17 @@ async function buildWeekly(env, today) {
   let runsOut = [];
   try {
     const r = await fleetRunway(env.HON, today);
-    if (r.ran) runsOut = r.findings;
+    if (r.ran) { runsOut = r.findings; for (const sh of r.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `runway check did not run: ${r.reason}`);
   } catch (e) {
     await logIngest(env, 'cron', `runway check threw: ${String(e && e.message || e)}`);
   }
 
-  return { rows, act, gaps, runsOut, html: renderWeekly(act, rows, today, { gaps, runsOut }) };
+  const checkedShips = [...checked];
+  return {
+    rows, act, gaps, runsOut, checked: checkedShips,
+    html: renderWeekly(act, rows, today, { gaps, runsOut, checked: checkedShips }),
+  };
 }
 
 // ingest_log IS SHARED with cims-hon, whose own obp@cims.work route writes rows
@@ -251,7 +260,14 @@ export default {
       return;
     }
 
-    const { rows, act, html } = await buildWeekly(env, today);
+    // DESTRUCTURE EVERYTHING THE LINES BELOW READ. This said
+    // `{ rows, act, html }` while the log line and the early return both read
+    // `gaps` and `runsOut` - two bindings that did not exist in this scope.
+    // Under ESM that is a ReferenceError, so the ENTIRE Monday run threw before
+    // a single address was resolved, and the failure looked exactly like the
+    // cron not firing. Caught only by running the scheduled handler itself,
+    // which is why test/scheduled.test.mjs now does.
+    const { rows, act, gaps, runsOut, html } = await buildWeekly(env, today);
 
     // LOG EVERY WEEKLY RUN, INCLUDING THE QUIET ONES.
     // This used to return silently when nothing was due, which looks EXACTLY
@@ -283,7 +299,11 @@ export default {
         return;
       }
       ctx.waitUntil((async () => {
-        const r = await send(env, supervisors, `Orders due this week - ${act.length} to fix`, html);
+        // THE SUBJECT LINE IS THE ONLY PART MOST PEOPLE READ. Counting
+        // act.length alone printed "0 to fix" on a week carrying 39 stockouts
+        // and 3 gaps - the email arguing against itself in the inbox list.
+        const todo = act.length + gaps.length + runsOut.length;
+        const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html);
         if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
       })());
       return;
@@ -300,7 +320,7 @@ export default {
     // fleet list that goes to the supervisors, the subject line counts them,
     // and a log line names them - because the ships nobody can reach are the
     // ones most likely to miss a container.
-    const plan = planFleetSend(act, env.FLEET_MAP, gaps);
+    const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut);
     if (!plan.sendable.length) {
       await logIngest(env, 'cron',
         `SEND_TO_FLEET is true but NONE of the ${plan.unmapped.length} ships due this week ` +
@@ -318,13 +338,19 @@ export default {
       // outcome worse than not sending at all.
       for (const group of plan.sendable) {
         const n = group.rows.length;
+        // The subject must name what is actually inside. "a gap in your
+        // deliveries" went out for every ship with no due date, including one
+        // carrying eleven stockouts and no gap at all.
+        const dry = runsOut.filter((f) => f.ship === group.ship).length;
+        const subject = [
+          n ? `${n} order${n === 1 ? '' : 's'} due` : null,
+          dry ? `${dry} running out` : null,
+        ].filter(Boolean).join(', ') || 'a gap in your deliveries';
         try {
           const r = await send(
             env,
             group.to,
-            n
-              ? `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`
-              : `${group.ship}: a gap in your deliveries`,
+            `${group.ship}: ${subject}`,
             renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut })
           );
           if (r.sent) sent++;

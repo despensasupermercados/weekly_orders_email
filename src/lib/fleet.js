@@ -73,7 +73,14 @@ export function isEmail(s) {
 // looked at `rows`. That ship then receives nothing, which is the silence
 // [recOxbIZytNBd64AM] names as the failure the system exists to remove. The 25
 // ships in that position are exactly the ones with no schedule.
-export function planFleetSend(rows, fleetMapText, gaps = []) {
+// EVERY FINDING LIST THAT CAN PUT A SHIP IN THE EMAIL MUST BE ABLE TO PUT THAT
+// SHIP ON THE SEND LIST. This took `gaps` but not `runsOut`, so a ship whose
+// only finding was "you run out of magenta before your next container" - Quest,
+// with eleven of them on 12 Sep - was never mailed at all. The runway check is
+// the half of this email that names an item and a date; a planner that cannot
+// see it silently discards its entire output for exactly the ships it is loudest
+// about. Anything added here later goes in `extra` too.
+export function planFleetSend(rows, fleetMapText, gaps = [], runsOut = []) {
   const { map, bad } = parseFleetMap(fleetMapText);
   const byShip = new Map();
   for (const r of rows) {
@@ -81,10 +88,14 @@ export function planFleetSend(rows, fleetMapText, gaps = []) {
     if (!byShip.has(key)) byShip.set(key, { ship: r.ship, rows: [] });
     byShip.get(key).rows.push(r);
   }
-  for (const g of gaps || []) {
-    if (!g || !g.ship) continue;
-    const key = normShip(g.ship);
-    if (!byShip.has(key)) byShip.set(key, { ship: g.ship, rows: [] });
+  // A finding with no voyage row still earns the ship an email. The rows array
+  // stays empty on purpose: renderWeekly draws these from opts, not from rows.
+  for (const extra of [gaps, runsOut]) {
+    for (const f of extra || []) {
+      if (!f || !f.ship) continue;
+      const key = normShip(f.ship);
+      if (!byShip.has(key)) byShip.set(key, { ship: f.ship, rows: [] });
+    }
   }
 
   const sendable = [];

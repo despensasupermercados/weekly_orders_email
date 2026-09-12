@@ -94,3 +94,25 @@ assert.equal(gapOnly.sendable.length, 2, 'the ship with real rows is still plann
 const gapUnmapped = planFleetSend([], '', [{ ship: 'Anthem', gap_days: 51 }]);
 assert.equal(gapUnmapped.unmapped.length, 1, 'a gap-only ship with no address must be reported');
 console.log('ok - fleet: a ship whose only finding is a delivery gap is still planned and reported');
+
+// THE SAME HOLE, ONE ARGUMENT OVER. planFleetSend took `gaps` but not
+// `runsOut`, so a ship whose only finding was "you run out of magenta before
+// your next container" never reached the send list. On 12 Sep that was Quest,
+// with eleven such items and no due date and no gap - the loudest ship in the
+// fleet email, and the planner could not see it.
+const dryOnly = planFleetSend(
+  [],
+  'Azamara Quest = quest.print@azamara.com',
+  [],
+  [{ ship: 'Quest', item: 'TN619M MAGENTA TONER', stockout: '2026-10-10' },
+   { ship: 'Quest', item: 'TN324C CYAN TONER', stockout: '2026-10-13' }]);
+const questGroup = dryOnly.sendable.find((g) => g.ship === 'Quest');
+assert.ok(questGroup, 'a stockout-only ship must be planned for a send');
+assert.equal(questGroup.rows.length, 0, 'it carries no voyage rows, and that is expected');
+assert.deepEqual(questGroup.to, ['quest.print@azamara.com']);
+assert.equal(dryOnly.sendable.length, 1, 'two findings on one ship are one email, not two');
+
+// And unaddressable is reported here too, for the same reason as the gaps.
+const dryUnmapped = planFleetSend([], '', [], [{ ship: 'Quest', item: 'x' }]);
+assert.equal(dryUnmapped.unmapped.length, 1, 'a stockout-only ship with no address must be reported');
+console.log('ok - fleet: a ship whose only finding is a stockout is planned, addressed and reported');

@@ -251,7 +251,7 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
     return `
 <tr><td style="padding:26px 26px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Coverage &mdash; next six months</div>
-<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships have stock arriving every month to ${months[months.length - 1].label} ${months[months.length - 1].year}. Nothing outstanding.</div>
+<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships on an ordering schedule have a delivery booked every month to ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
 </td></tr>`;
   }
 
@@ -399,7 +399,17 @@ export function renderWeekly(act, all, today, opts = {}) {
     ...(opts.runsOut || []).map((f) => f.ship),
     ...(opts.gaps || []).map((g) => g.ship),
   ]);
-  const clean = [...new Set(all.map((r) => r.ship))].filter((sh) => !troubled.has(sh)).length;
+  // AND COUNT THE RIGHT SHIPS. `all` is the classified voyage rows, which exist
+  // only for ships with an ordering schedule - 27 of the 47 in service. So a
+  // fleet email read "18 of 27 ships clear" while the runway check had in fact
+  // measured all 48 and the gap check another 19. The denominator has to be
+  // every ship this run actually looked at, or the header is quietly reporting
+  // on a smaller fleet than the one reading it.
+  const checked = new Set([
+    ...all.map((r) => r.ship),
+    ...(opts.checked || []),
+  ]);
+  const clean = [...checked].filter((sh) => !troubled.has(sh)).length;
   // WRITTEN FOR THE PERSON WHO READS IT. The crew are Filipino printer
   // specialists reading English as a second language, often on a phone, at the
   // start of a shift. The old version opened with two dense paragraphs of
@@ -435,14 +445,28 @@ export function renderWeekly(act, all, today, opts = {}) {
   ].filter(Boolean);
   const counts = forShip
     ? (bits.join(' &middot; ') || 'Nothing to do this week')
-    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${new Set(all.map((r) => r.ship)).size} ships clear`;
+    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${checked.size} ships clear`;
   const strap = `${window} &middot; ${counts}`;
+  // THE PREHEADER IS THE FIRST AND OFTEN THE ONLY LINE READ. On a phone it sits
+  // next to the subject in the inbox list, before anyone opens anything. It was
+  // hardcoded to act.length, so the 12 Sep fleet email - 39 items running out
+  // across 15 ships, 3 gaps to confirm - announced itself as
+  // "0 orders to raise before the container closes." An email that argues
+  // against its own contents in the inbox list does not get opened again.
+  const plain = [
+    act.length ? `${act.length} to order` : null,
+    dryCount ? `${dryCount} running out` : null,
+    gapCount ? `${gapCount} to check` : null,
+  ].filter(Boolean).join(', ');
+  const preheader = todo
+    ? `${todo} to do this week: ${plain}.`
+    : 'Nothing closes for you this week.';
   const intro = 'Order in OBP <strong>before the date shown</strong>.';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders due this week</title></head>
 <body style="margin:0;padding:0;background:${CLOUD};" bgcolor="${CLOUD}">
-<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">${act.length} order${act.length === 1 ? '' : 's'} to raise before the container closes.</div>
+<div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLOUD}"><tr><td align="center" style="padding:26px 10px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
 
