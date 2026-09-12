@@ -31,6 +31,7 @@
 // Dressing a question as an instruction is how this email would lose its
 // authority in one send.
 
+import { inService, byFleetOrder } from './fleetStatus.js';
 import { require_, firstPresent } from './schema.js';
 
 // Below this, a gap is ordinary biweekly rhythm and not worth a word.
@@ -92,8 +93,10 @@ export function gapFindings(deliveries, today, opts = {}) {
     }
   }
 
-  out.sort((a, b) => (b.gap_days - a.gap_days) || (a.next_delivery < b.next_delivery ? -1 : 1));
-  return out;
+  const live = out.filter((f) => inService(f.ship, today));
+  live.sort((a, b) => byFleetOrder(a.ship, b.ship)
+    || (b.gap_days - a.gap_days) || (a.next_delivery < b.next_delivery ? -1 : 1));
+  return live;
 }
 
 // ---- the database side ----

@@ -12,6 +12,7 @@
 // #F4F5F7, red was #8F231A, amber was #8A5B00. Small drifts are exactly how
 // fifteen competing letterheads happened once already.
 import { mastRows } from '../cims-mast.js';
+import { byFleetOrder } from './fleetStatus.js';
 
 const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946', GREEN_INK = '#3E7F2E';
 const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
@@ -41,10 +42,14 @@ const esc = (s) => String(s == null ? '' : s)
 // to learn on top of the two they use. Red for a deadline five days out also
 // spends the colour that has to mean "too late" - after which nothing is left
 // to say it with.
+// THE WORDS ARE A REMINDER, NOT A LESSON. Each state carried a full clause of
+// explanation - "past the cut-off, or nothing on board" - which wrapped to two
+// lines and pushed the first real row off the first screen. The colour is the
+// code the crew already read on OBP; two or three words is all the key needs.
 export const LEGEND = [
-  [RED, RED_BG, 'Below', 'past the cut-off, or nothing on board'],
-  [AMBER, AMBER_BG, 'Order now', 'below the required amount for this loading'],
-  [GREEN_INK, '#EAF5E6', 'Correct', 'an order is raised and arriving'],
+  [RED, RED_BG, 'LATE', 'past the due date'],
+  [AMBER, AMBER_BG, 'ORDER NOW', 'before the due date'],
+  [GREEN_INK, '#EAF5E6', 'OK', 'on order'],
 ];
 
 function chip(row) {
@@ -60,11 +65,10 @@ function chip(row) {
 // Stated in the email, in the crew's own words, so the colour is readable by
 // someone who has never seen this email before.
 const legendHtml = () => `
-<tr><td style="padding:14px 26px 0;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${LEGEND.map(([fg, bg, label, what]) =>
-  `<td style="padding:0 14px 0 0;"><span style="font-family:${FB};font-size:10px;font-weight:600;color:${fg};background:${bg};padding:2px 6px;">${label}</span>` +
-  `<span style="font-family:${FB};font-size:10px;color:${SLATE};padding-left:5px;">${what}</span></td>`).join('')}</tr></table>
-</td></tr>`;
+<tr><td style="padding:12px 26px 0;font-family:${FB};font-size:11px;color:${SLATE};line-height:2.1;">${
+  LEGEND.map(([fg, bg, label, what]) =>
+    `<span style="white-space:nowrap;"><span style="font-weight:700;letter-spacing:.4px;color:${fg};background:${bg};padding:2px 6px;">${label}</span> ${what}</span>`
+  ).join('&nbsp;&nbsp; ')}</td></tr>`;
 
 function rowHtml(row, i) {
   const [fg, bg, label] = chip(row);
@@ -135,7 +139,7 @@ function gridHtml(all, today, forShip, shipName) {
     && (!forShip || r.ship === shipName));
   if (!inWindow.length) return '';
 
-  const ships = [...new Set(inWindow.map((r) => r.ship))].sort();
+  const ships = [...new Set(inWindow.map((r) => r.ship))].sort(byFleetOrder);
   const head = months.map((mo) =>
     `<th align="center" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;` +
     `text-transform:uppercase;color:${SLATE};padding:0 4px 7px;">${mo.label}</th>`).join('');
@@ -265,23 +269,46 @@ export function renderWeekly(act, all, today, opts = {}) {
   const shipName = opts.ship || '';
   const missed = act.filter((r) => r.state === 'MISSED').length;
   const rows = act.map(rowHtml).join('');
-  const clean = all.filter((r) => r.state === 'ORDERED').length;
-  const heading = forShip
-    ? `${esc(shipName)} &mdash; order before your container closes`
-    : 'Order before your container closes';
-  // A SHIP WHOSE ONLY FINDING IS A DELIVERY GAP MUST NOT READ "0 to raise".
-  // That is the header contradicting the body, and the body is the part that
-  // matters.
+  // "102 ships clear" ON A 48-SHIP FLEET. This counted ORDERED **voyages** and
+  // printed them as ships, so the header of the email announced a number that
+  // cannot exist. A reader who spots that stops believing the rest of the page,
+  // and they are right to. Count ships.
+  const troubled = new Set([
+    ...act.map((r) => r.ship),
+    ...(opts.runsOut || []).map((f) => f.ship),
+    ...(opts.gaps || []).map((g) => g.ship),
+  ]);
+  const clean = [...new Set(all.map((r) => r.ship))].filter((sh) => !troubled.has(sh)).length;
+  // WRITTEN FOR THE PERSON WHO READS IT. The crew are Filipino printer
+  // specialists reading English as a second language, often on a phone, at the
+  // start of a shift. The old version opened with two dense paragraphs of
+  // policy before a single actionable line, and sentences like "the last day
+  // the ship's inventory manager will accept an order for that container" -
+  // three subordinate clauses deep.
+  //
+  // Short words. One idea a line. The instruction first, the policy in the
+  // small print at the bottom where it belongs. Everything the reader needs in
+  // the first screen: is there something for me, what, and by when.
+  // A SHIP WHOSE ONLY FINDING IS A DELIVERY GAP MUST NOT READ "0 to do". That
+  // is the header contradicting the body, and the body is the part that matters.
   const gapCount = (opts.gaps || []).filter((g) => !forShip || g.ship === shipName).length;
   const dryCount = (opts.runsOut || []).filter((f) => !forShip || f.ship === shipName).length;
+  const todo = act.length + dryCount + gapCount;
+  const heading = forShip
+    ? `${esc(shipName)} &mdash; ${todo} to do`
+    : `Orders due &mdash; ${fmt(today)}`;
   const gapBit = gapCount ? ` &middot; ${gapCount} gap${gapCount === 1 ? '' : 's'} to confirm` : '';
   const dryBit = dryCount ? ` &middot; ${dryCount} running out` : '';
+  const bits = [
+    act.length ? `${act.length} to order` : null,
+    missed ? `${missed} late` : null,
+    dryCount ? `${dryCount} running out` : null,
+    gapCount ? `${gapCount} to check` : null,
+  ].filter(Boolean);
   const strap = forShip
-    ? `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${dryBit}${gapBit}`
-    : `Week of ${fmt(today)} &middot; ${act.length} to raise${missed ? ` &middot; ${missed} already overdue` : ''}${dryBit}${gapBit} &middot; ${clean} ships clear`;
-  const intro = forShip
-    ? 'Everything below is for your ship and closes within the next seven days. Raise each order in OBP <strong>before the date shown</strong>.'
-    : 'Only ships with an order due in the next seven days are listed. If your ship is here, raise the order in OBP <strong>before the date shown</strong>.';
+    ? (bits.join(' &middot; ') || 'Nothing to do this week')
+    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${new Set(all.map((r) => r.ship)).size} ships clear`;
+  const intro = 'Order in OBP <strong>before the date shown</strong>.';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders due this week</title></head>
@@ -298,9 +325,8 @@ ${mastRows()}
 </td></tr>
 ${legendHtml()}
 
-<tr><td style="padding:16px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 12px;">${intro}</p>
-<p style="margin:0 0 2px;">The due date is the last day the ship's inventory manager will accept an order for that container. After it, nothing can be added &mdash; it becomes an emergency shipment. An order without a PO is not an order.</p>
+<tr><td style="padding:14px 26px 0;font-family:${FB};font-size:15px;line-height:1.5;color:${BODY};">
+<p style="margin:0;">${intro}</p>
 </td></tr>
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
@@ -315,7 +341,9 @@ ${gridHtml(all, today, forShip, shipName)}
 </td></tr>
 
 <tr><td style="padding:22px 26px 28px;"><div style="border-top:1px solid ${BORDER};padding-top:13px;font-family:${FB};font-size:11px;line-height:1.65;color:#9CA3AF;">
-Due dates come from your ship's Ordering Schedule (Azamara: Delivery date to BWS on the monthly MLS). A voyage counts as ordered when an open order in OBP arrives on that loading date. If a line looks wrong, reply and the source will be checked before the next run.
+<strong>After the due date, nothing can be added to that container.</strong> It becomes an emergency shipment.<br>
+<strong>No PO means no order.</strong><br><br>
+Dates come from your ship's Ordering Schedule. Azamara uses the BWS delivery date on Ray's monthly schedule. A loading counts as ordered when an open order in OBP arrives on that date. If a line looks wrong, reply and we check it before the next run.
 </div></td></tr>
 
 </table></td></tr></table></body></html>`;

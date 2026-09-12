@@ -19,8 +19,11 @@ const act = [row('Apex', '2026-09-14', '2026-09-28')];
 const fleet = renderWeekly(act, all, '2026-09-09');
 assert.ok(fleet.includes('14 Sep'), 'the due date must appear in the row');
 assert.ok(!/Order due <strong[^>]*><\/strong>/.test(fleet), 'no row may render an empty due date');
-assert.ok(fleet.includes('1 ships clear') || fleet.includes('ships clear'),
-  'the fleet digest carries the clear count');
+// THE COUNT WAS WRONG ON THE FACE OF THE EMAIL: it counted ORDERED voyages and
+// printed them as ships, so a 48-ship fleet was announced as "102 ships clear".
+// A reader who spots an impossible number stops believing the whole page.
+assert.ok(/\b1 of 2 ships clear\b/.test(fleet),
+  `the clear count must be ships, not voyages: ${fleet.match(/[\w ]*ships clear/)?.[0]}`);
 
 // A SHIP'S EMAIL CARRIES ONLY THAT SHIP. A crew member who has to hunt for
 // their own line in a fleet-wide table stops opening the email.
@@ -32,7 +35,7 @@ assert.ok(!ship.includes('Quest'), "one ship's email must never name another shi
 // Ray signs it, and the escalation path stays in both versions.
 for (const html of [fleet, ship]) {
   assert.ok(html.includes('Ray Guerra'), 'the fleet email is signed by Ray');
-  assert.ok(html.includes('An order without a PO is not an order.'),
+  assert.ok(/No PO means no order/.test(html),
     'the no-PO-no-order rule must be stated to the crew, not just enforced in code');
 }
 
@@ -118,8 +121,23 @@ assert.ok(redCount(overdue) > 1, 'past the cut-off is red in the row, not just t
 
 // The legend is stated in the email, so the colour is readable by someone who
 // has never opened one of these before.
-for (const word of ['Order now', 'Correct']) {
+for (const word of ['LATE', 'ORDER NOW', 'OK']) {
   assert.ok(withGrid.includes(word), `the legend must name the state "${word}"`);
 }
+// AND STAY SHORT. Each state used to carry a full clause that wrapped to two
+// lines and pushed the first real row off the first screen. The crew read
+// English as a second language; the colour is the code, the words are a nudge.
+for (const [, , label, what] of LEGEND) {
+  assert.ok(label.length <= 9, `legend label "${label}" is too long to scan`);
+  assert.ok(what.split(' ').length <= 4, `legend note "${what}" is a lesson, not a reminder`);
+}
+
+// THE POLICY BELONGS IN THE SMALL PRINT. Two dense paragraphs used to sit
+// between the heading and the first actionable row.
+const beforeFirstRow = withGrid.slice(0, withGrid.indexOf('Order due'));
+assert.ok(!/inventory manager will accept/.test(beforeFirstRow),
+  'the cut-off policy must not sit above the first row a reader needs');
+assert.ok(withGrid.includes('No PO means no order'),
+  'but it must still be stated, in the footer, in short sentences');
 console.log('ok - email: red/yellow/green matches the code the crew already read on OBP,');
 console.log('     red is reserved for past the cut-off, and the legend is stated');

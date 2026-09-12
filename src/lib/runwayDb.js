@@ -6,6 +6,7 @@
 // empty list here reads as "no ship will run out", which is the most expensive
 // wrong answer this email could give.
 
+import { inService, byFleetOrder } from './fleetStatus.js';
 import { require_ } from './schema.js';
 import { runsOutFirst } from './runway.js';
 
@@ -108,6 +109,13 @@ export async function fleetRunway(hon, today, opts = {}) {
     });
     if (f) findings.push(f);
   }
-  findings.sort((a, b) => (a.stockout < b.stockout ? -1 : a.stockout > b.stockout ? 1 : 0));
-  return { ran: true, reason: null, measured: rows.length, ships: new Set(rows.map((r) => r.ship)).size, findings };
+  // A hull with no crew aboard cannot act on any of this, and its seeded
+  // inventory reads as a ship running dry. See fleetStatus.js.
+  const live = findings.filter((f) => inService(f.ship, today));
+  // Soonest-dry first, but Azamara grouped at the end: they run on a different
+  // schedule and mixing them makes the reader check which rules apply per line.
+  live.sort((a, b) => byFleetOrder(a.ship, b.ship)
+    || (a.stockout < b.stockout ? -1 : a.stockout > b.stockout ? 1 : 0));
+  const findingsOut = live;
+  return { ran: true, reason: null, measured: rows.length, ships: new Set(rows.map((r) => r.ship)).size, findings: findingsOut };
 }
