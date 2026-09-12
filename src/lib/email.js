@@ -22,6 +22,35 @@ const FH = "'Outfit',Helvetica,Arial,sans-serif";
 const FB = "'DM Sans',Helvetica,Arial,sans-serif";
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// THE WEEKDAY IS THE PART A CREW ACTUALLY HOLDS IN THEIR HEAD.
+// "23 Sep" is an abstraction you have to look up. "Wed 23" is a day you either
+// have already lived or can count to on your fingers, and on a ship - where the
+// date blurs and the day does not - it is the only half of the date that means
+// anything without a calendar. Miguel asked for this format by name.
+const dowOf = (isoDate) => {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+};
+// "Wed 23" - inside the seven-day window, where the month is never in doubt.
+const fmtDow = (isoDate) => (isoDate ? `${dowOf(isoDate)} ${Number(isoDate.slice(8, 10))}` : '');
+// "Wed 23 Sep" - anywhere the date could be next month or later.
+const fmtDowFull = (isoDate) => (isoDate ? `${fmtDow(isoDate)} ${MONTHS[Number(isoDate.slice(5, 7)) - 1]}` : '');
+
+// A DATE BLOCK, NOT A DATE IN A SENTENCE. A reader who does not read still
+// parses a calendar tile: weekday, number, month, stacked. It carries the
+// row's colour, so the deadline and its urgency are one object rather than two
+// things to connect.
+function dateBlock(isoDate, fg, bg) {
+  if (!isoDate) return '';
+  return `<td width="62" bgcolor="${bg}" style="background:${bg};width:62px;padding:7px 4px;text-align:center;">
+<div style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:1.2px;color:${fg};line-height:1.2;">${dowOf(isoDate).toUpperCase()}</div>
+<div style="font-family:${FH};font-size:24px;font-weight:700;color:${fg};line-height:1.1;">${Number(isoDate.slice(8, 10))}</div>
+<div style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;color:${fg};line-height:1.2;">${MONTHS[Number(isoDate.slice(5, 7)) - 1].toUpperCase()}</div>
+</td>`;
+}
 const fmt = (isoDate) => {
   if (!isoDate) return '';
   const [y, m, d] = isoDate.split('-').map(Number);
@@ -79,17 +108,24 @@ function rowHtml(row, i) {
   const what = row.state === 'MISSED'
     ? 'No order raised and the due date has passed.'
     : 'No order raised yet.';
-  return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:14px;border-bottom:1px solid ${BORDER};">
+  // THE DEADLINE LEADS. It used to be the third line, inside a sentence, after
+  // the ship name and a restatement of what the reader could already see from
+  // the colour. The date block is now the first thing in the row and carries
+  // the row's colour, so "when" and "how urgent" are one object.
+  return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:0;border-bottom:1px solid ${BORDER};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
-      <td align="right"><span style="display:inline-block;background:${bg};color:${fg};font-family:${FB};font-size:11px;font-weight:700;letter-spacing:.8px;padding:4px 10px;">${label}</span></td>
+      ${dateBlock(row.due_date, fg, bg)}
+      <td style="padding:10px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
+          <td align="right"><span style="background:${bg};color:${fg};font-family:${FB};font-size:11px;font-weight:700;letter-spacing:.8px;padding:3px 9px;white-space:nowrap;">${label}</span></td>
+        </tr></table>
+        <div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:4px;">${what}</div>
+        <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:5px;line-height:1.5;">
+          Loads ${fmtDowFull(row.loading_delivery_date)} &middot; ${esc(row.loading_port || 'port TBC')}${row.voyage ? ` &middot; ${esc(row.voyage)}` : ''}
+        </div>${moved}
+      </td>
     </tr></table>
-    <div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:4px;">${what}</div>
-    <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;line-height:1.5;">
-      Order due <strong style="color:${fg};">${fmt(row.due_date)}</strong>
-      &middot; loads ${esc(row.loading_port || 'TBC')} ${fmt(row.loading_delivery_date)}
-      ${row.voyage ? `&middot; ${esc(row.voyage)}` : ''}
-    </div>${moved}
   </td></tr>`;
 }
 
@@ -295,15 +331,19 @@ function runsOutHtml(findings, forShip, shipName) {
     // The ship name is redundant on a ship's own email, and repeating it on
     // every row is the kind of noise that makes a page feel long.
     const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
-    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:10px;border-bottom:1px solid ${BORDER};">
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:0;border-bottom:1px solid ${BORDER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
-<td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
-</tr></table>
-<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month &middot; empty about <strong>${fmt(f.stockout)}</strong></div>
-<div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
-      ? `Next delivery ${fmt(f.next_loading)}. Add it to that order.`
+${dateBlock(f.stockout, fg, bg)}
+<td style="padding:9px 12px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+  <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
+  <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
+  </tr></table>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;">Empty about <strong>${fmtDowFull(f.stockout)}</strong> &middot; <strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month</div>
+  <div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
+      ? `Next delivery ${fmtDowFull(f.next_loading)}. Add it to that order.`
       : 'Nothing on order for it.'}</div>
+</td></tr></table>
 </td></tr>`;
   }).join('');
   const title = forShip ? 'You will run out of these' : 'Running out before the next delivery';
@@ -332,7 +372,7 @@ function gapsHtml(gaps, forShip, shipName) {
     const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:9px 10px;border-bottom:1px solid ${BORDER};">
 <div style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(g.ship)}</div>
-<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmt(g.after_delivery)}</strong> and <strong>${fmt(g.next_delivery)}</strong> &mdash; ${g.gap_days} days, against this ship's usual ${g.own_interval}.</div>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmtDowFull(g.after_delivery)}</strong> and <strong>${fmtDowFull(g.next_delivery)}</strong> &mdash; ${g.gap_days} days, against this ship's usual ${g.own_interval}.</div>
 </td></tr>`;
   }).join('');
   const title = forShip ? 'A gap in your deliveries' : 'Ships with no ordering schedule';
@@ -375,9 +415,16 @@ export function renderWeekly(act, all, today, opts = {}) {
   const gapCount = (opts.gaps || []).filter((g) => !forShip || g.ship === shipName).length;
   const dryCount = (opts.runsOut || []).filter((f) => !forShip || f.ship === shipName).length;
   const todo = act.length + dryCount + gapCount;
+  // NAME THE WINDOW, NOT THE SEND DATE. "Orders due - 11 Sep" is the day the
+  // email went out, which tells the reader nothing about what it covers. This
+  // report looks at the next seven days, so it should say which seven: a crew
+  // member who knows the window knows whether their date is inside it without
+  // working anything out.
+  const last = new Date(Date.parse(today + 'T00:00:00Z') + 6 * 86400000).toISOString().slice(0, 10);
+  const window = `${fmtDowFull(today)} to ${fmtDowFull(last)}`;
   const heading = forShip
     ? `${esc(shipName)} &mdash; ${todo} to do`
-    : `Orders due &mdash; ${fmt(today)}`;
+    : 'Orders due this week';
   const gapBit = gapCount ? ` &middot; ${gapCount} gap${gapCount === 1 ? '' : 's'} to confirm` : '';
   const dryBit = dryCount ? ` &middot; ${dryCount} running out` : '';
   const bits = [
@@ -386,9 +433,10 @@ export function renderWeekly(act, all, today, opts = {}) {
     dryCount ? `${dryCount} running out` : null,
     gapCount ? `${gapCount} to check` : null,
   ].filter(Boolean);
-  const strap = forShip
+  const counts = forShip
     ? (bits.join(' &middot; ') || 'Nothing to do this week')
     : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${new Set(all.map((r) => r.ship)).size} ships clear`;
+  const strap = `${window} &middot; ${counts}`;
   const intro = 'Order in OBP <strong>before the date shown</strong>.';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">

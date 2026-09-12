@@ -17,8 +17,19 @@ const act = [row('Apex', '2026-09-14', '2026-09-28')];
 // it hands back the exact excuse this email exists to remove, and that is what
 // a NULL due date used to render as.
 const fleet = renderWeekly(act, all, '2026-09-09');
-assert.ok(fleet.includes('14 Sep'), 'the due date must appear in the row');
+// THE WEEKDAY IS THE HALF OF THE DATE A CREW HOLDS IN THEIR HEAD. "14 Sep" is
+// something you look up; "MON 14" is a day you can count to. On a ship, where
+// the date blurs and the day does not, it is the only half that means anything
+// without a calendar.
+assert.ok(/MON<\/div>/.test(fleet) && />14</.test(fleet),
+  'the due date leads the row as a calendar block: weekday, number, month');
 assert.ok(!/Order due <strong[^>]*><\/strong>/.test(fleet), 'no row may render an empty due date');
+
+// NAME THE WINDOW, NOT THE SEND DATE. "Orders due - 11 Sep" is the day it was
+// sent and says nothing about what it covers. The report looks seven days
+// ahead, so it says which seven.
+assert.ok(/Wed 9 Sep to Tue 15 Sep/.test(fleet),
+  `the header must name the seven-day window: ${fleet.match(/[A-Z][a-z]{2} \d+ [A-Z][a-z]{2} to [^<&]*/)?.[0]}`);
 // THE COUNT WAS WRONG ON THE FACE OF THE EMAIL: it counted ORDERED voyages and
 // printed them as ships, so a 48-ship fleet was announced as "102 ships clear".
 // A reader who spots an impossible number stops believing the whole page.
