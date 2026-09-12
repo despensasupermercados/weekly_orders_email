@@ -58,11 +58,21 @@ const gridRows = [
   { ...row('Quest', '2026-12-01', '2026-12-18'), state: 'upcoming' },
 ];
 const withGrid = renderWeekly(act, [...all, ...gridRows], '2026-09-11');
-assert.ok(/next six months/i.test(withGrid), 'the fleet email must carry the six-month grid');
-for (const m of ['Sep 26', 'Oct 26', 'Nov 26', 'Dec 26', 'Jan 27', 'Feb 27']) {
-  assert.ok(withGrid.includes(m), `the grid must span six months, missing ${m}`);
+assert.ok(/next six months/i.test(withGrid), 'the fleet email must carry the six-month view');
+for (const m of ['SEP', 'OCT', 'NOV', 'DEC', 'JAN', 'FEB']) {
+  assert.ok(withGrid.includes(m), `the months must span six columns, missing ${m}`);
 }
-assert.ok(withGrid.includes('skip'), 'the grid must show the biweekly skip, which is the cadence nobody believes');
+// The year is marked once, where it turns over - not repeated on all six.
+assert.ok(withGrid.includes("'27"), 'the year must be marked where it changes');
+assert.equal(withGrid.split("'27").length - 1, 2, "and only on the months that are in it");
+
+// "SKIP" IS NOT DATA. It filled half the old grid telling the reader, forty-odd
+// times, that a loading does not concern them.
+assert.ok(!/>\s*\d+ skip/.test(withGrid), 'a skipped loading must not occupy a cell');
+
+// "12 ordered" WAS A DATE THAT READ AS A QUANTITY - the 12th, ordered, scanned
+// as twelve units. Nothing in a covered cell now.
+assert.ok(!/\d+ ordered/.test(withGrid), 'no cell may print a day number next to a state word');
 
 // A ship's grid carries that ship only, same rule as the action list.
 const shipGrid = renderWeekly(act, [...all, ...gridRows], '2026-09-11',

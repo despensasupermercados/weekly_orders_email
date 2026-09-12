@@ -107,19 +107,7 @@ function rowHtml(row, i) {
 // biweekly cadence, which is the thing nobody believes until they see their own
 // loadings sitting 25 to 28 days apart. It also makes an expired schedule
 // visible as empty months rather than as silence.
-const MON_LABEL = (d) => `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
-
-const CELL = {
-  ORDERED:          [GREEN_INK, '#EAF5E6', 'ordered'],
-  'DUE NOW':        [AMBER,     AMBER_BG,  'due'],
-  MISSED:           [RED,       RED_BG,    'missed'],
-  PO_NOT_RECORDED:  [SLATE,     CLOUD,     'PO?'],
-  upcoming:         [SLATE,     '#FFFFFF', 'due'],
-  skippable:        [GREY,      '#FFFFFF', 'skip'],
-  past:             [GREY,      '#FFFFFF', 'past'],
-  NO_DUE_DATE:      [RED,       RED_BG,    'no date'],
-  NO_LOADING_DATE:  [RED,       RED_BG,    'no date'],
-};
+const MON_LABEL = (d) => `${MONTHS[d.getMonth()]}`;
 
 // Six months starting with the month `today` falls in.
 function monthKeys(today) {
@@ -127,83 +115,147 @@ function monthKeys(today) {
   const out = [];
   for (let i = 0; i < 6; i++) {
     const d = new Date(Date.UTC(y, m - 1 + i, 1));
-    out.push({ key: d.toISOString().slice(0, 7), label: MON_LABEL(d) });
+    out.push({ key: d.toISOString().slice(0, 7), label: MON_LABEL(d), year: d.getUTCFullYear() });
   }
   return out;
 }
 
-function gridHtml(all, today, forShip, shipName) {
+// COVERAGE, NOT A TABLE OF LABELS.
+//
+// The first version was a grid of chips reading "12 ordered", "26 skip". Three
+// things were wrong with it and only one was cosmetic.
+//
+// 1. "12 ordered" IS A DATE AND READS AS A QUANTITY. The 12th, ordered. A
+//    printer scanning it sees twelve units ordered. There is no worse failure
+//    in an operational email than a number that means something else.
+// 2. "skip" IS NOT DATA. It is the absence of an obligation, and it filled half
+//    the grid. Forty-odd cells telling the reader "this one does not concern
+//    you" is forty-odd cells of nothing.
+// 3. EVERY CELL HAD EQUAL WEIGHT. About 130 green chips and three amber ones,
+//    so the eye had nowhere to land and the three that mattered were the
+//    hardest to find. That is the catalogued failure: eight hues when the
+//    story is one number. The fix is EMPHASIS - quiet everything that is fine,
+//    and let the holes be the only thing carrying colour.
+//
+// So: ships that are covered every month collapse into ONE LINE of names. Only
+// ships with a hole get a row. The row is six fixed cells, equal height, months
+// anchored above them, so the eye tracks straight down a column. Nothing inside
+// a covered cell - there is nothing to say about it.
+const monthsOf = (rows) => {
+  const by = new Map();
+  for (const r of rows) {
+    if (!r.loading_delivery_date) continue;
+    const k = r.loading_delivery_date.slice(0, 7);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  }
+  return by;
+};
+
+// What one ship's month cell has to say. Order matters: an action outranks
+// coverage, because a month can hold both.
+function cellState(rowsThisMonth, gapsThisMonth) {
+  const act = rowsThisMonth.find((r) => r.state === 'MISSED')
+    || rowsThisMonth.find((r) => r.state === 'DUE NOW');
+  if (act) {
+    const day = Number(act.loading_delivery_date.slice(8, 10));
+    return act.state === 'MISSED'
+      ? { bg: RED_BG, fg: RED, text: `${day} late` }
+      : { bg: AMBER_BG, fg: AMBER, text: `${day} order` };
+  }
+  if (gapsThisMonth.length) return { bg: AMBER_BG, fg: AMBER, text: 'gap' };
+  if (rowsThisMonth.some((r) => r.state === 'ORDERED')) {
+    return { bg: '#EAF5E6', fg: GREEN_INK, text: '' };
+  }
+  return null; // nothing scheduled: normal this far out, and it stays quiet
+}
+
+function coverageHtml(all, today, forShip, shipName, gaps) {
   const months = monthKeys(today);
-  const inWindow = all.filter((r) => r.loading_delivery_date
-    && months.some((mo) => r.loading_delivery_date.startsWith(mo.key))
+  const keys = new Set(months.map((m) => m.key));
+  const rows = all.filter((r) => r.loading_delivery_date && keys.has(r.loading_delivery_date.slice(0, 7))
     && (!forShip || r.ship === shipName));
-  if (!inWindow.length) return '';
+  if (!rows.length) return '';
 
-  const ships = [...new Set(inWindow.map((r) => r.ship))].sort(byFleetOrder);
+  const gapList = (gaps || []).filter((g) => !forShip || g.ship === shipName);
+  const ships = [...new Set(rows.map((r) => r.ship))].sort(byFleetOrder);
+
+  const built = ships.map((ship) => {
+    const by = monthsOf(rows.filter((r) => r.ship === ship));
+    const cells = months.map((mo) => cellState(
+      by.get(mo.key) || [],
+      gapList.filter((g) => g.ship === ship && String(g.next_delivery || '').slice(0, 7) === mo.key)));
+    return { ship, cells, needsEye: cells.some((c) => c && c.text) };
+  });
+
+  // EMPHASIS. A ship with nothing to act on is a name, not a row.
+  const calm = built.filter((b) => !b.needsEye);
+  const loud = built.filter((b) => b.needsEye);
+
+  const W = Math.floor(64 / months.length);
+  // THE YEAR, ONCE, WHERE IT CHANGES. Repeating "26" on all six columns is five
+  // characters of noise per row of the header; dropping it entirely leaves a
+  // reader guessing which January. Mark it only when it turns over.
+  const y0 = months[0].year;
   const head = months.map((mo) =>
-    `<th align="center" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;` +
-    `text-transform:uppercase;color:${SLATE};padding:0 4px 7px;">${mo.label}</th>`).join('');
+    `<th width="${W}%" align="center" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;` +
+    `color:${SLATE};padding:0 2px 6px;white-space:nowrap;">${mo.label.toUpperCase()}` +
+    (mo.year !== y0 ? `<span style="font-weight:400;color:#B6BCC4;"> '${String(mo.year).slice(2)}</span>` : '') +
+    `</th>`).join('');
 
-  const body = ships.map((ship, i) => {
+  // A CALM WEEK IS ONE LINE, NOT TWENTY-TWO ROWS. If no ship has anything to act
+  // on, a full grid of green says exactly what a sentence says, at twenty times
+  // the length, and trains the reader to scroll past the section for good. A
+  // ship's own email always keeps its row: one row is its whole reference.
+  if (!forShip && !loud.length) {
+    return `
+<tr><td style="padding:26px 26px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Coverage &mdash; next six months</div>
+<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships have stock arriving every month to ${months[months.length - 1].label} ${months[months.length - 1].year}. Nothing outstanding.</div>
+</td></tr>`;
+  }
+
+  const body = (loud.length ? loud : built).map((b, i) => {
     const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
-    const cells = months.map((mo) => {
-      const hits = inWindow
-        .filter((r) => r.ship === ship && r.loading_delivery_date.startsWith(mo.key))
-        .sort((a, b) => (a.loading_delivery_date < b.loading_delivery_date ? -1
-          : a.loading_delivery_date > b.loading_delivery_date ? 1 : 0));
-      if (!hits.length) {
-        return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:6px 4px;` +
-          `font-family:${FB};font-size:11px;color:${BORDER};">&mdash;</td>`;
+    const cells = b.cells.map((c) => {
+      if (!c) {
+        return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
+          `<div style="height:20px;line-height:20px;font-family:${FB};font-size:11px;color:#D7DBE0;">&middot;</div></td>`;
       }
-      const pills = hits.map((r) => {
-        const [fg, bg, label] = CELL[r.state] || [SLATE, '#FFFFFF', r.state];
-        const day = Number(r.loading_delivery_date.slice(8, 10));
-        return `<div style="font-family:${FB};font-size:10px;line-height:1.35;color:${fg};` +
-          `background:${bg};padding:2px 5px;margin:1px 0;white-space:nowrap;">` +
-          `${day} ${label}</div>`;
-      }).join('');
-      return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 4px;">${pills}</td>`;
+      return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
+        `<div bgcolor="${c.bg}" style="background:${c.bg};height:20px;line-height:20px;font-family:${FB};` +
+        `font-size:11px;font-weight:${c.text ? 700 : 400};color:${c.fg};white-space:nowrap;">${c.text || '&nbsp;'}</div></td>`;
     }).join('');
-    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:6px 8px 6px 2px;font-family:${FB};` +
-      `font-size:12px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(ship)}</td>${cells}</tr>`;
+    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:5px 8px 5px 2px;font-family:${FB};` +
+      `font-size:13px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(b.ship)}</td>${cells}</tr>`;
   }).join('');
 
-  // THIS IS AN X-RAY, NOT A TO-DO LIST.
-  //
-  //   "It cannot tell the fleet about 6-month orders that have not been placed.
-  //    If, in November, that ship doesn't have any order, then it's kind of an
-  //    X-ray on the next month, on the next 6 months."
-  //
-  // Nobody has placed a November order in September and nobody should have. A
-  // grid that marks those months as outstanding is crying wolf 180 days out,
-  // and a printer who is told off for something that is not yet their job stops
-  // reading. The section shows the SHAPE of coverage - where stock is landing
-  // and where the calendar is bare - and says in its own first line that a bare
-  // future month is normal.
-  const title = forShip ? 'Your next six months' : 'The fleet, next six months';
+  const calmLine = (loud.length && calm.length)
+    ? `<div style="font-family:${FB};font-size:12px;color:${SLATE};padding:10px 4px 0;">` +
+      `<strong style="color:${GREEN_INK};">${calm.length} ship${calm.length === 1 ? '' : 's'} covered every month:</strong> ` +
+      `${calm.map((b) => esc(b.ship)).join(', ')}.</div>`
+    : '';
+
+  const title = forShip ? 'Your next six months' : 'Coverage &mdash; next six months';
   return `
 <tr><td style="padding:26px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Reference only &mdash; nothing here needs action today. Loading dates, not due dates. <strong>An empty month further out is normal</strong>: those orders are not raised yet. <strong>skip</strong> is a loading ${forShip ? 'your ship does' : 'that ship does'} not use, since the cadence is every other one.</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
-<tr><th align="left" style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:${SLATE};padding:0 8px 7px 2px;">Ship</th>${head}</tr>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;table-layout:fixed;">
+<tr><th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>${head}</tr>
 ${body}
-</table></td></tr>`;
+</table>${calmLine}</td></tr>`;
 }
 
-// WILL YOU RUN OUT BEFORE THE NEXT CONTAINER. This is the section the email
-// was missing, and it is the one that matches the objective's demand for "these
-// exact items":
+// WILL YOU RUN OUT BEFORE THE NEXT CONTAINER. The section that matches the
+// objective's demand for "these exact items":
 //
 //   "You have an order coming Wednesday, and you're going to run out of black
 //    toner. You either fix it now, or you wait until the next biweekly order."
 //
 // It reports a DATE, never a quantity. Par is what should be aboard and an
-// order line is a different number; the crew converts two facts - what is on
-// board, what it burns a month - into an order in seconds, and nobody has to
-// sign off on arithmetic they did not write.
-//
-// Ordered soonest-dry first, because that is the order a printer acts in.
+// order line is a different number; the crew turns two facts - what is on
+// board, what it burns a month - into an order in seconds.
 function runsOutHtml(findings, forShip, shipName) {
   const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
   if (!list.length) return '';
@@ -213,23 +265,26 @@ function runsOutHtml(findings, forShip, shipName) {
     // late is amber: the crew can still add a line to an open order.
     const [fg, bg, label] = f.next_loading
       ? [AMBER, AMBER_BG, 'ADD NOW']
-      : [RED, RED_BG, 'NOTHING ON ORDER'];
+      : [RED, RED_BG, 'NOT ON ORDER'];
+    // The ship name is redundant on a ship's own email, and repeating it on
+    // every row is the kind of noise that makes a page feel long.
+    const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:10px;border-bottom:1px solid ${BORDER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(f.ship)} &middot; ${esc(f.item)}</td>
-<td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;">${label}</span></td>
+<td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
+<td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
 </tr></table>
-<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board, using about <strong>${Math.round(f.rate)}</strong> a month &mdash; runs out around <strong>${fmt(f.stockout)}</strong>.</div>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month &middot; empty about <strong>${fmt(f.stockout)}</strong></div>
 <div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
-      ? `The next delivery that could carry it lands ${fmt(f.next_loading)}. Add it to that order before it closes.`
-      : 'Nothing is on order for it at all.'}</div>
+      ? `Next delivery ${fmt(f.next_loading)}. Add it to that order.`
+      : 'Nothing on order for it.'}</div>
 </td></tr>`;
   }).join('');
   const title = forShip ? 'You will run out of these' : 'Running out before the next delivery';
   return `
 <tr><td style="padding:24px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Usage is ${forShip ? 'your' : "each ship's"} own, the greater of last month or the three-month average. Adding a line to an order that has not closed costs nothing. Missing it means waiting for the loading after.</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Adding a line to an order that is still open costs nothing. Miss it and the ship waits for the next loading.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
 </td></tr>`;
 }
@@ -333,7 +388,7 @@ ${legendHtml()}
 
 ${runsOutHtml(opts.runsOut, forShip, shipName)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
-${gridHtml(all, today, forShip, shipName)}
+${coverageHtml(all, today, forShip, shipName, opts.gaps)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
 <p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
