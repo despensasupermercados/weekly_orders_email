@@ -192,7 +192,11 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
   const calm = built.filter((b) => !b.needsEye);
   const loud = built.filter((b) => b.needsEye);
 
-  const W = Math.floor(64 / months.length);
+  // ONE SHIP NEEDS NO SHIP COLUMN. On a ship's own email the name column held a
+  // single word under a "SHIP" header and ate 40% of the width, so six months
+  // were squeezed into the right-hand half of a page about one vessel. Dropped,
+  // and the months take the whole width.
+  const W = forShip ? Math.floor(100 / months.length) : 13;
   // THE YEAR, ONCE, WHERE IT CHANGES. Repeating "26" on all six columns is five
   // characters of noise per row of the header; dropping it entirely leaves a
   // reader guessing which January. Mark it only when it turns over.
@@ -220,15 +224,37 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
     const cells = b.cells.map((c) => {
       if (!c) {
         return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
-          `<div style="height:20px;line-height:20px;font-family:${FB};font-size:11px;color:#D7DBE0;">&middot;</div></td>`;
+          `<div style="height:${forShip ? 30 : 20}px;line-height:${forShip ? 30 : 20}px;font-family:${FB};font-size:11px;color:#D7DBE0;">&middot;</div></td>`;
       }
       return `<td align="center" bgcolor="${zb}" style="background:${zb};padding:5px 2px;">` +
-        `<div bgcolor="${c.bg}" style="background:${c.bg};height:20px;line-height:20px;font-family:${FB};` +
+        `<div bgcolor="${c.bg}" style="background:${c.bg};height:${forShip ? 30 : 20}px;line-height:${forShip ? 30 : 20}px;font-family:${FB};` +
         `font-size:11px;font-weight:${c.text ? 700 : 400};color:${c.fg};white-space:nowrap;">${c.text || '&nbsp;'}</div></td>`;
     }).join('');
-    return `<tr><td bgcolor="${zb}" style="background:${zb};padding:5px 8px 5px 2px;font-family:${FB};` +
-      `font-size:13px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(b.ship)}</td>${cells}</tr>`;
+    const name = forShip ? '' :
+      `<td bgcolor="${zb}" style="background:${zb};padding:5px 8px 5px 2px;font-family:${FB};` +
+      `font-size:13px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(b.ship)}</td>`;
+    return `<tr>${name}${cells}</tr>`;
   }).join('');
+
+  // A PICTURE PLUS ONE SENTENCE. A strip shows the shape; it does not say what
+  // the shape means, and a reader who is unsure does not act. On a ship's own
+  // email that sentence is the point: how far the cover reaches, in words.
+  let shipLine = '';
+  if (forShip && built.length) {
+    const b = built[0];
+    let lastCovered = -1;
+    b.cells.forEach((c, k) => { if (c) lastCovered = k; });
+    const firstHole = b.cells.findIndex((c) => c && c.text);
+    const say = (t) => `<div style="font-family:${FB};font-size:14px;color:${BODY};padding:12px 4px 0;">${t}</div>`;
+    if (firstHole >= 0) {
+      shipLine = say(`Act in <strong>${months[firstHole].label} ${months[firstHole].year}</strong>.`);
+    } else if (lastCovered >= 0) {
+      shipLine = say(`Stock is on the way up to <strong>${months[lastCovered].label} ${months[lastCovered].year}</strong>.` +
+        (lastCovered < months.length - 1
+          ? ' Nothing is booked after that yet. That is normal &mdash; those orders are not raised.'
+          : ''));
+    }
+  }
 
   const calmLine = (loud.length && calm.length)
     ? `<div style="font-family:${FB};font-size:12px;color:${SLATE};padding:10px 4px 0;">` +
@@ -242,9 +268,9 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
 <div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;table-layout:fixed;">
-<tr><th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>${head}</tr>
+<tr>${forShip ? '' : `<th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>`}${head}</tr>
 ${body}
-</table>${calmLine}</td></tr>`;
+</table>${shipLine}${calmLine}</td></tr>`;
 }
 
 // WILL YOU RUN OUT BEFORE THE NEXT CONTAINER. The section that matches the

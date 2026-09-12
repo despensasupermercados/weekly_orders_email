@@ -151,3 +151,26 @@ assert.ok(withGrid.includes('No PO means no order'),
   'but it must still be stated, in the footer, in short sentences');
 console.log('ok - email: red/yellow/green matches the code the crew already read on OBP,');
 console.log('     red is reserved for past the cut-off, and the legend is stated');
+
+// ONE SHAPE, TWO SCOPES. The fleet digest and a ship's own email must teach the
+// same page, or a printer who has learned one cannot read the other.
+const shipCov = renderWeekly([], [...all, ...gridRows], '2026-09-11',
+  { audience: 'ship', ship: 'Apex' });
+
+// A page about one ship has no ship column and no SHIP header over one word -
+// that header and its column ate 40% of the width in the first version.
+assert.ok(!/>SHIP</.test(shipCov), "a ship's own strip needs no SHIP column header");
+assert.ok(shipCov.includes('SEP') && shipCov.includes('FEB'),
+  'and the months still span the whole six');
+
+// A STRIP SHOWS A SHAPE; IT DOES NOT SAY WHAT THE SHAPE MEANS. A reader who is
+// unsure does not act, so the ship's email says it in words underneath.
+assert.ok(/Stock is on the way up to|Act in /.test(shipCov),
+  "a ship's strip must be followed by one plain sentence");
+
+// The fleet digest keeps the column, because there the ship name IS the row.
+assert.ok(/>SHIP</.test(withGrid) || /covered every month|ships have stock arriving/.test(withGrid),
+  'the fleet view either names ships in rows or collapses them to one line');
+
+console.log('ok - email: the coverage strip reads the same in both emails, and a ship sees');
+console.log('     its own six months full width with the meaning stated in words');
