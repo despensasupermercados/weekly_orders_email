@@ -185,3 +185,26 @@ assert.ok(/>SHIP</.test(withGrid) || /covered every month|ships have stock arriv
 
 console.log('ok - email: the coverage strip reads the same in both emails, and a ship sees');
 console.log('     its own six months full width with the meaning stated in words');
+
+// A SHIP WITH NO ORDERING SCHEDULE STILL GETS ITS SIX MONTHS. Miguel, 15 Sep
+// 2026: Navigator's email ended with the stockouts and no strip. Drawn from the
+// containers on their way instead, and labelled as such.
+{
+  const { renderWeekly } = await import('../src/lib/email.js');
+  const nav = renderWeekly([], [], '2026-09-15', {
+    audience: 'ship', ship: 'Navigator', gaps: [],
+    runsOut: [{ ship: 'Navigator', item: 'TN619M MAGENTA TONER', on_hand: 2, rate: 5, stockout: '2026-09-27',
+      next_loading: '2026-10-24', order_due: null, order_lands: null, add_qty: 8, add_basis: '5 used in 30 days + 3 spare', has_schedule: false }],
+    deliveries: [{ ship: 'Navigator', date: '2026-10-24' }, { ship: 'Navigator', date: '2026-11-09' }, { ship: 'Explorer', date: '2026-10-01' }],
+  });
+  assert.ok(/Your next six months/.test(nav), 'a schedule-free ship gets its strip');
+  assert.ok(/no ordering schedule is loaded for your ship/.test(nav), 'and is told which source drew it');
+  assert.ok(/Stock is on the way up to <strong>Nov 2026/.test(nav), 'the strip reads to the last landing');
+  assert.ok(!/Explorer/.test(nav), "another ship's deliveries never leak in");
+  // A ship WITH a schedule is drawn from its voyage rows, never from transit.
+  const sched = renderWeekly([], [{ ship: 'Quest', loading_delivery_date: '2026-10-14', due_date: '2026-07-03', state: 'ORDERED' }], '2026-09-15', {
+    audience: 'ship', ship: 'Quest', gaps: [], runsOut: [], deliveries: [{ ship: 'Quest', date: '2027-02-01' }],
+  });
+  assert.ok(!/no ordering schedule/.test(sched));
+  console.log('ok - email: a ship with no ordering schedule draws its six months from open orders');
+}

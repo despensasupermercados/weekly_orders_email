@@ -143,5 +143,10 @@ export async function unscheduledGaps(hon, today, opts = {}) {
   }
 
   const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
-  return { ran: true, reason: null, ships: shipNames.length, shipNames, findings: gapFindings(rows, today, opts) };
+  // THE DELIVERIES THEMSELVES, NOT ONLY THE HOLES BETWEEN THEM. A ship with no
+  // schedule has no voyage rows, so its six-month strip was blank - Navigator's
+  // own email ended with the stockouts and no picture of what is coming. What
+  // is coming is exactly this list; the strip can be drawn from it.
+  const deliveries = rows.filter((r) => inService(r.ship, today)).map((r) => ({ ship: r.ship, date: r.date }));
+  return { ran: true, reason: null, ships: shipNames.length, shipNames, deliveries, findings: gapFindings(rows, today, opts) };
 }

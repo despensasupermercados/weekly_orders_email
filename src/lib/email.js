@@ -228,12 +228,24 @@ function cellState(rowsThisMonth, gapsThisMonth) {
   return null; // nothing scheduled: normal this far out, and it stays quiet
 }
 
-function coverageHtml(all, today, forShip, shipName, gaps) {
+// A SHIP WITH NO SCHEDULE STILL HAS A NEXT SIX MONTHS. Miguel, 15 Sep 2026:
+// "Navigator is missing the bottom section with orders for the next 6 months."
+// The strip was drawn from voyage rows, which exist only for ships with an
+// ordering schedule. For the others the same picture is drawn from the
+// containers already on their way (obp_intransit, read by fallback.js): a
+// month with a landing is green, a month the gap check flagged is amber. The
+// email says which source it read, because the two are not the same evidence.
+function coverageHtml(all, today, forShip, shipName, gaps, deliveries) {
   const months = monthKeys(today);
   const keys = new Set(months.map((m) => m.key));
-  const rows = all.filter((r) => r.loading_delivery_date && keys.has(r.loading_delivery_date.slice(0, 7))
+  const scheduled = new Set(all.map((r) => r.ship));
+  const fromTransit = (deliveries || [])
+    .filter((d) => d.date && !scheduled.has(d.ship))
+    .map((d) => ({ ship: d.ship, loading_delivery_date: d.date, state: 'ORDERED', from_transit: true }));
+  const rows = [...all, ...fromTransit].filter((r) => r.loading_delivery_date && keys.has(r.loading_delivery_date.slice(0, 7))
     && (!forShip || r.ship === shipName));
   if (!rows.length) return '';
+  const readFromTransit = forShip && rows.every((r) => r.from_transit);
 
   const gapList = (gaps || []).filter((g) => !forShip || g.ship === shipName);
   const ships = [...new Set(rows.map((r) => r.ship))].sort(byFleetOrder);
@@ -273,7 +285,7 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
     return `
 <tr><td style="padding:26px 26px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Coverage &mdash; next six months</div>
-<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships on an ordering schedule have a delivery booked every month to ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
+<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships have a delivery booked every month to ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
 </td></tr>`;
   }
 
@@ -324,7 +336,7 @@ function coverageHtml(all, today, forShip, shipName, gaps) {
   return `
 <tr><td style="padding:26px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.${readFromTransit ? ' Read from your open orders in OBP &mdash; no ordering schedule is loaded for your ship.' : ''}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;table-layout:fixed;">
 <tr>${forShip ? '' : `<th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>`}${head}</tr>
 ${body}
@@ -567,7 +579,7 @@ ${legendHtml()}
 
 ${runsOutHtml(opts.runsOut, forShip, shipName, today)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
-${coverageHtml(all, today, forShip, shipName, opts.gaps)}
+${coverageHtml(all, today, forShip, shipName, opts.gaps, opts.deliveries)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
 <p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
