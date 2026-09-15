@@ -104,19 +104,35 @@ likely to miss a container.
 | `/data-faults` | voyages with no due date — invisible to the weekly email |
 | `/watchdog` | every night check with repair **off**; `?html=1` renders the digest |
 
-### These endpoints are public
+### A push to a branch does NOT change what the live URL serves
 
-No endpoint here has any authentication, and Cloudflare Workers Builds publishes a preview URL
-for every commit. Everything above is readable by anyone holding that URL.
+Workers Builds deploys a **preview** for a branch push and reaches **production only from
+`main`**. The build log says "production/builds/..." either way, which is what made this
+worth writing down: a security change sitting green on a branch is not in force. On
+10 Sep the `ADMIN_KEY` gate was called live on the strength of a green branch build while
+`weekly-orders-email.sanmartin.workers.dev` was still serving `/states` to anyone who
+asked. Check the Worker's Deployments tab, not the pull request.
 
-`/fleet` therefore **masks crew mailboxes by default** — unmasked it is a harvestable list of
-every printer in the fleet tied to the ship they sail on. Masked still shows the domain and
-whether a ship is mapped, which is what the endpoint is for. Set `ADMIN_KEY` as a secret and
-pass `?key=` to see them in full.
+### These endpoints need `ADMIN_KEY`
 
-The rest return operational data and no personal addresses. Locking them down is a separate
-decision, because it changes behaviour something may already depend on, and it has not been
-made here.
+Every endpoint above except `/health` **refuses to serve without `ADMIN_KEY`**. Set it as a
+Worker secret, then pass it either as the `x-admin-key` header or as `?key=<ADMIN_KEY>`.
+Use the header for anything scripted: a key in a query string is recorded in browser
+history and in every access log that keeps URLs. The query form exists because a browser
+address bar cannot send a header.
+
+They used to be public, and an earlier version of this file recorded that as a decision left
+untaken. It stopped being defensible on 10 Sep 2026, within an hour: `azamara@cims.work` now
+routes live fleet mail to this Worker, and Workers Builds publishes a preview URL for every
+commit. `/states`, `/misses` and `/azamara` return the fleet's ordering position ship by ship,
+which is a competitor's view of another company's supply chain.
+
+**With no `ADMIN_KEY` set they return 503, not data.** An access control that quietly disables
+itself when unconfigured is not one. The crons do not go through `fetch()`, so the Monday email
+and the night check keep running either way.
+
+`/health` stays open deliberately. It carries counts and readiness rather than the fleet's
+position, and it is how you check that a deploy landed.
 
 `npm test` runs **every** `test/*.test.mjs`. It used to run only `parse.test.mjs` while three
 other suites sat green and unexecuted, which reads as coverage and is not. `test/run.mjs`

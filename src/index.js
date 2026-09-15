@@ -7,6 +7,8 @@ import { voyageStates, actionable, poNotRecorded, dataFaults, escalations, MISSE
 import { planFleetSend, maskEmail } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
+import { unscheduledGaps } from './lib/fallback.js';
+import { fleetRunway } from './lib/runwayDb.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
@@ -83,7 +85,42 @@ function secretEquals(given, expected) {
 async function buildWeekly(env, today) {
   const rows = await voyageStates(env.HON, today);
   const act = actionable(rows);
-  return { rows, act, html: renderWeekly(act, rows, today) };
+
+  // THE 25 SHIPS WITH NO ORDERING SCHEDULE. Without this they appear nowhere in
+  // this email, which reads to a printer exactly like "nothing is due for you".
+  // [recOxbIZytNBd64AM] names that silence as the failure the whole system
+  // exists to remove. A throw here must not take the email with it: a partial
+  // email beats none, and beats one that quietly loses a section.
+  // Every ship this run actually examined, so the header can say "X of Y ships
+  // clear" about the real fleet rather than about whichever subset one query
+  // happened to return.
+  const checked = new Set(rows.map((r) => r.ship));
+
+  let gaps = [];
+  try {
+    const g = await unscheduledGaps(env.HON, today);
+    if (g.ran) { gaps = g.findings; for (const sh of g.shipNames || []) checked.add(sh); }
+    else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
+  } catch (e) {
+    await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
+  }
+
+  // WILL THEY RUN OUT BEFORE THE NEXT CONTAINER. The item-level half of the
+  // objective's "this ship, this voyage, these exact items, this date".
+  let runsOut = [];
+  try {
+    const r = await fleetRunway(env.HON, today);
+    if (r.ran) { runsOut = r.findings; for (const sh of r.shipNames || []) checked.add(sh); }
+    else await logIngest(env, 'cron', `runway check did not run: ${r.reason}`);
+  } catch (e) {
+    await logIngest(env, 'cron', `runway check threw: ${String(e && e.message || e)}`);
+  }
+
+  const checkedShips = [...checked];
+  return {
+    rows, act, gaps, runsOut, checked: checkedShips,
+    html: renderWeekly(act, rows, today, { gaps, runsOut, checked: checkedShips }),
+  };
 }
 
 // ingest_log IS SHARED with cims-hon, whose own obp@cims.work route writes rows
@@ -223,7 +260,14 @@ export default {
       return;
     }
 
-    const { rows, act, html } = await buildWeekly(env, today);
+    // DESTRUCTURE EVERYTHING THE LINES BELOW READ. This said
+    // `{ rows, act, html }` while the log line and the early return both read
+    // `gaps` and `runsOut` - two bindings that did not exist in this scope.
+    // Under ESM that is a ReferenceError, so the ENTIRE Monday run threw before
+    // a single address was resolved, and the failure looked exactly like the
+    // cron not firing. Caught only by running the scheduled handler itself,
+    // which is why test/scheduled.test.mjs now does.
+    const { rows, act, gaps, runsOut, html } = await buildWeekly(env, today);
 
     // LOG EVERY WEEKLY RUN, INCLUDING THE QUIET ONES.
     // This used to return silently when nothing was due, which looks EXACTLY
@@ -235,8 +279,16 @@ export default {
     await logIngest(env, 'cron',
       `weekly run: ${act.length} actionable of ${rows.length} eligible voyages` +
       (stale.length ? `, ${stale.length} past the cut-off by more than ${MISSED_CREW_DAYS} days (escalation, not the crew's)` : '') +
+      (gaps.length ? `, ${gaps.length} delivery gaps on ships with no schedule` : '') +
       (faults.length ? `, ${faults.length} unusable rows (engineering)` : ''));
-    if (!act.length) return; // nothing due, say nothing to anybody
+
+    // NOTHING DUE **AND** NO GAPS. I broke this an hour after building the
+    // fallback: the early return tested act.length alone, so on a week like
+    // this one - 0 actionable, 15 delivery gaps across the 25 ships with no
+    // schedule - the run ended here and not one of those ships heard anything.
+    // The schedule-free check was dead on arrival, restoring the exact silence
+    // it was written to remove.
+    if (!act.length && !gaps.length && !runsOut.length) return; // genuinely nothing to say
 
     const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
 
@@ -247,7 +299,11 @@ export default {
         return;
       }
       ctx.waitUntil((async () => {
-        const r = await send(env, supervisors, `Orders due this week - ${act.length} to fix`, html);
+        // THE SUBJECT LINE IS THE ONLY PART MOST PEOPLE READ. Counting
+        // act.length alone printed "0 to fix" on a week carrying 39 stockouts
+        // and 3 gaps - the email arguing against itself in the inbox list.
+        const todo = act.length + gaps.length + runsOut.length;
+        const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html);
         if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
       })());
       return;
@@ -264,7 +320,7 @@ export default {
     // fleet list that goes to the supervisors, the subject line counts them,
     // and a log line names them - because the ships nobody can reach are the
     // ones most likely to miss a container.
-    const plan = planFleetSend(act, env.FLEET_MAP);
+    const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut);
     if (!plan.sendable.length) {
       await logIngest(env, 'cron',
         `SEND_TO_FLEET is true but NONE of the ${plan.unmapped.length} ships due this week ` +
@@ -282,12 +338,20 @@ export default {
       // outcome worse than not sending at all.
       for (const group of plan.sendable) {
         const n = group.rows.length;
+        // The subject must name what is actually inside. "a gap in your
+        // deliveries" went out for every ship with no due date, including one
+        // carrying eleven stockouts and no gap at all.
+        const dry = runsOut.filter((f) => f.ship === group.ship).length;
+        const subject = [
+          n ? `${n} order${n === 1 ? '' : 's'} due` : null,
+          dry ? `${dry} running out` : null,
+        ].filter(Boolean).join(', ') || 'a gap in your deliveries';
         try {
           const r = await send(
             env,
             group.to,
-            `${group.ship}: ${n} order${n === 1 ? '' : 's'} due this week`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship })
+            `${group.ship}: ${subject}`,
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut })
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -325,6 +389,39 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const today = url.searchParams.get('today') || iso(new Date());
+
+    // EVERY OPERATIONAL ENDPOINT IS NOW BEHIND ADMIN_KEY.
+    //
+    // These were public, and that was documented as a decision left untaken
+    // because locking them down changes behaviour something may depend on. On
+    // 10 Sep the calculus changed inside an hour: azamara@cims.work now routes
+    // fleet mail to this Worker, and Workers Builds publishes a preview URL for
+    // every commit. /states, /misses and /azamara return the fleet's ordering
+    // position, ship by ship, to anyone holding one of those URLs. That is a
+    // competitor's view of another company's supply chain.
+    //
+    // FAIL CLOSED. With no ADMIN_KEY set, these refuse rather than serve. An
+    // access control that quietly disables itself when unconfigured is not one.
+    // The crons do not come through fetch(), so the Monday email and the night
+    // check are unaffected either way.
+    const PUBLIC = new Set(['/health', '/']);
+    if (!PUBLIC.has(url.pathname)) {
+      if (!env.ADMIN_KEY) {
+        return json({
+          error: 'ADMIN_KEY is not set',
+          detail: 'This endpoint returns fleet operational data and refuses to serve it ' +
+            'unauthenticated. Set ADMIN_KEY as a Worker secret, then pass ?key=<ADMIN_KEY>.',
+        }, 503);
+      }
+      // Header OR query. A browser can only do the query form, which is what
+      // Miguel needs, but a query string lands in browser history and in every
+      // access log that records a URL. Anything scripted should send the header
+      // instead - the same shape cims-hon already uses for x-ingest-token.
+      const given = request.headers.get('x-admin-key') || url.searchParams.get('key');
+      if (!secretEquals(given, env.ADMIN_KEY)) {
+        return json({ error: 'unauthorized', detail: 'pass ?key=<ADMIN_KEY>' }, 401);
+      }
+    }
 
     if (url.pathname === '/health') {
       const q = async (sql) => (await env.HON.prepare(sql).first()) || {};
@@ -400,7 +497,12 @@ export default {
     if (url.pathname === '/preview-ship') {
       const want = url.searchParams.get('ship') || '';
       const st = await voyageStates(env.HON, today);
-      const plan = planFleetSend(actionable(st), env.FLEET_MAP);
+      // A ship with no ordering schedule has no voyage rows at all, so without
+      // the gaps it is not in the plan and /preview-ship answers "nothing due"
+      // for 25 of 48 ships - the same silence, in the tool built to check for it.
+      const gq = await unscheduledGaps(env.HON, today).catch(() => ({ ran: false, findings: [] }));
+      const gp = gq.ran ? gq.findings : [];
+      const plan = planFleetSend(actionable(st), env.FLEET_MAP, gp);
       const g = [...plan.sendable, ...plan.unmapped]
         .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
       if (!want || !g) {
@@ -410,7 +512,7 @@ export default {
         }, 404);
       }
       return new Response(
-        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship }),
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp }),
         { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
