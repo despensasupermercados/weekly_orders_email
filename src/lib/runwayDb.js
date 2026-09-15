@@ -8,7 +8,7 @@
 
 import { inService, byFleetOrder } from './fleetStatus.js';
 import { require_ } from './schema.js';
-import { runsOutFirst } from './runway.js';
+import { runsOutFirst, withQuantity } from './runway.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
@@ -59,7 +59,7 @@ export async function fleetRunway(hon, today, opts = {}) {
              MAX(CASE WHEN month = ?3 THEN u END) lastm
         FROM used GROUP BY ship, part_number
     )
-    SELECT a.ship, substr(p.description, 1, 34) item,
+    SELECT a.ship, substr(p.description, 1, 34) item, p.par_qty, p.brand,
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
            COALESCE((SELECT i.on_hand FROM obp_inventory i
                       WHERE i.ship = a.ship AND i.part_number = a.part_number
@@ -73,7 +73,21 @@ export async function fleetRunway(hon, today, opts = {}) {
                         AND date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') >= ?4), '') next_eta,
            COALESCE((SELECT SUM(t.qty) FROM obp_intransit t
                       WHERE t.ship = a.ship AND t.part_number = a.part_number
-                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)), 0) in_transit
+                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)), 0) in_transit,
+           -- THE LANDING AFTER NEXT, any item, same ship. The quantity added to
+           -- the next container has to last until the one after it lands.
+           COALESCE((SELECT MIN(date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days'))
+                       FROM obp_intransit t
+                      WHERE t.ship = a.ship
+                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
+                        AND t.eta GLOB '[0-9]*'
+                        AND date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') >
+                            COALESCE((SELECT MIN(date('1899-12-30','+'||CAST(u.eta AS INTEGER)||' days'))
+                                        FROM obp_intransit u
+                                       WHERE u.ship = a.ship AND u.part_number = a.part_number
+                                         AND u.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
+                                         AND u.eta GLOB '[0-9]*'
+                                         AND date('1899-12-30','+'||CAST(u.eta AS INTEGER)||' days') >= ?4), ?4)), '') next_after
       FROM agg a
       JOIN par p ON p.ship = a.ship AND p.part_number = a.part_number
      WHERE ${ITEM_FILTER}
@@ -107,7 +121,12 @@ export async function fleetRunway(hon, today, opts = {}) {
       nextLoading: r.next_eta || null,
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
-    if (f) findings.push(f);
+    if (f) findings.push(withQuantity(f, {
+      brand: r.brand,
+      parQty: r.par_qty == null ? null : Number(r.par_qty),
+      inTransit: r.next_eta ? Number(r.in_transit) || 0 : 0,
+      nextAfter: r.next_after || null,
+    }));
   }
   // A hull with no crew aboard cannot act on any of this, and its seeded
   // inventory reads as a ship running dry. See fleetStatus.js.

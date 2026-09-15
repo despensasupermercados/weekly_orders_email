@@ -17,6 +17,8 @@ import { byFleetOrder } from './fleetStatus.js';
 const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946', GREEN_INK = '#3E7F2E';
 const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
 const RED = '#96281B', RED_BG = '#FBE7E4', AMBER = '#B7791F', AMBER_BG = '#FBF0D8';
+// The container's own tile: a fact, so it takes no alarm colour.
+const INK = '#374151', INK_BG = '#EEF0F3';
 const GREY = '#9CA3AF';
 const FH = "'Outfit',Helvetica,Arial,sans-serif";
 const FB = "'DM Sans',Helvetica,Arial,sans-serif";
@@ -43,9 +45,19 @@ const fmtDowFull = (isoDate) => (isoDate ? `${fmtDow(isoDate)} ${MONTHS[Number(i
 // parses a calendar tile: weekday, number, month, stacked. It carries the
 // row's colour, so the deadline and its urgency are one object rather than two
 // things to connect.
-function dateBlock(isoDate, fg, bg) {
+// TWO TILES, NOT ONE. Ray, 1 Sep 2026 Q21: the printer "looks at the order due
+// date which is the physical date they have to process the order or it's
+// missed. After that ... the only thing they really care about is the loading
+// delivery date which is the date that the items are gonna be on board." Those
+// are the two dates, side by side, each with a one-word label a crew can learn
+// once. The first carries the row's colour; the second is neutral - it is a fact
+// about the container, not an instruction.
+function dateBlock(isoDate, fg, bg, label = '') {
   if (!isoDate) return '';
-  return `<td width="62" bgcolor="${bg}" style="background:${bg};width:62px;padding:7px 4px;text-align:center;">
+  const cap = label
+    ? `<div style="font-family:${FB};font-size:8px;font-weight:700;letter-spacing:1px;color:${fg};line-height:1.2;padding-bottom:2px;">${label}</div>`
+    : '';
+  return `<td width="62" bgcolor="${bg}" style="background:${bg};width:62px;padding:6px 4px;text-align:center;vertical-align:top;">${cap}
 <div style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:1.2px;color:${fg};line-height:1.2;">${dowOf(isoDate).toUpperCase()}</div>
 <div style="font-family:${FH};font-size:24px;font-weight:700;color:${fg};line-height:1.1;">${Number(isoDate.slice(8, 10))}</div>
 <div style="font-family:${FB};font-size:10px;font-weight:600;letter-spacing:.6px;color:${fg};line-height:1.2;">${MONTHS[Number(isoDate.slice(5, 7)) - 1].toUpperCase()}</div>
@@ -114,7 +126,8 @@ function rowHtml(row, i) {
   // the row's colour, so "when" and "how urgent" are one object.
   return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:0;border-bottom:1px solid ${BORDER};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${dateBlock(row.due_date, fg, bg)}
+      ${dateBlock(row.due_date, fg, bg, 'ORDER BY')}
+      ${dateBlock(row.loading_delivery_date, INK, INK_BG, 'ON BOARD')}
       <td style="padding:10px 12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
           <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
@@ -122,7 +135,7 @@ function rowHtml(row, i) {
         </tr></table>
         <div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:4px;">${what}</div>
         <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:5px;line-height:1.5;">
-          Loads ${fmtDowFull(row.loading_delivery_date)} &middot; ${esc(row.loading_port || 'port TBC')}${row.voyage ? ` &middot; ${esc(row.voyage)}` : ''}
+          ${esc(row.loading_port || 'port TBC')}${row.voyage ? ` &middot; ${esc(row.voyage)}` : ''}
         </div>${moved}
       </td>
     </tr></table>
@@ -318,6 +331,46 @@ ${body}
 // It reports a DATE, never a quantity. Par is what should be aboard and an
 // order line is a different number; the crew turns two facts - what is on
 // board, what it burns a month - into an order in seconds.
+// THE DAYS WITH NONE. The item is empty on the first tile and the container
+// lands on the second; the gap between them is the cost of the miss, in days,
+// and a number the reader can weigh without being told what to feel about it.
+function dryDays(f) {
+  if (!f.next_loading || !f.stockout || f.next_loading <= f.stockout) return '';
+  const d = Math.round((Date.parse(f.next_loading) - Date.parse(f.stockout)) / 86400000);
+  return ` &middot; <span style="color:${RED};">${d} day${d === 1 ? '' : 's'} with none</span>`;
+}
+
+// THE NUMBER. Miguel, 15 Sep 2026: "since you have the usage, I need to add
+// here how much I need you to add on that order of that specific item." The
+// quantity comes from runway.orderQuantity(), each branch sourced to Ray's
+// written answers; the basis is printed small so the crew can see why, and Ray
+// can see it is his rule. When no sourced rule fits, the line says so rather
+// than print an estimate.
+function addLine(f, fg) {
+  const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
+  const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; covers to ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
+  if (!f.next_loading) {
+    // Ray, 1 Sep 2026 Q22: a missed order goes to the inventory manager on
+    // board as a manual order. That is who to ask; this is what to ask for.
+    const ask = f.add_qty != null
+      ? `Ask the inventory manager for a manual order: add ${big(f.add_qty)}`
+      : 'Nothing on order for it. Ask the inventory manager for a manual order.';
+    return `<div style="font-family:${FB};font-size:13px;color:${RED};padding-top:5px;">${ask}</div>${why}`;
+  }
+  if (f.add_qty == null) {
+    return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">Add it to the order landing ${fmtDowFull(f.next_loading)}. No fixed rule for this item &mdash; use your statistics file.</div>`;
+  }
+  if (f.add_qty === 0) {
+    // Facts only. How long the gap is sits in red on the line above; what to
+    // do about a gap of that length is Ray's call and the ship's, not a rule
+    // this email holds. Nothing to add to the order is still worth saying, so
+    // nobody orders a second pallet to fix a gap a pallet cannot reach.
+    const d = Math.round((Date.parse(f.next_loading) - Date.parse(f.stockout)) / 86400000);
+    return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">The container on <strong>${fmtDowFull(f.next_loading)}</strong> carries enough. Nothing to add &mdash; but you are empty <strong style="color:${RED};">${d} day${d === 1 ? '' : 's'}</strong> before it lands.</div>${why}`;
+  }
+  return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">Add ${big(f.add_qty)} to the order landing <strong>${fmtDowFull(f.next_loading)}</strong></div>${why}`;
+}
+
 function runsOutHtml(findings, forShip, shipName) {
   const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
   if (!list.length) return '';
@@ -325,24 +378,31 @@ function runsOutHtml(findings, forShip, shipName) {
     const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
     // RED only when nothing at all is on order for it. If something is coming,
     // late is amber: the crew can still add a line to an open order.
-    const [fg, bg, label] = f.next_loading
-      ? [AMBER, AMBER_BG, 'ADD NOW']
-      : [RED, RED_BG, 'NOT ON ORDER'];
+    // THE BADGE IS THE ACTION, AND IT MUST AGREE WITH THE LINE BELOW IT. The
+    // first cut printed ADD NOW above "Nothing to add" - the email arguing with
+    // itself on one row. Three states: nothing coming (red), add to what is
+    // coming (amber), enough is coming (green - the days-with-none figure in
+    // the text is then the whole message).
+    // A RUNS_OUT finding exists only when the item is empty BEFORE the container
+    // lands, so "enough is coming" is never the whole story: the ship is dry
+    // for the days between the two tiles. That row is not green. It is a gap.
+    const [fg, bg, label] = !f.next_loading
+      ? [RED, RED_BG, 'NOT ON ORDER']
+      : (f.add_qty === 0 ? [AMBER, AMBER_BG, 'GAP'] : [AMBER, AMBER_BG, 'ADD NOW']);
     // The ship name is redundant on a ship's own email, and repeating it on
     // every row is the kind of noise that makes a page feel long.
     const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:0;border-bottom:1px solid ${BORDER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-${dateBlock(f.stockout, fg, bg)}
+${dateBlock(f.stockout, fg, bg, 'EMPTY')}
+${f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, 'ON BOARD') : ''}
 <td style="padding:9px 12px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
   <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
-  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;">Empty about <strong>${fmtDowFull(f.stockout)}</strong> &middot; <strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month</div>
-  <div style="font-family:${FB};font-size:12px;color:${f.next_loading ? SLATE : RED};padding-top:2px;">${f.next_loading
-      ? `Next delivery ${fmtDowFull(f.next_loading)}. Add it to that order.`
-      : 'Nothing on order for it.'}</div>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month${dryDays(f)}</div>
+  ${addLine(f, fg)}
 </td></tr></table>
 </td></tr>`;
   }).join('');
@@ -468,7 +528,7 @@ export function renderWeekly(act, all, today, opts = {}) {
 <body style="margin:0;padding:0;background:${CLOUD};" bgcolor="${CLOUD}">
 <div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">${esc(preheader)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLOUD}"><tr><td align="center" style="padding:26px 10px;">
-<table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
 
 ${mastRows()}
 
