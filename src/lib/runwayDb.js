@@ -6,9 +6,9 @@
 // empty list here reads as "no ship will run out", which is the most expensive
 // wrong answer this email could give.
 
-import { inService, byFleetOrder } from './fleetStatus.js';
+import { inService } from './fleetStatus.js';
 import { require_ } from './schema.js';
-import { runsOutFirst, withQuantity } from './runway.js';
+import { runsOutFirst, withQuantity, byDueDate } from './runway.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
@@ -168,10 +168,11 @@ export async function fleetRunway(hon, today, opts = {}) {
   // A hull with no crew aboard cannot act on any of this, and its seeded
   // inventory reads as a ship running dry. See fleetStatus.js.
   const live = findings.filter((f) => inService(f.ship, today));
-  // Soonest-dry first, but Azamara grouped at the end: they run on a different
-  // schedule and mixing them makes the reader check which rules apply per line.
-  live.sort((a, b) => byFleetOrder(a.ship, b.ship)
-    || (a.stockout < b.stockout ? -1 : a.stockout > b.stockout ? 1 : 0));
+  // BY DUE DATE. Miguel, 15 Sep 2026: "always filter by the due date on these
+  // emails." The first tile is the deadline, so the list runs in deadline
+  // order. Fleet grouping is gone from this list on purpose: the reader is told
+  // what to do first, not which brand a ship belongs to.
+  live.sort(byDueDate);
   const findingsOut = live;
   // The NAMES, not just the count. The fleet email's "X of Y ships clear" needs
   // to know which ships were actually looked at; without this it fell back to

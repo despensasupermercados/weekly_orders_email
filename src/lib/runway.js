@@ -249,3 +249,16 @@ export function withQuantity(finding, { brand, parQty, due = null, lands = null,
     add_basis: q ? q.basis : null,
   };
 }
+
+// DEADLINE ORDER for RUNS_OUT findings. Miguel, 15 Sep 2026: "always filter by
+// the due date on these emails." No open order (nothing to add to, a manual
+// order to ask for today) sorts first; then the earliest due date; then the
+// day the item runs dry; then ship and item so the order is stable.
+export function byDueDate(a, b) {
+  const da = a.order_due || '', db = b.order_due || '';
+  if (da !== db) return da < db ? -1 : 1;
+  const sa = a.stockout || '', sb = b.stockout || '';
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  const ka = `${a.ship}|${a.item}`, kb = `${b.ship}|${b.item}`;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}

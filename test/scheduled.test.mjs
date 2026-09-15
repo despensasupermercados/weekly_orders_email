@@ -120,3 +120,34 @@ assert.ok(/MAGENTA/.test(mail.html), 'a stockout reaches the fleet email');
 
 console.log('ok - the Monday run assembles and sends: no unbound binding, and the subject');
 console.log('     and preheader count the stockouts and gaps, not just the voyage rows');
+
+// LIVE. Miguel, 15 Sep 2026: the whole-fleet list to onboardsupport, one email
+// per ship to that ship's mailbox with Ray in copy. The same run, switched on.
+{
+  sent.length = 0; waits.length = 0;
+  const live = {
+    ...env,
+    SEND_TO_FLEET: 'true',
+    FLEET_TO: 'onboardsupport@example.com',
+    SHIP_CC: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
+  };
+  await worker.scheduled({ cron: '0 12 * * MON', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  const ships = sent.filter((m) => /^[A-Z][a-z]+: /.test(m.subject));
+  const digest = sent.filter((m) => /^Orders due this week/.test(m.subject));
+  assert.ok(ships.length >= 2, `one email per ship with a finding, got ${ships.length}`);
+  for (const m of ships) {
+    assert.deepEqual(m.cc, ['ray@example.com'], `${m.subject}: Ray is in copy`);
+    assert.equal(m.to.length, 1, `${m.subject}: to the ship only`);
+    assert.ok(!m.to.includes('onboardsupport@example.com'), `${m.subject}: onboardsupport is not a ship`);
+  }
+  const quest = ships.find((m) => m.subject.startsWith('Quest:'));
+  assert.ok(quest, 'Quest, a stockout-only ship, is mailed');
+  assert.deepEqual(quest.to, ['qs_pm@example.com']);
+  assert.equal(digest.length, 1, 'exactly one whole-fleet email');
+  assert.deepEqual(digest[0].to, ['onboardsupport@example.com'], 'the fleet list goes to onboardsupport');
+  assert.equal(digest[0].cc, undefined, 'and nobody is copied on it');
+  assert.ok(!sent.some((m) => m.to.includes('ops@example.com')), 'DRY_RUN_TO is not used when live');
+  console.log('ok - live: each ship gets its own email with Ray in copy, onboardsupport gets the fleet list');
+}
