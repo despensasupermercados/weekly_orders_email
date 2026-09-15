@@ -59,16 +59,33 @@ assert.ok(q({ item: 'TN514Y YELLOW TONER', brand: 'Azamara', rate: 2, inTransit:
 // An item with no sourced rule gets no number. Never an estimate.
 assert.equal(q({ item: 'SOME OTHER SUPPLY', brand: 'Royal', rate: 5 }), null);
 
-// withQuantity: the cycle is next landing -> landing after; absent, a month.
-const f = { ship: 'Quest', item: 'TN619M MAGENTA TONER', rate: 14, next_loading: '2026-10-14' };
-const a = withQuantity(f, { brand: 'Azamara', parQty: 5, inTransit: 10, nextAfter: '2026-10-29' });
+// withQuantity: the order is the ship's next OPEN order (Ray Q21 - after the
+// due date it is processed or missed); the cycle runs from that landing to the
+// landing after; absent, a month. The container already on its way (next_loading)
+// is a fact for the reader, not the order the line goes on.
+const f = { ship: 'Quest', item: 'TN619M MAGENTA TONER', rate: 14, on_hand: 3, stockout: '2026-10-13', next_loading: '2026-10-14' };
+const a = withQuantity(f, { brand: 'Azamara', parQty: 5, due: '2026-12-08', lands: '2026-12-18', until: '2027-01-02', coming: 10 });
+assert.equal(a.order_due, '2026-12-08');
+assert.equal(a.order_lands, '2026-12-18');
 assert.equal(a.cycle_days, 15);
-assert.equal(a.cover_to, '2026-10-29');
+assert.equal(a.cover_to, '2027-01-02');
 assert.equal(a.add_qty, 7 + 3 - 10);
-const b = withQuantity(f, { brand: 'Azamara', parQty: 5, inTransit: 0, nextAfter: null });
+const b = withQuantity(f, { brand: 'Azamara', parQty: 5 });
+assert.equal(b.order_due, null);
 assert.equal(b.cycle_days, 30);
 assert.equal(b.cover_to, null);
 assert.equal(b.add_qty, 17);
+
+// The par rule is a top-up: when the open order lands BEFORE the item runs dry,
+// what is still aboard that day counts. 10 aboard, 6 a month, lands in 30 days
+// -> about 4 left; par 5 -> add 1, not 5.
+const mfd = { ship: 'Onward', item: 'TNP75 BLACK TONER', rate: 6, on_hand: 10, stockout: '2026-11-04', next_loading: null };
+const c = withQuantity(mfd, { brand: 'Azamara', parQty: 5, due: '2026-10-06', lands: '2026-10-15', until: null, coming: 0, today: '2026-09-15', arrivals: [] });
+assert.equal(c.add_qty, 1);
+assert.match(c.add_basis, /about 4 still aboard/);
+// Same item, order landing after the stockout: nothing aboard, top up to par.
+const d = withQuantity(mfd, { brand: 'Azamara', parQty: 5, due: '2026-11-06', lands: '2026-11-20', until: null, coming: 0, today: '2026-09-15', arrivals: [] });
+assert.equal(d.add_qty, 5);
 
 console.log("ok - quantities: every branch is one of Ray's written rules - +3 toner, 12 waste");
 console.log('     boxes, 40-case pallets, 10-case Radiant minimum, Azamara to consumption or OBP par');

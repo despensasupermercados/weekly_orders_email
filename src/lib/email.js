@@ -52,6 +52,15 @@ const fmtDowFull = (isoDate) => (isoDate ? `${fmtDow(isoDate)} ${MONTHS[Number(i
 // are the two dates, side by side, each with a one-word label a crew can learn
 // once. The first carries the row's colour; the second is neutral - it is a fact
 // about the container, not an instruction.
+// THE TWO LABELS, THE SAME ON EVERY ROW OF THE EMAIL. Miguel, 15 Sep 2026:
+// "call it DUE DATE, because that is what you want to show - the last day this
+// order needs to be placed. Next to it, if they make the order, when it will be
+// on board." A stockout row once led with the day the item runs EMPTY; that is a
+// consequence, not a deadline, and the printer cannot act on it. The deadline
+// is the due date of the order still open; the empty day moves into the text.
+const DUE_LABEL = 'DUE DATE';
+const ARRIVES_LABEL = 'ARRIVES';
+const RUNS_OUT_LABEL = 'RUNS OUT'; // only when there is no open order to add to
 function dateBlock(isoDate, fg, bg, label = '') {
   if (!isoDate) return '';
   const cap = label
@@ -126,8 +135,8 @@ function rowHtml(row, i) {
   // the row's colour, so "when" and "how urgent" are one object.
   return `<tr><td bgcolor="${zb}" style="background:${zb};border-left:4px solid ${fg};padding:0;border-bottom:1px solid ${BORDER};">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${dateBlock(row.due_date, fg, bg, 'ORDER BY')}
-      ${dateBlock(row.loading_delivery_date, INK, INK_BG, 'ON BOARD')}
+      ${dateBlock(row.due_date, fg, bg, DUE_LABEL)}
+      ${dateBlock(row.loading_delivery_date, INK, INK_BG, ARRIVES_LABEL)}
       <td style="padding:10px 12px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
           <td style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};">${esc(row.ship)}</td>
@@ -331,77 +340,89 @@ ${body}
 // It reports a DATE, never a quantity. Par is what should be aboard and an
 // order line is a different number; the crew turns two facts - what is on
 // board, what it burns a month - into an order in seconds.
-// THE DAYS WITH NONE. The item is empty on the first tile and the container
-// lands on the second; the gap between them is the cost of the miss, in days,
-// and a number the reader can weigh without being told what to feel about it.
-function dryDays(f) {
-  if (!f.next_loading || !f.stockout || f.next_loading <= f.stockout) return '';
-  const d = Math.round((Date.parse(f.next_loading) - Date.parse(f.stockout)) / 86400000);
-  return ` &middot; <span style="color:${RED};">${d} day${d === 1 ? '' : 's'} with none</span>`;
+// THE DAYS WITH NONE. Between the day the item runs dry and the first day
+// something for it is aboard again - a container already on its way, or the
+// open order once a line is added. The cost of the miss, in days, stated as a
+// fact the reader can weigh without being told what to feel about it.
+function dryUntil(f) {
+  if (!f.stockout) return null;
+  const ends = [f.next_loading, f.order_lands].filter((d) => d && d > f.stockout).sort();
+  if (!ends.length) return null;
+  const d = Math.round((Date.parse(ends[0]) - Date.parse(f.stockout)) / 86400000);
+  return { date: ends[0], days: d, byOrder: ends[0] === f.order_lands && ends[0] !== f.next_loading };
 }
+const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : 's'}</strong>`;
 
-// THE NUMBER. Miguel, 15 Sep 2026: "since you have the usage, I need to add
-// here how much I need you to add on that order of that specific item." The
-// quantity comes from runway.orderQuantity(), each branch sourced to Ray's
-// written answers; the basis is printed small so the crew can see why, and Ray
-// can see it is his rule. When no sourced rule fits, the line says so rather
-// than print an estimate.
+// THE NUMBER, AND WHICH ORDER IT GOES ON. Miguel, 15 Sep 2026: "since you have
+// the usage, I need to add here how much I need you to add on that order of
+// that specific item." The quantity comes from runway.orderQuantity(), each
+// branch sourced to Ray's written answers; the basis is printed small so the
+// crew can see why, and Ray can see it is his rule. The order is the one still
+// open (Ray Q21) - never a container whose due date has passed.
 function addLine(f, fg) {
   const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
   const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; covers to ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
-  if (!f.next_loading) {
+  const dry = dryUntil(f);
+  if (!f.order_due) {
     // Ray, 1 Sep 2026 Q22: a missed order goes to the inventory manager on
     // board as a manual order. That is who to ask; this is what to ask for.
+    const whyNot = f.has_schedule
+      ? 'No order is open on your schedule.'
+      : 'No ordering schedule is loaded for this ship, so there is no due date to quote.';
     const ask = f.add_qty != null
       ? `Ask the inventory manager for a manual order: add ${big(f.add_qty)}`
-      : 'Nothing on order for it. Ask the inventory manager for a manual order.';
-    return `<div style="font-family:${FB};font-size:13px;color:${RED};padding-top:5px;">${ask}</div>${why}`;
+      : 'Ask the inventory manager for a manual order.';
+    const coming = dry
+      ? ` A container with this item lands <strong>${fmtDowFull(dry.date)}</strong> &mdash; ${redDays(dry.days)} with none before that.`
+      : ' Nothing for it is on the way.';
+    return `<div style="font-family:${FB};font-size:13px;color:${RED};padding-top:5px;">${whyNot} ${ask}</div>` +
+      `<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">${coming.trim()}</div>${why}`;
   }
-  if (f.add_qty == null) {
-    return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">Add it to the order landing ${fmtDowFull(f.next_loading)}. No fixed rule for this item &mdash; use your statistics file.</div>`;
-  }
-  if (f.add_qty === 0) {
-    // Facts only. How long the gap is sits in red on the line above; what to
-    // do about a gap of that length is Ray's call and the ship's, not a rule
-    // this email holds. Nothing to add to the order is still worth saying, so
-    // nobody orders a second pallet to fix a gap a pallet cannot reach.
-    const d = Math.round((Date.parse(f.next_loading) - Date.parse(f.stockout)) / 86400000);
-    return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">The container on <strong>${fmtDowFull(f.next_loading)}</strong> carries enough. Nothing to add &mdash; but you are empty <strong style="color:${RED};">${d} day${d === 1 ? '' : 's'}</strong> before it lands.</div>${why}`;
-  }
-  return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">Add ${big(f.add_qty)} to the order landing <strong>${fmtDowFull(f.next_loading)}</strong></div>${why}`;
+  // What happens between running dry and the order being aboard.
+  let after;
+  if (!dry) after = 'It arrives before you run out.';
+  else if (dry.byOrder) after = `It arrives ${redDays(dry.days)} after you run out. If you cannot wait, ask the inventory manager for a manual order.`;
+  else after = `A container with this item lands <strong>${fmtDowFull(dry.date)}</strong> first &mdash; ${redDays(dry.days)} with none before that.`;
+  const order = `the order due <strong>${fmtDowFull(f.order_due)}</strong>`;
+  let head;
+  if (f.add_qty == null) head = `Add it to ${order}. No fixed rule for this item &mdash; use your statistics file.`;
+  else if (f.add_qty === 0) head = `${order[0].toUpperCase()}${order.slice(1)} already carries enough. Nothing to add.`;
+  else head = `Add ${big(f.add_qty)} to ${order}.`;
+  return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">${head} ${after}</div>${why}`;
 }
 
-function runsOutHtml(findings, forShip, shipName) {
+function runsOutHtml(findings, forShip, shipName, today) {
   const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
   if (!list.length) return '';
+  const soon = (d) => today && d && Math.round((Date.parse(d) - Date.parse(today)) / 86400000) <= 7;
   const rows = list.map((f, i) => {
     const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
-    // RED only when nothing at all is on order for it. If something is coming,
-    // late is amber: the crew can still add a line to an open order.
-    // THE BADGE IS THE ACTION, AND IT MUST AGREE WITH THE LINE BELOW IT. The
-    // first cut printed ADD NOW above "Nothing to add" - the email arguing with
-    // itself on one row. Three states: nothing coming (red), add to what is
-    // coming (amber), enough is coming (green - the days-with-none figure in
-    // the text is then the whole message).
-    // A RUNS_OUT finding exists only when the item is empty BEFORE the container
-    // lands, so "enough is coming" is never the whole story: the ship is dry
-    // for the days between the two tiles. That row is not green. It is a gap.
-    const [fg, bg, label] = !f.next_loading
-      ? [RED, RED_BG, 'NOT ON ORDER']
-      : (f.add_qty === 0 ? [AMBER, AMBER_BG, 'GAP'] : [AMBER, AMBER_BG, 'ADD NOW']);
+    // THE BADGE IS THE STATE OF THE ORDER, AND IT MUST AGREE WITH THE LINE
+    // BELOW IT. RED when there is no open order to add a line to (the only
+    // route is a manual order) or the open order is due within the week.
+    // AMBER when a line can still be added in time.
+    const [fg, bg, label] = !f.order_due
+      ? [RED, RED_BG, f.has_schedule ? 'NO OPEN ORDER' : 'NO SCHEDULE']
+      : (soon(f.order_due) ? [RED, RED_BG, 'DUE THIS WEEK'] : [AMBER, AMBER_BG, 'ADD TO ORDER']);
     // The ship name is redundant on a ship's own email, and repeating it on
     // every row is the kind of noise that makes a page feel long.
     const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
+    // Tile one is the deadline: the due date of the order still open. With no
+    // open order there is no deadline to show, so the day it runs out stands
+    // there instead, in red, and the label says which it is. Tile two is the
+    // day that order (or, failing one, the container on its way) is aboard.
+    const tiles = f.order_due
+      ? dateBlock(f.order_due, fg, bg, DUE_LABEL) + dateBlock(f.order_lands, INK, INK_BG, ARRIVES_LABEL)
+      : dateBlock(f.stockout, fg, bg, RUNS_OUT_LABEL) + (f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, ARRIVES_LABEL) : '');
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:0;border-bottom:1px solid ${BORDER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-${dateBlock(f.stockout, fg, bg, 'EMPTY')}
-${f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, 'ON BOARD') : ''}
+${tiles}
 <td style="padding:9px 12px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
   <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
-  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month${dryDays(f)}</div>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month &middot; empty <strong>${fmtDowFull(f.stockout)}</strong></div>
   ${addLine(f, fg)}
 </td></tr></table>
 </td></tr>`;
@@ -410,7 +431,7 @@ ${f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, 'ON BOARD') : ''}
   return `
 <tr><td style="padding:24px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Adding a line to an order that is still open costs nothing. Miss it and the ship waits for the next loading.</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">The first date is the last day a line can still be added to the order; the second is the day that order is on board. Miss the first and the ship waits for the next one.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
 </td></tr>`;
 }
@@ -544,7 +565,7 @@ ${legendHtml()}
 
 <tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>
 
-${runsOutHtml(opts.runsOut, forShip, shipName)}
+${runsOutHtml(opts.runsOut, forShip, shipName, today)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
 ${coverageHtml(all, today, forShip, shipName, opts.gaps)}
 

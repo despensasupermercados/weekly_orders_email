@@ -36,6 +36,7 @@ const COLUMNS = {
   obp_inventory: ['ship', 'part_number', 'on_hand', 'snapshot_date'],
   obp_intransit: ['ship', 'part_number', 'eta', 'qty', 'snapshot_date'],
   par: ['ship', 'part_number', 'description'],
+  schedule_order: ['ship', 'mot', 'due_date', 'loading_delivery_date'],
 };
 
 // One delivery series with a hole in it, on a ship with no ordering schedule.
@@ -49,7 +50,7 @@ const DELIVERIES = [
 // One item that empties before the container that would refill it.
 const RATES = [
   { ship: 'Quest', item: 'TN619M MAGENTA TONER', rate: 14, on_hand: 3,
-    next_eta: '2026-11-30', in_transit: 10 },
+    next_eta: '2026-11-30', on_next: 10, order_due: null, order_lands: null, has_schedule: 0 },
 ];
 
 const logged = [];
@@ -67,8 +68,9 @@ const fakeDb = {
       all: async () => {
         const m = /PRAGMA table_info\((\w+)\)/.exec(sql);
         if (m) return { results: (COLUMNS[m[1]] || []).map((name) => ({ name })) };
-        if (/FROM schedule_order/.test(sql) && /obp_intransit/.test(sql)) return { results: DELIVERIES };
+        // The runway query reads all four tables; route it before the others.
         if (/consumption_snapshot/.test(sql)) return { results: RATES };
+        if (/FROM schedule_order/.test(sql) && /obp_intransit/.test(sql)) return { results: DELIVERIES };
         if (/loading_delivery_date/.test(sql) || /schedule_order/.test(sql)) return { results: VOYAGES };
         return { results: [] };
       },

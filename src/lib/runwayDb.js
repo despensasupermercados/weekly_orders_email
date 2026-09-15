@@ -24,12 +24,20 @@ const ITEM_FILTER = `(
 
 export const HORIZON_DAYS = 120;
 
+// Which schedule rows carry an order the ship can add to. The same three
+// clauses as due.js and fallback.js; `t` is the schedule_order alias.
+const eligible = (t) => `(
+      UPPER(REPLACE(REPLACE(${t}.mot,'-',''),' ','')) LIKE 'HOTELBIWEEKLYHOTEL%'
+   OR UPPER(REPLACE(REPLACE(${t}.mot,'-',''),' ','')) LIKE 'HOTELMONTHLY%'
+   OR ${t}.mot = 'AZAMARA BWS')`;
+
 export async function fleetRunway(hon, today, opts = {}) {
   for (const [table, cols] of [
     ['consumption_snapshot', ['ship', 'part_number', 'month', 'on_hand', 'receipts']],
     ['obp_inventory', ['ship', 'part_number', 'on_hand', 'snapshot_date']],
-    ['obp_intransit', ['ship', 'part_number', 'eta', 'snapshot_date']],
+    ['obp_intransit', ['ship', 'part_number', 'eta', 'qty', 'snapshot_date']],
     ['par', ['ship', 'part_number', 'description']],
+    ['schedule_order', ['ship', 'mot', 'due_date', 'loading_delivery_date']],
   ]) {
     const probe = await require_(hon, table, cols);
     if (!probe.ok) return { ran: false, reason: probe.reason, findings: [], measured: 0 };
@@ -59,37 +67,58 @@ export async function fleetRunway(hon, today, opts = {}) {
              MAX(CASE WHEN month = ?3 THEN u END) lastm
         FROM used GROUP BY ship, part_number
     )
+    -- Every open line, with its Excel-serial ETA already a date. Read once.
+    , transit AS (
+      SELECT t.ship, t.part_number, t.qty,
+             date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') land
+        FROM obp_intransit t
+       WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
+         AND t.eta GLOB '[0-9]*'
+    ), nxt AS (
+      SELECT ship, part_number, MIN(land) next_eta
+        FROM transit WHERE land >= ?4 GROUP BY ship, part_number
+    ),
+    -- THE ORDER STILL OPEN. Ray Q21: after the due date the order is processed
+    -- or missed, so this is the earliest due date on or after today, and the
+    -- date that order is on board. Same eligibility as due.js.
+    open_order AS (
+      SELECT ship, due_date, loading_delivery_date,
+             ROW_NUMBER() OVER (PARTITION BY ship ORDER BY due_date, loading_delivery_date) rn
+        FROM schedule_order s
+       WHERE ${eligible('s')}
+         AND s.due_date >= ?4
+         AND s.loading_delivery_date IS NOT NULL AND s.loading_delivery_date != ''
+    )
     SELECT a.ship, substr(p.description, 1, 34) item, p.par_qty, p.brand,
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
            COALESCE((SELECT i.on_hand FROM obp_inventory i
                       WHERE i.ship = a.ship AND i.part_number = a.part_number
                         AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
                       LIMIT 1), 0) on_hand,
-           COALESCE((SELECT MIN(date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days'))
-                       FROM obp_intransit t
-                      WHERE t.ship = a.ship AND t.part_number = a.part_number
-                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-                        AND t.eta GLOB '[0-9]*'
-                        AND date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') >= ?4), '') next_eta,
-           COALESCE((SELECT SUM(t.qty) FROM obp_intransit t
-                      WHERE t.ship = a.ship AND t.part_number = a.part_number
-                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)), 0) in_transit,
-           -- THE LANDING AFTER NEXT, any item, same ship. The quantity added to
-           -- the next container has to last until the one after it lands.
-           COALESCE((SELECT MIN(date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days'))
-                       FROM obp_intransit t
-                      WHERE t.ship = a.ship
-                        AND t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-                        AND t.eta GLOB '[0-9]*'
-                        AND date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') >
-                            COALESCE((SELECT MIN(date('1899-12-30','+'||CAST(u.eta AS INTEGER)||' days'))
-                                        FROM obp_intransit u
-                                       WHERE u.ship = a.ship AND u.part_number = a.part_number
-                                         AND u.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-                                         AND u.eta GLOB '[0-9]*'
-                                         AND date('1899-12-30','+'||CAST(u.eta AS INTEGER)||' days') >= ?4), ?4)), '') next_after
+           COALESCE(n.next_eta, '') next_eta,
+           -- what lands for this item on THAT day - not the sum of every open
+           -- line, which once made most of the fleet read "nothing to add".
+           COALESCE((SELECT SUM(x.qty) FROM transit x
+                      WHERE x.ship = a.ship AND x.part_number = a.part_number
+                        AND x.land = n.next_eta), 0) on_next,
+           o.due_date order_due,
+           o.loading_delivery_date order_lands,
+           COALESCE((SELECT SUM(x.qty) FROM transit x
+                      WHERE x.ship = a.ship AND x.part_number = a.part_number
+                        AND x.land = o.loading_delivery_date), 0) on_order,
+           -- the landing after the open order: next on the schedule, else the
+           -- next container of anything for the ship
+           COALESCE((SELECT MIN(s.loading_delivery_date) FROM schedule_order s
+                      WHERE s.ship = a.ship AND ${eligible('s')}
+                        AND s.loading_delivery_date > o.loading_delivery_date),
+                    (SELECT MIN(x.land) FROM transit x
+                      WHERE x.ship = a.ship AND x.land > o.loading_delivery_date)) order_until,
+           EXISTS (SELECT 1 FROM schedule_order s
+                    WHERE s.ship = a.ship AND ${eligible('s')}) has_schedule
       FROM agg a
       JOIN par p ON p.ship = a.ship AND p.part_number = a.part_number
+      LEFT JOIN nxt n ON n.ship = a.ship AND n.part_number = a.part_number
+      LEFT JOIN open_order o ON o.ship = a.ship AND o.rn = 1
      WHERE ${ITEM_FILTER}
        AND MAX(a.avg3, COALESCE(a.lastm, 0)) > 0`;
 
@@ -111,22 +140,30 @@ export async function fleetRunway(hon, today, opts = {}) {
 
   const findings = [];
   for (const r of rows) {
+    const arrivals = r.next_eta ? [{ date: r.next_eta, qty: Number(r.on_next) || 0 }] : [];
     const f = runsOutFirst({
       ship: r.ship,
       item: r.item,
       onHand: Number(r.on_hand) || 0,
       rate: Number(r.rate) || 0,
-      arrivals: r.next_eta ? [{ date: r.next_eta, qty: Number(r.in_transit) || 0 }] : [],
+      arrivals,
       today,
       nextLoading: r.next_eta || null,
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
-    if (f) findings.push(withQuantity(f, {
-      brand: r.brand,
-      parQty: r.par_qty == null ? null : Number(r.par_qty),
-      inTransit: r.next_eta ? Number(r.in_transit) || 0 : 0,
-      nextAfter: r.next_after || null,
-    }));
+    if (f) findings.push({
+      ...withQuantity(f, {
+        brand: r.brand,
+        parQty: r.par_qty == null ? null : Number(r.par_qty),
+        due: r.order_due || null,
+        lands: r.order_lands || null,
+        until: r.order_until || null,
+        coming: Number(r.on_order) || 0,
+        today,
+        arrivals,
+      }),
+      has_schedule: Boolean(Number(r.has_schedule)),
+    });
   }
   // A hull with no crew aboard cannot act on any of this, and its seeded
   // inventory reads as a ship running dry. See fleetStatus.js.

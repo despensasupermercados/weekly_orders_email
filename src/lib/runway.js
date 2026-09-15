@@ -120,10 +120,16 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 // ---------------------------------------------------------------------------
 // HOW MUCH TO ADD. Ray's ordering rules, verbatim sources, one branch each.
 //
-// The item in question has ALREADY RUN OUT before this container lands - that is
-// what a RUNS_OUT finding means - so what is aboard when it lands is nothing.
-// The quantity therefore covers the stretch from THIS landing to the NEXT one
-// (cycleDays), less whatever is already on that container (inTransit).
+// WHICH ORDER. Ray, 1 Sep 2026 Q21: the printer "looks at the order due date
+// which is the physical date they have to process the order or it's missed."
+// So a line can only be added to an order whose DUE DATE is still ahead. The
+// first cut of this file aimed the quantity at the next container already in
+// transit for the item - an order that closed months ago (Quest's 14 Oct
+// container was due 3 Jul). Live data on 15 Sep: every in-transit landing
+// matched a schedule row whose due date had passed. The quantity now targets
+// the ship's next OPEN order (earliest due date on or after today), covers the
+// stretch from THAT landing to the landing after it (cycleDays), less whatever
+// the item already has on that order (coming).
 //
 //  PRINT-SHOP TONER (TN619 / TN634 for the C4070):
 //    "Toners are based on consumption and based on statistics the required
@@ -167,12 +173,16 @@ const AZAMARA_STOCK = /CARD STOCK|GLOSS TEXT/i;
 const ceil = (n) => Math.max(0, Math.ceil(n - 1e-9));
 
 // Returns { qty, basis } or null when no sourced rule applies to the item.
-// qty is what to ADD to the order landing on the finding's next_loading.
-export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MONTH_DAYS, parQty = null }) {
+// qty is what to ADD to the open order. inTransit is what the item already has
+// on that order; onHandAtLanding is what will still be aboard the day it lands
+// (zero for a true stockout, more when the order arrives before the item runs
+// dry) - it matters only to the par rule, which is a top-up.
+export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MONTH_DAYS, parQty = null, onHandAtLanding = 0 }) {
   const desc = String(item || '');
   const azamara = /azamara/i.test(String(brand || ''));
   const need = ceil((Number(rate) || 0) * (cycleDays / MONTH_DAYS)); // units used until the next landing
   const coming = Number(inTransit) || 0;
+  const left = Math.max(0, Math.floor(Number(onHandAtLanding) || 0));
 
   if (WASTE_BOX_C4070.test(desc)) {
     return { qty: Math.max(0, WASTE_BOX_ORDER - coming), basis: `waste box is ${WASTE_BOX_ORDER} per order` };
@@ -188,7 +198,8 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
     // the par is short instead of trusting a figure that runs out in days.
     const lasts = rate > 0 ? Math.round(par / (Number(rate) / MONTH_DAYS)) : null;
     const short = lasts != null && lasts < cycleDays ? ` (${par} lasts about ${lasts} days at your usage)` : '';
-    return { qty: Math.max(0, par - coming), basis: `OBP par is ${par}${short}` };
+    const aboard = left > 0 ? `, about ${left} still aboard when it lands` : '';
+    return { qty: Math.max(0, par - left - coming), basis: `OBP par is ${par}${aboard}${short}` };
   }
   if (RADIANT.test(desc)) {
     if (coming >= need) return { qty: 0, basis: 'already on the way' };
@@ -205,18 +216,34 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
   return null;
 }
 
-// Attach the quantity to a RUNS_OUT finding. nextAfter is the landing after
-// next_loading (so the order covers one full cycle); absent, one month.
-export function withQuantity(finding, { brand, parQty, inTransit, nextAfter }) {
+// Attach the order and the quantity to a RUNS_OUT finding.
+//   due / lands  - the ship's next OPEN order: its due date and the date it is
+//                  on board (Ray Q21's two dates). Both null when no order is
+//                  open, or the ship has no ordering schedule loaded.
+//   until        - the landing after `lands`, so the order covers one full
+//                  cycle; absent, one month.
+//   coming       - what the item already has on that order.
+//   today, arrivals - to project what is still aboard the day the order lands.
+export function withQuantity(finding, { brand, parQty, due = null, lands = null, until = null, coming = 0, today = null, arrivals = [] }) {
   if (!finding) return finding;
   const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
-  const cycleDays = finding.next_loading && nextAfter && nextAfter > finding.next_loading
-    ? daysBetween(finding.next_loading, nextAfter)
-    : MONTH_DAYS;
-  const q = orderQuantity({ item: finding.item, brand, rate: finding.rate, inTransit, cycleDays, parQty });
+  const cycleDays = lands && until && until > lands ? daysBetween(lands, until) : MONTH_DAYS;
+  // What is aboard when the order lands: nothing if the item is dry by then,
+  // otherwise today's stock less usage to that day, plus anything landing first.
+  let onHandAtLanding = 0;
+  if (lands && today && finding.stockout && lands < finding.stockout) {
+    const used = (Number(finding.rate) || 0) * (daysBetween(today, lands) / MONTH_DAYS);
+    const early = (arrivals || []).filter((a) => a.date >= today && a.date < lands)
+      .reduce((n, a) => n + (Number(a.qty) || 0), 0);
+    onHandAtLanding = Math.max(0, (Number(finding.on_hand) || 0) + early - used);
+  }
+  const q = orderQuantity({ item: finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding });
   return {
     ...finding,
-    cover_to: finding.next_loading && nextAfter && nextAfter > finding.next_loading ? nextAfter : null,
+    order_due: due || null,
+    order_lands: lands || null,
+    on_order: Number(coming) || 0,
+    cover_to: lands && until && until > lands ? until : null,
     cycle_days: cycleDays,
     add_qty: q ? q.qty : null,
     add_basis: q ? q.basis : null,
