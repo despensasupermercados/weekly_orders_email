@@ -49,7 +49,7 @@ async function readAll(stream) {
 // cims-mailer's validate() hard-rejects a payload without templateId, and
 // ALLOWED_FROM holds exactly three senders. Anything a human is waiting on is
 // critical: true.
-async function send(env, to, subject, html, templateId = 'orders-due-weekly') {
+async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc = []) {
   if (!env.MAILER) return { sent: false, reason: 'MAILER service binding not configured' };
   const res = await env.MAILER.fetch('https://mailer/send', {
     method: 'POST',
@@ -59,6 +59,10 @@ async function send(env, to, subject, html, templateId = 'orders-due-weekly') {
       templateId,
       from: 'CIMS <cims@cims.work>',
       to,
+      // cc is in the cims-mailer envelope (email standard, section 4). Sent
+      // only when there is someone to copy, so the dry run and the watchdog
+      // post the same body they always did.
+      ...(cc && cc.length ? { cc } : {}),
       subject,
       html,
       critical: true,
@@ -291,7 +295,13 @@ export default {
     // it was written to remove.
     if (!act.length && !gaps.length && !runsOut.length) return; // genuinely nothing to say
 
-    const supervisors = (env.DRY_RUN_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const supervisors = list(env.DRY_RUN_TO);
+    // Miguel, 15 Sep 2026: the whole-fleet email goes to onboardsupport; each
+    // ship's email goes to the ship with Ray in copy. Every address here was
+    // typed by a human into wrangler.toml; nothing is derived.
+    const fleetTo = list(env.FLEET_TO);
+    const shipCc = list(env.SHIP_CC);
 
     // ---- DRY RUN: the whole fleet list, to Miguel and Ray only ----
     if (env.SEND_TO_FLEET !== 'true') {
@@ -352,7 +362,9 @@ export default {
             env,
             group.to,
             `${group.ship}: ${subject}`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries })
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries }),
+            'orders-due-weekly',
+            shipCc
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -367,11 +379,15 @@ export default {
         (plan.malformed.length ? `, ${plan.malformed.length} malformed FLEET_MAP entries` : ''));
       for (const f of failed) await logIngest(env, 'cron', `weekly send FAILED: ${f}`);
 
-      // The supervisors always get the full picture, live or not.
-      if (supervisors.length) {
+      // The whole-fleet list, live: to FLEET_TO (onboardsupport). If that is
+      // empty it falls back to the dry-run supervisors rather than to nobody,
+      // because the ships nobody could reach are named only in this email.
+      const digestTo = fleetTo.length ? fleetTo : supervisors;
+      if (!digestTo.length) await logIngest(env, 'cron', 'FLEET_TO and DRY_RUN_TO are both empty. Fleet list not sent.');
+      if (digestTo.length) {
         const unreachable = plan.unmapped.flatMap((g) => g.rows);
         try {
-          const r = await send(env, supervisors,
+          const r = await send(env, digestTo,
             `Orders due this week - ${act.length} to fix, ${sent} ships mailed` +
             (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
             html);

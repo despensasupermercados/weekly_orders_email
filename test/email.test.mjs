@@ -208,3 +208,23 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(!/no ordering schedule/.test(sched));
   console.log('ok - email: a ship with no ordering schedule draws its six months from open orders');
 }
+
+// DEADLINE ORDER. Miguel, 15 Sep 2026: "always filter by the due date on
+// these emails." Rows arrive grouped by ship; they must print by due date, the
+// ones with no open order (a manual order to ask for today) first.
+{
+  const { renderWeekly } = await import('../src/lib/email.js');
+  const row = (ship, item, order_due, stockout) => ({ ship, item, on_hand: 1, rate: 5, stockout,
+    next_loading: null, order_due, order_lands: order_due ? '2026-12-31' : null, add_qty: 3, add_basis: 'x', has_schedule: Boolean(order_due) });
+  const html = renderWeekly([], [], '2026-09-15', { gaps: [], deliveries: [], runsOut: [
+    row('Allure', 'ITEM-LATE', '2026-11-01', '2026-10-01'),
+    row('Brilliance', 'ITEM-SOON', '2026-09-20', '2026-10-05'),
+    row('Constellation', 'ITEM-NONE', null, '2026-10-20'),
+    row('Dawn', 'ITEM-MID', '2026-10-04', '2026-10-02'),
+  ] });
+  const at = (s) => html.indexOf(s);
+  assert.ok(at('ITEM-NONE') < at('ITEM-SOON'), 'no open order sorts first');
+  assert.ok(at('ITEM-SOON') < at('ITEM-MID'), 'then the earliest due date');
+  assert.ok(at('ITEM-MID') < at('ITEM-LATE'), 'then the later one');
+  console.log('ok - email: stockout rows print in due-date order, manual-order rows first');
+}

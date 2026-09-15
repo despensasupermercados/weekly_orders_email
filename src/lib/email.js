@@ -13,6 +13,7 @@
 // fifteen competing letterheads happened once already.
 import { mastRows } from '../cims-mast.js';
 import { byFleetOrder } from './fleetStatus.js';
+import { byDueDate } from './runway.js';
 
 const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946', GREEN_INK = '#3E7F2E';
 const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
@@ -404,7 +405,9 @@ function addLine(f, fg) {
 }
 
 function runsOutHtml(findings, forShip, shipName, today) {
-  const list = (findings || []).filter((f) => !forShip || f.ship === shipName);
+  // Deadline order whatever the caller passed: the first tile is the due date,
+  // and a list whose first column is out of order reads as noise.
+  const list = (findings || []).filter((f) => !forShip || f.ship === shipName).sort(byDueDate);
   if (!list.length) return '';
   const soon = (d) => today && d && Math.round((Date.parse(d) - Date.parse(today)) / 86400000) <= 7;
   const rows = list.map((f, i) => {
