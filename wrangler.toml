@@ -46,14 +46,21 @@ binding = "MAILER"
 service = "cims-mailer"
 
 [vars]
-# Per-ship addressing is NOT implemented. Setting this to "true" makes the weekly
-# cron log and send nothing, deliberately, rather than post an empty to[] that
-# cims-mailer rejects with "to[] required".
-SEND_TO_FLEET = "false"
+# LIVE. Miguel, 15 Sep 2026: "the one who has all the ships will go to
+# onboardsupport; the individual ships will go to each ship and cc Ray on each
+# of the emails - so Ray will receive 50 emails on Monday. Wire them all."
+# Set this back to "false" and the Monday run sends the whole-fleet list to
+# DRY_RUN_TO only. One line, no code change.
+SEND_TO_FLEET = "true"
 
-# WHO GETS WHAT. Two different audiences, deliberately separated.
-#   DRY_RUN_TO  - the FLEET email while it is still in dry run. Miguel and Ray.
+# WHO GETS WHAT. Four audiences, deliberately separated.
+#   FLEET_TO    - the whole-fleet email, every Monday, live.
+#   SHIP_CC     - copied on EVERY per-ship email. Ray, so he sees what each
+#                 ship was told, in the same message the ship got.
+#   DRY_RUN_TO  - the whole-fleet email while SEND_TO_FLEET is "false".
 #   WATCHDOG_TO - the night check. EMPTY ON PURPOSE. See below.
+FLEET_TO = "onboardsupport@DG3.com"
+SHIP_CC = "Ray.Guerra@dg3.com"
 DRY_RUN_TO = "Miguel.Sanmartin@dg3.com,Ray.Guerra@dg3.com"
 
 # THE NIGHT CHECK NO LONGER EMAILS ANYONE. Miguel's decision, 10 Sep 2026,
@@ -99,7 +106,71 @@ WATCHDOG_TO = ""
 #
 # Read GET /fleet before setting SEND_TO_FLEET to true. It prints exactly which
 # ship would receive which address and which ships cannot be reached at all.
-FLEET_MAP = ""
+#
+# SOURCE OF EVERY LINE BELOW: cims-timecard D1, table ship_contact, roles
+# printer_specialist (Royal), printer (Celebrity), printer_manager (Azamara).
+# That table names its own sources per row: "printer_specialists.xlsx 11 Aug
+# 2026" and "Miguel, 11 Aug 2026". 47 of the 48 mailboxes are delivery-proven
+# in cims-mail (last send 6 Sep 2026, every one delivered). The exception is
+# Journey: jr_pm@azamaraships.com is in ship_contact from Miguel on 11 Aug but
+# has never been sent to. Infinity is celebritycruises.com, not celebrity.com -
+# that is what the directory says and what has delivered four times.
+# Ship names are the OBP short names, which is what every finding carries.
+# test/fleet.test.mjs reads this block and fails if a ship is missing,
+# duplicated, malformed, or on a domain outside the three fleets.
+FLEET_MAP = """
+# Royal Caribbean - <code>_printerspecialist@rccl.com
+Adventure = ad_printerspecialist@rccl.com
+Allure = al_printerspecialist@rccl.com
+Anthem = an_printerspecialist@rccl.com
+Brilliance = br_printerspecialist@rccl.com
+Enchantment = en_printerspecialist@rccl.com
+Explorer = ex_printerspecialist@rccl.com
+Freedom = fr_printerspecialist@rccl.com
+Grandeur = gr_printerspecialist@rccl.com
+Harmony = hm_printerspecialist@rccl.com
+Icon = ic_printerspecialist@rccl.com
+Independence = id_printerspecialist@rccl.com
+Jewel = jw_printerspecialist@rccl.com
+Legend = le_printerspecialist@rccl.com
+Liberty = lb_printerspecialist@rccl.com
+Mariner = ma_printerspecialist@rccl.com
+Navigator = nv_printerspecialist@rccl.com
+Oasis = oa_printerspecialist@rccl.com
+Odyssey = oy_printerspecialist@rccl.com
+Ovation = ov_printerspecialist@rccl.com
+Quantum = qn_printerspecialist@rccl.com
+Radiance = rd_printerspecialist@rccl.com
+Rhapsody = rh_printerspecialist@rccl.com
+Serenade = sr_printerspecialist@rccl.com
+Spectrum = sc_printerspecialist@rccl.com
+Star = st_printerspecialist@rccl.com
+Symphony = sy_printerspecialist@rccl.com
+Utopia = ut_printerspecialist@rccl.com
+Vision = vi_printerspecialist@rccl.com
+Voyager = vy_printerspecialist@rccl.com
+Wonder = wn_printerspecialist@rccl.com
+# Celebrity - <code>_printer@celebrity.com (Infinity: celebritycruises.com)
+Apex = ax_printer@celebrity.com
+Ascent = at_printer@celebrity.com
+Beyond = by_printer@celebrity.com
+Constellation = cs_printer@celebrity.com
+Eclipse = ec_printer@celebrity.com
+Edge = eg_printer@celebrity.com
+Equinox = eq_printer@celebrity.com
+Infinity = in_printer@celebritycruises.com
+Millennium = ml_printer@celebrity.com
+Reflection = rf_printer@celebrity.com
+Silhouette = si_printer@celebrity.com
+Solstice = sl_printer@celebrity.com
+Summit = sm_printer@celebrity.com
+Xcel = xc_printer@celebrity.com
+# Azamara - <code>_pm@azamaraships.com (Journey: never sent to yet)
+Journey = jr_pm@azamaraships.com
+Onward = on_pm@azamaraships.com
+Pursuit = pr_pm@azamaraships.com
+Quest = qs_pm@azamaraships.com
+"""
 
 # QUANTITY RULES. Colour completeness (four toners) needs no external figure
 # and is ALWAYS on. The waste-box rule stays OFF, and NOT because the number is
