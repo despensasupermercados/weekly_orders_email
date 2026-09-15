@@ -97,9 +97,10 @@ async function buildWeekly(env, today) {
   const checked = new Set(rows.map((r) => r.ship));
 
   let gaps = [];
+  let deliveries = [];
   try {
     const g = await unscheduledGaps(env.HON, today);
-    if (g.ran) { gaps = g.findings; for (const sh of g.shipNames || []) checked.add(sh); }
+    if (g.ran) { gaps = g.findings; deliveries = g.deliveries || []; for (const sh of g.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
   } catch (e) {
     await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
@@ -118,8 +119,8 @@ async function buildWeekly(env, today) {
 
   const checkedShips = [...checked];
   return {
-    rows, act, gaps, runsOut, checked: checkedShips,
-    html: renderWeekly(act, rows, today, { gaps, runsOut, checked: checkedShips }),
+    rows, act, gaps, runsOut, deliveries, checked: checkedShips,
+    html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, checked: checkedShips }),
   };
 }
 
@@ -267,7 +268,7 @@ export default {
     // a single address was resolved, and the failure looked exactly like the
     // cron not firing. Caught only by running the scheduled handler itself,
     // which is why test/scheduled.test.mjs now does.
-    const { rows, act, gaps, runsOut, html } = await buildWeekly(env, today);
+    const { rows, act, gaps, runsOut, deliveries, html } = await buildWeekly(env, today);
 
     // LOG EVERY WEEKLY RUN, INCLUDING THE QUIET ONES.
     // This used to return silently when nothing was due, which looks EXACTLY
@@ -351,7 +352,7 @@ export default {
             env,
             group.to,
             `${group.ship}: ${subject}`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut })
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries })
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -502,6 +503,7 @@ export default {
       // for 25 of 48 ships - the same silence, in the tool built to check for it.
       const gq = await unscheduledGaps(env.HON, today).catch(() => ({ ran: false, findings: [] }));
       const gp = gq.ran ? gq.findings : [];
+      const gd = gq.ran ? gq.deliveries || [] : [];
       const plan = planFleetSend(actionable(st), env.FLEET_MAP, gp);
       const g = [...plan.sendable, ...plan.unmapped]
         .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
@@ -512,7 +514,7 @@ export default {
         }, 404);
       }
       return new Response(
-        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp }),
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp, deliveries: gd }),
         { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
