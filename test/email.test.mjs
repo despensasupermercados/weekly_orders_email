@@ -241,7 +241,7 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(!/RUNS OUT/.test(html), 'no tile is ever labelled RUNS OUT');
   const tile = /DUE DATE<\/div>\s*<div[^>]*>MON<\/div>\s*<div[^>]*>21<\/div>\s*<div[^>]*>SEP<\/div>/;
   assert.ok(tile.test(html), 'with no open order the DUE DATE tile is today');
-  assert.ok(/Do this today: ask your Inventory Manager for a manual order/.test(html), 'and the text says why');
+  assert.ok(/Do this today: ask your Inventory Manager to check the next due date/.test(html), 'and the text says why');
   assert.ok(/empty by <strong>Sun 27 Sep/.test(html), 'the day it runs out is in the text');
   console.log('ok - email: the first tile is always DUE DATE; no open order means due today');
 }

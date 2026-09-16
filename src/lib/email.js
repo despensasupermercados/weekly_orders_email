@@ -380,14 +380,21 @@ function addLine(f, fg) {
   const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; enough until ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
   const dry = dryUntil(f);
   if (!f.order_due) {
-    // Ray, 1 Sep 2026 Q22: a missed order goes to the inventory manager on
+    // Ray, 1 Sep 2026 Q22: a missed order goes through the inventory manager on
     // board as a manual order. That is who to ask; this is what to ask for.
     const whyNot = f.has_schedule
       ? 'There is no open order to add this to.'
       : 'We have no order schedule for your ship, so there is no open order to add this to.';
     const ask = f.add_qty != null
-      ? `Do this today: ask your Inventory Manager for a manual order. Add ${big(f.add_qty)}`
-      : 'Do this today: ask your Inventory Manager for a manual order.';
+      // WHO CAN DO WHAT. Miguel, 16 Sep 2026: "the crew can only order when
+      // there is a due date available. All they can do is ask the inventory
+      // manager if the due date is correct, so they can add the missing items.
+      // Ray is the one who approves the order and buys from the suppliers. The
+      // inventory manager is a guide, Ray is the boss." So the email never tells
+      // a printer to raise an order of their own; it tells them to get the due
+      // date confirmed and add to it.
+      ? `Do this today: ask your Inventory Manager to check the next due date. Then add ${big(f.add_qty)} to that order.`
+      : 'Do this today: ask your Inventory Manager to check the next due date.';
     const coming = dry
       ? ` More is coming on <strong>${fmtDowFull(dry.date)}</strong>. But you will have none for ${redDays(dry.days)} before that.`
       : ' Nothing more is coming.';
@@ -397,7 +404,7 @@ function addLine(f, fg) {
   // What happens between running dry and the order being aboard.
   let after;
   if (!dry) after = 'It will arrive before you run out. Good.';
-  else if (dry.byOrder) after = `It will arrive ${redDays(dry.days)} after you run out. If you cannot wait, ask your Inventory Manager for a manual order.`;
+  else if (dry.byOrder) after = `It will arrive ${redDays(dry.days)} after you run out. If you cannot wait, tell your Inventory Manager now.`;
   else after = `More is coming on <strong>${fmtDowFull(dry.date)}</strong> first. But you will have none for ${redDays(dry.days)} before that.`;
   const order = `the order due <strong>${fmtDowFull(f.order_due)}</strong>`;
   let head;
