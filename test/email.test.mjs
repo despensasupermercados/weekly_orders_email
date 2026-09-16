@@ -228,3 +228,20 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(at('ITEM-MID') < at('ITEM-LATE'), 'then the later one');
   console.log('ok - email: stockout rows print in due-date order, manual-order rows first');
 }
+
+// THE FIRST TILE IS ALWAYS A DUE DATE. Miguel, 16 Sep 2026: "never on these two
+// tiles 'run out', but always due date." With no open order the deadline is
+// today, and the day it runs out is text, not a tile.
+{
+  const { renderWeekly } = await import('../src/lib/email.js');
+  const html = renderWeekly([], [], '2026-09-21', { gaps: [], deliveries: [], runsOut: [
+    { ship: 'Navigator', item: 'TN619M MAGENTA TONER', on_hand: 2, rate: 5, stockout: '2026-09-27',
+      next_loading: '2026-10-24', order_due: null, order_lands: null, add_qty: 8, add_basis: 'x', has_schedule: false },
+  ] });
+  assert.ok(!/RUNS OUT/.test(html), 'no tile is ever labelled RUNS OUT');
+  const tile = /DUE DATE<\/div>\s*<div[^>]*>MON<\/div>\s*<div[^>]*>21<\/div>\s*<div[^>]*>SEP<\/div>/;
+  assert.ok(tile.test(html), 'with no open order the DUE DATE tile is today');
+  assert.ok(/Due today: ask the inventory manager for a manual order/.test(html), 'and the text says why');
+  assert.ok(/empty <strong>Sun 27 Sep/.test(html), 'the day it runs out is in the text');
+  console.log('ok - email: the first tile is always DUE DATE; no open order means due today');
+}

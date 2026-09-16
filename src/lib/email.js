@@ -61,7 +61,10 @@ const fmtDowFull = (isoDate) => (isoDate ? `${fmtDow(isoDate)} ${MONTHS[Number(i
 // is the due date of the order still open; the empty day moves into the text.
 const DUE_LABEL = 'DUE DATE';
 const ARRIVES_LABEL = 'ARRIVES';
-const RUNS_OUT_LABEL = 'RUNS OUT'; // only when there is no open order to add to
+// NEVER "RUNS OUT" ON A TILE. Miguel, 16 Sep 2026: "never on these two tiles
+// run out, but always due date - that is the value I like." With no open order
+// the deadline is the day the email lands: the manual order has to be asked
+// for now, and the tile says so with today's date.
 function dateBlock(isoDate, fg, bg, label = '') {
   if (!isoDate) return '';
   const cap = label
@@ -380,11 +383,11 @@ function addLine(f, fg) {
     // Ray, 1 Sep 2026 Q22: a missed order goes to the inventory manager on
     // board as a manual order. That is who to ask; this is what to ask for.
     const whyNot = f.has_schedule
-      ? 'No order is open on your schedule.'
-      : 'No ordering schedule is loaded for this ship, so there is no due date to quote.';
+      ? 'No order is open on your schedule to add this to.'
+      : 'No ordering schedule is loaded for this ship, so there is no order to add this to.';
     const ask = f.add_qty != null
-      ? `Ask the inventory manager for a manual order: add ${big(f.add_qty)}`
-      : 'Ask the inventory manager for a manual order.';
+      ? `Due today: ask the inventory manager for a manual order, add ${big(f.add_qty)}`
+      : 'Due today: ask the inventory manager for a manual order.';
     const coming = dry
       ? ` A container with this item lands <strong>${fmtDowFull(dry.date)}</strong> &mdash; ${redDays(dry.days)} with none before that.`
       : ' Nothing for it is on the way.';
@@ -422,13 +425,13 @@ function runsOutHtml(findings, forShip, shipName, today) {
     // The ship name is redundant on a ship's own email, and repeating it on
     // every row is the kind of noise that makes a page feel long.
     const who = forShip ? esc(f.item) : `${esc(f.ship)} &middot; ${esc(f.item)}`;
-    // Tile one is the deadline: the due date of the order still open. With no
-    // open order there is no deadline to show, so the day it runs out stands
-    // there instead, in red, and the label says which it is. Tile two is the
-    // day that order (or, failing one, the container on its way) is aboard.
+    // Tile one is always the deadline. With an open order it is that order's
+    // due date; with none, it is today - the manual order is due now, and the
+    // day it runs out lives in the text, not on the tile. Tile two is the day
+    // that order (or, failing one, the container on its way) is aboard.
     const tiles = f.order_due
       ? dateBlock(f.order_due, fg, bg, DUE_LABEL) + dateBlock(f.order_lands, INK, INK_BG, ARRIVES_LABEL)
-      : dateBlock(f.stockout, fg, bg, RUNS_OUT_LABEL) + (f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, ARRIVES_LABEL) : '');
+      : dateBlock(today, fg, bg, DUE_LABEL) + (f.next_loading ? dateBlock(f.next_loading, INK, INK_BG, ARRIVES_LABEL) : '');
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:0;border-bottom:1px solid ${BORDER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
 ${tiles}
