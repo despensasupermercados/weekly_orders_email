@@ -116,3 +116,14 @@ assert.equal(dryOnly.sendable.length, 1, 'two findings on one ship are one email
 const dryUnmapped = planFleetSend([], '', [], [{ ship: 'Quest', item: 'x' }]);
 assert.equal(dryUnmapped.unmapped.length, 1, 'a stockout-only ship with no address must be reported');
 console.log('ok - fleet: a ship whose only finding is a stockout is planned, addressed and reported');
+
+// A SHIP OWING ITS ORDERING SCHEDULE IS MAILED FOR THAT ALONE. Miguel, 16 Sep
+// 2026: "you are missing this file, do it first." A ship whose schedule is fine
+// is not put on the list by this input.
+{
+  const plan2 = planFleetSend([], 'Beyond = by_printer@celebrity.com\nApex = ax_printer@celebrity.com', [], [],
+    [{ ship: 'Beyond', status: 'never' }, { ship: 'Apex', status: 'ok' }]);
+  assert.deepEqual(plan2.sendable.map((g) => g.ship), ['Beyond'], 'Beyond is mailed to be asked for its file; Apex is not');
+  assert.equal(plan2.sendable[0].rows.length, 0, 'with no voyage rows - the renderer draws the ask from opts');
+  console.log('ok - fleet: a missing ordering schedule alone puts a ship on the send list');
+}

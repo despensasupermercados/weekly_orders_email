@@ -53,6 +53,14 @@ const RATES = [
     next_eta: '2026-11-30', on_next: 10, order_due: null, order_lands: null, has_schedule: 0 },
 ];
 
+// What the schedule-status check reads: Anthem has a schedule with due dates
+// ahead, Quest is Azamara (never asked), Explorer has no schedule at all and
+// nothing in the ingest log - so Explorer is asked for its file.
+const SCHED = [
+  { ship: 'Anthem', upcoming: 5, last_due: '2026-11-30' },
+  { ship: 'Quest', upcoming: 1, last_due: '2026-12-08' },
+];
+
 const logged = [];
 const sent = [];
 
@@ -68,6 +76,9 @@ const fakeDb = {
       all: async () => {
         const m = /PRAGMA table_info\((\w+)\)/.exec(sql);
         if (m) return { results: (COLUMNS[m[1]] || []).map((name) => ({ name })) };
+        // The schedule-status check, before the generic schedule_order routes.
+        if (/END\) upcoming/.test(sql)) return { results: SCHED };
+        if (/lower\(note\) LIKE/.test(sql)) return { results: [] };
         // The runway query reads all four tables; route it before the others.
         if (/consumption_snapshot/.test(sql)) return { results: RATES };
         if (/FROM schedule_order/.test(sql) && /obp_intransit/.test(sql)) return { results: DELIVERIES };
@@ -130,6 +141,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
     SEND_TO_FLEET: 'true',
     FLEET_TO: 'onboardsupport@example.com',
     SHIP_CC: 'ray@example.com',
+    REPLY_TO: 'ray@example.com',
     FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
   };
   await worker.scheduled({ cron: '0 12 * * MON', scheduledTime: Date.parse(TODAY) }, live, ctx);
@@ -145,6 +157,20 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   const quest = ships.find((m) => m.subject.startsWith('Quest:'));
   assert.ok(quest, 'Quest, a stockout-only ship, is mailed');
   assert.deepEqual(quest.to, ['qs_pm@example.com']);
+  // REPLY-TO IS RAY. The mail is from cims@cims.work, which nobody reads.
+  for (const m of ships) assert.equal(m.replyTo, 'ray@example.com', `${m.subject}: replies go to Ray`);
+  // SEND YOUR ORDERING SCHEDULE FIRST. Explorer has no schedule loaded and
+  // no file on record, so its email opens with the ask; Anthem has one and
+  // is not nagged; Quest is Azamara and is never asked.
+  const explorer = ships.find((m) => m.subject.startsWith('Explorer:'));
+  assert.ok(explorer, 'Explorer is mailed');
+  assert.ok(/send your Ordering Schedule/.test(explorer.subject), `Explorer's subject asks for the file: ${explorer.subject}`);
+  assert.ok(/DO THIS FIRST/.test(explorer.html) && /obp@cims.work/.test(explorer.html), 'Explorer is told what to send and where');
+  assert.ok(!/DO THIS FIRST/.test(quest.html), 'an Azamara ship is never asked for an ordering schedule');
+  // Anthem has a schedule with dates ahead: whatever else it is mailed, it is
+  // not asked for the file. Only Explorer carries the ask.
+  assert.ok(!ships.some((m) => !m.subject.startsWith('Explorer:') && /DO THIS FIRST/.test(m.html)),
+    'a ship with a schedule is not asked for one');
   assert.equal(digest.length, 1, 'exactly one whole-fleet email');
   assert.deepEqual(digest[0].to, ['onboardsupport@example.com'], 'the fleet list goes to onboardsupport');
   assert.equal(digest[0].cc, undefined, 'and nobody is copied on it');
@@ -179,7 +205,9 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   const digest = sent.find((m) => /^Orders due this week/.test(m.subject));
   assert.ok(digest, 'the fleet list still goes out after a ship send threw');
   assert.ok(!/ 0 to fix/.test(digest.subject), `live subject must count stockouts and gaps: ${digest.subject}`);
-  assert.ok(/ 2 to fix/.test(digest.subject), `one stockout + one gap = 2: ${digest.subject}`);
+  // One stockout (Quest), one gap (Explorer) and one ship asked for its
+  // schedule (Explorer again) = 3.
+  assert.ok(/ 3 to fix/.test(digest.subject), `one stockout + one gap + one schedule ask = 3: ${digest.subject}`);
   assert.ok(sent.some((m) => m.subject.startsWith('Quest:')), 'Quest was still mailed after Explorer threw');
   assert.ok(/1 of 2 ships mailed/.test(digest.subject), `the digest reports the failed ship: ${digest.subject}`);
   console.log('ok - live: one transport failure does not abort the loop, and the fleet-list subject counts everything');

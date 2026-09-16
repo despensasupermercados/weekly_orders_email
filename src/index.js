@@ -16,7 +16,10 @@ import { unscheduledGaps } from './lib/fallback.js';
 import { fleetRunway } from './lib/runwayDb.js';
 import { inService } from './lib/fleetStatus.js';
 import { renderWeekly } from './lib/email.js';
-import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
+import { runWatchdog, rememberFindings, INGEST_SOURCE } from './lib/watchdog.js';
+import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
+import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
+import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 
 // MUST match the nightly entry in wrangler.toml exactly. It is the only thing
@@ -55,7 +58,10 @@ async function readAll(stream) {
 // cims-mailer's validate() hard-rejects a payload without templateId, and
 // ALLOWED_FROM holds exactly three senders. Anything a human is waiting on is
 // critical: true.
-async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc = []) {
+// replyTo: where a crew's reply lands. The mail is FROM cims@cims.work, which
+// no person reads; a printer who hits reply must reach Ray (REPLY_TO), the one
+// person who can answer. Sent only when set, so the watchdog digest is unchanged.
+async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc = [], replyTo = null) {
   if (!env.MAILER) return { sent: false, reason: 'MAILER service binding not configured' };
   const res = await env.MAILER.fetch('https://mailer/send', {
     method: 'POST',
@@ -69,6 +75,7 @@ async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc
       // only when there is someone to copy, so the dry run and the watchdog
       // post the same body they always did.
       ...(cc && cc.length ? { cc } : {}),
+      ...(replyTo ? { replyTo } : {}),
       subject,
       html,
       critical: true,
@@ -139,10 +146,23 @@ async function buildWeekly(env, today) {
     await logIngest(env, 'cron', `runway check threw: ${String(e && e.message || e)}`);
   }
 
+  // WHICH SHIPS HAVE NO ORDERING SCHEDULE WE CAN USE, AND WHY. Miguel, 16 Sep
+  // 2026: "the email should say: you are missing this file, do it first." The
+  // crew can fix this one themselves, so the email asks them, with the reason
+  // the last attempt failed. A throw here loses a section, never the email.
+  let schedules = [];
+  try {
+    const s = await scheduleStatuses(env.HON, env.FLEET_MAP, today);
+    if (s.ran) schedules = s.statuses;
+    else await logIngest(env, 'cron', `schedule status check did not run: ${s.reason}`);
+  } catch (e) {
+    await logIngest(env, 'cron', `schedule status check threw: ${String(e && e.message || e)}`);
+  }
+
   const checkedShips = [...checked];
   return {
-    rows, act, gaps, runsOut, deliveries, checked: checkedShips,
-    html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, checked: checkedShips }),
+    rows, act, gaps, runsOut, deliveries, schedules, checked: checkedShips,
+    html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, schedules, checked: checkedShips }),
   };
 }
 
@@ -180,6 +200,22 @@ async function ingestEmail(message, env) {
     // be identifiable by its filename.
     const attachments = attachmentsOf(raw);
     const names = attachments.map((a) => a.filename).join(' ');
+
+    // THE OBP CSV EXPORTS. obp-csv@cims.work routes here. The three files are
+    // written from the OBP database every night and their names are the
+    // identity test; the workbook mirror that cims-hon ingests is only a cache
+    // of them and stalls (see obpSource.js). Written to this Worker's own
+    // weekly_obp_* tables; the obp_* mirror is never touched.
+    if (isObpCsvMail(names, subject)) {
+      const r = await ingestObpCsv(env.HON, attachments, iso(new Date()));
+      await logIngest(env, message.from,
+        `OBP CSV: inventory ${r.inventory} rows` +
+        (r.inventory_ships ? ` / ${r.inventory_ships} ships, newest UpdateDate ${r.inventory_newest_update}` : '') +
+        `, intransit ${r.intransit} rows` +
+        (r.refused.length ? ` | REFUSED: ${r.refused.join('; ')}` : '') +
+        ` | files: ${r.seen.join(', ')}`);
+      return;
+    }
 
     if (!isAzamaraMls(names, subject, body)) {
       // DO NOT DISCARD SILENTLY. On 9 Sep eighteen ships replied with their
@@ -279,16 +315,32 @@ export default {
       // rows repaired. Ray does not need it and must not get it: he is the
       // person the fleet email is signed by, and ops noise in his inbox is how
       // a useful alert becomes something he filters. WATCHDOG_TO is Miguel only.
+      //
+      // AND IT REMEMBERS WHAT IT SAID. Miguel emptied WATCHDOG_TO on 10 Sep
+      // 2026 because a stateless check would repeat a standing finding every
+      // night until it was filtered. Now a finding is mailed the night it
+      // first appears, then goes quiet; a critical one that is still standing
+      // a week later is mentioned again, once a week. The feed freeze of 10-16
+      // Sep was detected on night one and told nobody - that is the failure
+      // this closes.
+      const memory = await rememberFindings(env.HON, report, today);
       const to = (env.WATCHDOG_TO || '').split(',').map((x) => x.trim()).filter(Boolean);
       if (!to.length) {
         await logIngest(env, 'watchdog', 'WATCHDOG_TO is empty. Findings logged, nothing sent.');
         return;
       }
+      if (!memory.fresh.length && !memory.reminders.length) {
+        await logIngest(env, 'watchdog',
+          `night check: nothing new since last night (${report.findings.length} standing), nothing sent`);
+        return;
+      }
       ctx.waitUntil((async () => {
-        const subject = report.counts.critical
-          ? `Night check - ${report.counts.critical} need${report.counts.critical === 1 ? 's' : ''} a human`
-          : `Night check - ${report.counts.warn} warning${report.counts.warn === 1 ? '' : 's'}, ${report.repairs.length} repaired`;
-        const r = await send(env, to, subject, renderWatchdog(report), 'orders-watchdog-night');
+        const newCrit = memory.fresh.filter((f) => f.severity === 'critical').length;
+        const subject = memory.fresh.length
+          ? `Night check - ${memory.fresh.length} new${newCrit ? `, ${newCrit} need${newCrit === 1 ? 's' : ''} a human` : ''}`
+          : `Night check - ${memory.reminders.length} still standing after a week`;
+        const r = await send(env, to, subject,
+          renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night');
         if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
       })());
       return;
@@ -301,7 +353,10 @@ export default {
     // a single address was resolved, and the failure looked exactly like the
     // cron not firing. Caught only by running the scheduled handler itself,
     // which is why test/scheduled.test.mjs now does.
-    const { rows, act, gaps, runsOut, deliveries, html } = await buildWeekly(env, today);
+    const { rows, act, gaps, runsOut, deliveries, schedules, html } = await buildWeekly(env, today);
+    // Ships that must be asked for their Ordering Schedule. A finding in its
+    // own right: a ship we cannot check is a ship that can miss a container.
+    const ask = needsSchedule(schedules);
 
     // LOG EVERY WEEKLY RUN, INCLUDING THE QUIET ONES.
     // This used to return silently when nothing was due, which looks EXACTLY
@@ -314,6 +369,7 @@ export default {
       `weekly run: ${act.length} actionable of ${rows.length} eligible voyages` +
       (stale.length ? `, ${stale.length} past the cut-off by more than ${MISSED_CREW_DAYS} days (escalation, not the crew's)` : '') +
       (gaps.length ? `, ${gaps.length} delivery gaps on ships with no schedule` : '') +
+      (ask.length ? `, ${ask.length} ships asked for their ordering schedule` : '') +
       (faults.length ? `, ${faults.length} unusable rows (engineering)` : ''));
 
     // NOTHING DUE **AND** NO GAPS. I broke this an hour after building the
@@ -322,7 +378,7 @@ export default {
     // schedule - the run ended here and not one of those ships heard anything.
     // The schedule-free check was dead on arrival, restoring the exact silence
     // it was written to remove.
-    if (!act.length && !gaps.length && !runsOut.length) return; // genuinely nothing to say
+    if (!act.length && !gaps.length && !runsOut.length && !ask.length) return; // genuinely nothing to say
 
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
     const supervisors = list(env.DRY_RUN_TO);
@@ -330,12 +386,13 @@ export default {
     // stockouts and gaps; the live fleet-list subject still read act.length
     // alone, so a live Monday with 0 voyages and 39 stockouts would have gone
     // to onboardsupport as "0 to fix". Computed once, used everywhere.
-    const todo = act.length + gaps.length + runsOut.length;
+    const todo = act.length + gaps.length + runsOut.length + ask.length;
     // Miguel, 15 Sep 2026: the whole-fleet email goes to onboardsupport; each
     // ship's email goes to the ship with Ray in copy. Every address here was
     // typed by a human into wrangler.toml; nothing is derived.
     const fleetTo = list(env.FLEET_TO);
     const shipCc = list(env.SHIP_CC);
+    const replyTo = list(env.REPLY_TO)[0] || null;
 
     // ---- DRY RUN: the whole fleet list, to Miguel and Ray only ----
     if (env.SEND_TO_FLEET !== 'true') {
@@ -347,7 +404,7 @@ export default {
         // THE SUBJECT LINE IS THE ONLY PART MOST PEOPLE READ. Counting
         // act.length alone printed "0 to fix" on a week carrying 39 stockouts
         // and 3 gaps - the email arguing against itself in the inbox list.
-        const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html);
+        const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html, 'orders-due-weekly', [], replyTo);
         if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
       })());
       return;
@@ -364,7 +421,7 @@ export default {
     // fleet list that goes to the supervisors, the subject line counts them,
     // and a log line names them - because the ships nobody can reach are the
     // ones most likely to miss a container.
-    const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut);
+    const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
     if (!plan.sendable.length) {
       await logIngest(env, 'cron',
         `SEND_TO_FLEET is true but NONE of the ${plan.unmapped.length} ships due this week ` +
@@ -386,18 +443,23 @@ export default {
         // deliveries" went out for every ship with no due date, including one
         // carrying eleven stockouts and no gap at all.
         const dry = runsOut.filter((f) => normShip(f.ship) === normShip(group.ship)).length;
+        const needs = ask.some((s) => normShip(s.ship) === normShip(group.ship));
+        const hasGap = gaps.some((g) => normShip(g.ship) === normShip(group.ship));
         const subject = [
           n ? `${n} order${n === 1 ? '' : 's'} due` : null,
           dry ? `${dry} running out` : null,
-        ].filter(Boolean).join(', ') || 'a gap in your deliveries';
+          !n && !dry && hasGap ? 'a gap in your deliveries' : null,
+          needs ? 'send your Ordering Schedule' : null,
+        ].filter(Boolean).join(', ');
         try {
           const r = await send(
             env,
             group.to,
             `${group.ship}: ${subject}`,
-            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries }),
+            renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries, schedules }),
             'orders-due-weekly',
-            shipCc
+            shipCc,
+            replyTo
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -423,7 +485,7 @@ export default {
           const r = await send(env, digestTo,
             `Orders due this week - ${todo} to fix, ${sent} of ${plan.sendable.length} ships mailed` +
             (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
-            html);
+            html, 'orders-due-weekly', [], replyTo);
           if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
         } catch (e) {
           await logIngest(env, 'cron', `weekly supervisor send THREW: ${String((e && e.message) || e)}`);
@@ -494,6 +556,14 @@ export default {
         last_azamara_mls: (await q(
           "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS:%'")).d,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
+        // WHICH COPY OF OBP THE READERS USE. 'mirror' is the emailed workbook
+        // via cims-hon; 'csv' is this Worker's own copy of the nightly exports
+        // (obp-csv@cims.work). The CSV date going stale while the mirror moves
+        // means the flow stopped attaching the files.
+        obp_source: await obpSource(env.HON).then((s) => ({
+          inventory: s.inventory.source, intransit: s.intransit.source,
+          csv_snapshot: s.csv.inventory, mirror_snapshot: s.mirror.inventory,
+        })).catch(() => null),
         // Coverage, not just row counts. If this shows only AZAMARA BWS then the
         // weekly email cannot flag a single Royal or Celebrity ship, whatever
         // the row count says.
@@ -518,10 +588,11 @@ export default {
       // THE SAME PLAN THE MONDAY RUN USES. This planned from voyage rows alone,
       // so a stockout-only ship (Quest, 11 items on 12 Sep) was absent from
       // would_send here and mailed on Monday anyway.
-      const { act, gaps, runsOut } = await buildWeekly(env, today);
-      const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut);
+      const { act, gaps, runsOut, schedules } = await buildWeekly(env, today);
+      const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
       const dryFor = (ship) => runsOut.filter((f) => normShip(f.ship) === normShip(ship)).length;
       const gapsFor = (ship) => gaps.filter((g) => normShip(g.ship) === normShip(ship)).length;
+      const schedFor = (ship) => (schedules.find((s) => normShip(s.ship) === normShip(ship)) || {}).status || null;
       const unlocked = Boolean(env.ADMIN_KEY) && secretEquals(
         request.headers.get('x-admin-key') || url.searchParams.get('key'), env.ADMIN_KEY);
       const show = (addrs) => (unlocked ? addrs : addrs.map(maskEmail));
@@ -539,13 +610,13 @@ export default {
         malformed_entries: unlocked ? plan.malformed : plan.malformed.map((l) => l.replace(/\S+@\S+/g, '***')),
         would_send: plan.sendable.map((g) => ({
           ship: g.ship, to: show(g.to), orders: g.rows.length,
-          running_out: dryFor(g.ship), gaps: gapsFor(g.ship),
+          running_out: dryFor(g.ship), gaps: gapsFor(g.ship), schedule: schedFor(g.ship),
           due: g.rows.map((r) => `${r.due_date} ${r.state}`),
         })),
         // The half that matters most: due this week and unreachable.
         unaddressable: plan.unmapped.map((g) => ({
           ship: g.ship, orders: g.rows.length,
-          running_out: dryFor(g.ship), gaps: gapsFor(g.ship),
+          running_out: dryFor(g.ship), gaps: gapsFor(g.ship), schedule: schedFor(g.ship),
           due: g.rows.map((r) => `${r.due_date} ${r.state}`),
         })),
       });
@@ -557,8 +628,8 @@ export default {
       // EXACTLY WHAT MONDAY BUILDS. This planned without the stockouts, so a
       // stockout-only ship answered 404 "nothing due" here and was mailed on
       // Monday - the preview lying about the send it previews.
-      const { rows: st, act, gaps: gp, runsOut: ro, deliveries: gd } = await buildWeekly(env, today);
-      const plan = planFleetSend(act, env.FLEET_MAP, gp, ro);
+      const { rows: st, act, gaps: gp, runsOut: ro, deliveries: gd, schedules: sc } = await buildWeekly(env, today);
+      const plan = planFleetSend(act, env.FLEET_MAP, gp, ro, sc);
       const g = [...plan.sendable, ...plan.unmapped]
         .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
       if (!want || !g) {
@@ -568,7 +639,7 @@ export default {
         }, 404);
       }
       return new Response(
-        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp, runsOut: ro, deliveries: gd }),
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp, runsOut: ro, deliveries: gd, schedules: sc }),
         { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 

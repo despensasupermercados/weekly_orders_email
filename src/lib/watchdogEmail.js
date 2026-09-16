@@ -18,6 +18,10 @@ const esc = (s) => String(s == null ? '' : s)
 
 const CHECK_LABEL = {
   feed: 'OBP feed',
+  feed_frozen: 'OBP feed not moving',
+  csv_feed: 'OBP CSV copy',
+  delivery: 'Monday email not delivered',
+  delivery_blocked: 'Delivery check blocked',
   eta_format: 'Export format',
   scope: 'Out-of-scope data',
   orphan_rows: 'Failed ingest swap',
@@ -50,10 +54,19 @@ function block(title, colour, bg, items) {
 }
 
 export function renderWatchdog(report) {
-  const crit = report.findings.filter((f) => f.severity === 'critical')
-    .map((f) => `<strong>${esc(CHECK_LABEL[f.check] || f.check)}</strong> &mdash; ${esc(f.detail)}`);
-  const warn = report.findings.filter((f) => f.severity === 'warn')
-    .map((f) => `<strong>${esc(CHECK_LABEL[f.check] || f.check)}</strong> &mdash; ${esc(f.detail)}`);
+  // NEW is the word the reader scans for: everything else in the digest was
+  // already said on an earlier night. A reminder names how long it has stood.
+  const freshSet = new Set((report.fresh || []).map((f) => `${f.check}|${f.detail}`));
+  const remind = new Map((report.reminders || []).map((f) => [`${f.check}|${f.detail}`, f.days]));
+  const tag = (f) => {
+    const k = `${f.check}|${f.detail}`;
+    if (freshSet.has(k)) return `<span style="color:${RED};font-weight:700;letter-spacing:.6px;">NEW</span> &middot; `;
+    if (remind.has(k)) return `<span style="color:${AMBER};font-weight:700;">STILL STANDING ${remind.get(k)} DAYS</span> &middot; `;
+    return '';
+  };
+  const line = (f) => `${tag(f)}<strong>${esc(CHECK_LABEL[f.check] || f.check)}</strong> &mdash; ${esc(f.detail)}`;
+  const crit = report.findings.filter((f) => f.severity === 'critical').map(line);
+  const warn = report.findings.filter((f) => f.severity === 'warn').map(line);
   const fixed = report.repairs.map(esc);
 
   const headline = crit.length

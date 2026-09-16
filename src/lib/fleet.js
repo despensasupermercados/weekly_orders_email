@@ -80,7 +80,10 @@ export function isEmail(s) {
 // the half of this email that names an item and a date; a planner that cannot
 // see it silently discards its entire output for exactly the ships it is loudest
 // about. Anything added here later goes in `extra` too.
-export function planFleetSend(rows, fleetMapText, gaps = [], runsOut = []) {
+// schedules: one row per ship from scheduleStatus.js. A ship whose Ordering
+// Schedule is missing or unreadable is mailed for that alone - Miguel, 16 Sep
+// 2026: "the email should say: you are missing this file, do it first."
+export function planFleetSend(rows, fleetMapText, gaps = [], runsOut = [], schedules = []) {
   const { map, bad } = parseFleetMap(fleetMapText);
   const byShip = new Map();
   for (const r of rows) {
@@ -90,7 +93,8 @@ export function planFleetSend(rows, fleetMapText, gaps = [], runsOut = []) {
   }
   // A finding with no voyage row still earns the ship an email. The rows array
   // stays empty on purpose: renderWeekly draws these from opts, not from rows.
-  for (const extra of [gaps, runsOut]) {
+  const askSchedule = (schedules || []).filter((s) => s && s.ship && s.status && s.status !== 'ok');
+  for (const extra of [gaps, runsOut, askSchedule]) {
     for (const f of extra || []) {
       if (!f || !f.ship) continue;
       const key = normShip(f.ship);

@@ -15,32 +15,22 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 ## What Miguel has to do
 
-1. **Cloudflare dashboard → Workers & Pages → Create → Connect to Git**, pick
-   `despensasupermercados/weekly_orders_email`, accept the defaults. Every push deploys from then on.
-2. **Create the `azamara@cims.work` routing rule.** This is the one step that has actually
-   failed. Ray was asked to cc the address before the address existed, and on 10 Sep 2026 his
-   MLS bounced back to him:
+Three things, each a few minutes, each one a human has to do because the code cannot:
 
-   ```
-   <azamara@cims.work>: host route1.mx.cloudflare.net said:
-       550 5.1.1 Address does not exist
-   ```
+1. **Route `obp-csv@cims.work` to this Worker** (Cloudflare dashboard, zone `cims.work`,
+   Email → Email Routing → Routing rules → Create address → *Send to a Worker* →
+   `weekly-orders-email`). Leave `obp@cims.work` alone — it belongs to `cims-hon`.
+2. **Edit the Power Automate flow "OBP nightly"** (Miguel's environment) so that each run
+   also attaches the three files from SharePoint *OnboardPrintAdmin / Shared Documents /
+   General / Inventory Reporting / Exports* — `onboardinventory.csv`, `intransititems.csv`,
+   `acceptedorderdetails.csv` — and adds `obp-csv@cims.work` as a second recipient. Three
+   *Get file content* steps and one more address. See **The OBP feed** below for why.
+3. **Set `ADMIN_KEY` as a Worker secret.** Until it is set every endpoint except `/health`
+   returns 503, so nobody can see `/fleet` (who will be mailed) or `/preview-ship` before a
+   Monday.
 
-   That error comes from Cloudflare, not from DG3: the MX for `cims.work` is Email Routing and
-   Email Routing has no rule for `azamara`. In the dashboard, on the `cims.work` zone:
-
-   | | |
-   |---|---|
-   | Email → Email Routing → Routing rules → **Create address** | |
-   | Custom address | `azamara@cims.work` |
-   | Action | **Send to a Worker** |
-   | Destination | `weekly-orders-email` |
-
-   Leave the existing `obp@cims.work` rule alone — it belongs to `cims-hon`.
-
-   Then **verify, do not assume**: send any mail to `azamara@cims.work` and check
-   `GET /health`. `mail_received` must go above zero. It counts mails that reached *this*
-   Worker, so it is the only field on that endpoint that proves the route exists.
+Then **verify, do not assume**: `GET /health` shows `obp_source.csv_snapshot` the morning
+after the first CSV mail, and `mail_received` counts every mail that reached *this* Worker.
 
 There is **no mail secret to add.** Sending goes through the `MAILER` service binding to
 `cims-mailer`, which holds the only Resend key in the estate and reads no `Authorization`
@@ -48,16 +38,75 @@ header. **There is no `MAILER_URL` and no `MAILER_TOKEN`.** An earlier version o
 told you to create both; the code then invented a URL-and-token interface that does not
 exist, and a Resend key ended up pasted into a plaintext Worker variable. Do not add them back.
 
-The D1 bindings and both crons are already in `wrangler.toml`.
+The D1 bindings (`HON`, `ORDERS`, and `MAIL` read-only) and both crons are in `wrangler.toml`.
 
-### Ask Ray for one thing
+### The Azamara route exists and works
 
-> "Can you attach the Azamara MLS as an .xlsx as well as pasting it into the email?"
+`azamara@cims.work` routes here. Ray's MLS of 11 Sep 2026 reached this Worker and was
+**refused** — 0 rows parsed from the body, and the workbook path was not yet wired. It is
+wired now (`xlsx` is bundled, `rowsFromWorkbook` reads the attachment when the body carries
+no table). Ray has been asked to re-send with the `.xlsx` attached. The night check reports
+every refusal.
 
-The body path is what actually runs today. An attachment is **detected and logged but not
-parsed** — `rowsFromWorkbook()` exists and takes the xlsx library by injection, but no library
-is bundled into this Worker. The attachment is worth having anyway: it keeps the cell colours,
-and colour is data in that file.
+---
+
+## The OBP feed
+
+Every quantity in this email comes from OBP. The path it takes matters, because one stage
+of it fails quietly:
+
+| stage | what | owner | status |
+|---|---|---|---|
+| 1 | An app exports three CSVs from the OBP database at 00:00 EST into SharePoint `Inventory Reporting / Exports` | Jerwin Villaluz (Dec 2024) | works every night |
+| 2 | A trigger refreshes `OBPInventoryReporting.Linked.xlsx` from those CSVs | same | **intermittent** — fired 5 days out of 46 (1 Aug–16 Sep 2026) |
+| 3 | The flow "OBP nightly" mails the workbook to `obp@cims.work`; `cims-hon` ingests it into `obp_inventory` / `obp_intransit` | Miguel's flow, `cims-hon` | works |
+
+On 16 Sep 2026 the export said Allure had 17 magenta aboard; the workbook, and therefore
+`obp_inventory`, said 10. Six days of this email were computed from 10 September stock and
+the night check, which saw it from night one, had nobody to tell.
+
+**So this Worker also reads the CSVs directly.** The same flow attaches them (step 2 in
+*What Miguel has to do*), `obp-csv@cims.work` routes them here, `src/lib/obpCsv.js` parses
+them and writes **this Worker's own tables** `weekly_obp_inventory` and
+`weekly_obp_intransit`. `obp_*` is never written; it belongs to `cims-hon`.
+
+Every reader — the runway check, the due-date check, the schedule-free gap check, the
+quantity check — goes through `src/lib/obpSource.js` and takes **whichever copy is fresher**
+by snapshot date, the CSV on a tie. If the CSV mail stops, the mirror's date pulls ahead and
+the readers fall back on their own; the night check says so (`csv_feed`). `/health` shows
+which copy is in use.
+
+The consumption rates (`consumption_snapshot`, monthly) are still `cims-hon`'s and still
+come from the workbook. A stale month there moves an average by a little; a stale on-hand
+figure moves a stockout date by weeks. That is why on-hand and in-transit were done first.
+
+---
+
+## Ships with no Ordering Schedule
+
+A ship's due dates come from the cruise line's **Ordering Schedule**, an Excel file the
+ship's printer forwards to `obp@cims.work`. Without it the email falls back to open orders,
+which is weaker evidence. Miguel, 16 Sep 2026: *"the email should say: you are missing this
+file, do it first."*
+
+So `src/lib/scheduleStatus.js` judges every ship in `FLEET_MAP` (Azamara excluded — their
+dates are Ray's MLS) from `schedule_order` and from `cims-hon`'s own ingest log, and the
+crew email opens with **DO THIS FIRST** naming *what went wrong last time*:
+
+| status | what the log showed | what the crew is told |
+|---|---|---|
+| `never` | nothing loaded, no attempt | which file it is and where to send it |
+| `image` | `no spreadsheet attachment … .png` | a picture is not the file |
+| `nofile` | a mail with no attachment | send the file |
+| `unreadable` | `0 DG3 orders … from 0 rows` | send the original, not a copy or PDF |
+| `unmatched` | `could not map to a known ship` | put the ship name in the file name |
+| `stale` | rows loaded, every due date passed | the schedule ended on *date*, send the new one |
+
+On 16 Sep 2026 that was 13 ships: Ascent (screenshot), Millennium (unreadable), Navigator
+and Xcel (no ship name), Allure (ended March 2026), and Beyond, Edge, Harmony, Infinity,
+Ovation, Reflection, Silhouette, Solstice (never sent). A ship in that state is mailed for
+that alone, with the subject *"send your Ordering Schedule"*, and the fleet email lists them
+in one table.
 
 ---
 
@@ -69,7 +118,7 @@ the individual ships will go to each ship and cc Ray on each"). Every Monday 08:
 | who | gets |
 |---|---|
 | `FLEET_TO` (onboardsupport@DG3.com) | the whole-fleet list |
-| each ship with a finding | its own email, to the mailbox in `FLEET_MAP`, with `SHIP_CC` (Ray) in copy |
+| each ship with a finding | its own email, to the mailbox in `FLEET_MAP`, with `SHIP_CC` (Ray) in copy and `REPLY_TO` (Ray) on the reply |
 | `DRY_RUN_TO` | nothing, unless `SEND_TO_FLEET` is set back to `"false"` |
 
 `FLEET_MAP` carries all 48 ships. Every line comes from the `ship_contact` table in the
@@ -77,6 +126,10 @@ cims-timecard database (roles printer_specialist / printer / printer_manager), w
 own sources per row; 47 of the 48 mailboxes are delivery-proven in cims-mail, Journey's is not
 yet. `test/fleetMap.test.mjs` reads the map back out of `wrangler.toml` and fails on a missing,
 duplicated, malformed or wrong-domain ship.
+
+**The night after a Monday, the night check reads cims-mail's log** for that batch (binding
+`MAIL`, read-only) and names any ship whose email bounced, was complained about, or is still
+delayed. Forty-eight emails used to go out with nothing reading the answer.
 
 To stand down for a week: set `SEND_TO_FLEET = "false"`. One line, no code change. To check
 who would be mailed: **`GET /fleet`** (addresses masked unless `ADMIN_KEY` is passed) and
@@ -89,6 +142,19 @@ or lands in a real stranger's inbox carrying another company's operational data.
 A ship with no mapping is **not dropped**. Its rows go to `DRY_RUN_TO` flagged as
 undeliverable, and the night check reports it — the ships nobody can reach are the ones most
 likely to miss a container.
+
+---
+
+## The night check remembers what it said
+
+`WATCHDOG_TO` was emptied on 10 Sep 2026 because the check had no state and would have
+repeated a standing finding every night until it was filtered. Between 11 and 16 Sep it then
+flagged the frozen OBP feed every night and told nobody.
+
+It now keeps `weekly_watchdog_seen` (its own table): a finding is mailed the night it
+**first** appears, marked **NEW**; it is quiet every night after; a **critical** finding still
+standing a week later is mentioned again once a week, marked *STILL STANDING n DAYS*.
+"Nothing new since last night" is logged, not mailed. Engineering only — Miguel, never Ray.
 
 ---
 
@@ -204,23 +270,23 @@ figure has been standing, which was the number that actually mattered on Pursuit
 
 ## Known gaps
 
-- **`azamara_rows` on `/health` is not evidence the ingest works.** On 10 Sep 2026 it read 14
-  while not one MLS had ever reached this Worker — those rows arrived by another path and
-  nothing can refresh them, so an Azamara date that moves will not be seen. `mail_received` and
-  `last_azamara_mls` are the fields that answer the question `azamara_rows` looks like it
-  answers. The night check reads the same three facts and separates them, because "the route
-  does not exist", "mail arrives but never parses" and "Ray stopped sending" are three
-  different people's problems and a bare silence names none of them.
+- **`azamara_rows` on `/health` is not evidence the ingest works.** Those rows can arrive by
+  another path. `mail_received` and `last_azamara_mls` answer the question `azamara_rows` looks
+  like it answers; the night check separates "the route does not exist", "mail arrives but
+  never parses" and "Ray stopped sending", because each is a different person's problem. As of
+  16 Sep 2026 the route works and the last MLS was refused (see above).
 
-- **The workbook path is not wired.** An attached `.xlsx` is detected and named in the ingest
-  log, not parsed. Bundling an xlsx library into the Worker is the remaining work.
 - **`miss_note` is derived but not written.** `/misses` produces the explanation for every
   miss from the row itself. It does **not** write to `cims-order`: that ledger belongs to
   `cims-order`, and the standing guardrail is that each app manages its own rows. Loading
   these values needs an explicit decision, not a side effect of a night run.
-- **38 of 48 ships still have no ordering schedule loaded.** That is a data problem, not a
-  code one — the resends to `obp@cims.work` fix most of it. Until then `/health` and the night
-  check both report the real coverage rather than implying fleet-wide protection.
+- **13 of 48 ships have no usable ordering schedule** (16 Sep 2026). The crew email now asks
+  each of them for the file and says what went wrong last time; until they send it, their dates
+  come from open orders. `/health` and the night check report the real coverage.
+- **Ray's manual-order lead time is unknown.** For a ship with no schedule the email can only
+  say "ask your Inventory Manager to check the next due date"; with a number from Ray it could
+  say a date. Asked, 16 Sep 2026.
+- **Consumption rates still come through the workbook.** See *The OBP feed*.
 - The Azamara HOPO numbers (`PRHOPO08668`) are not the same identifier as the `JR0036` /
   `ON0037` / `ONMANUAL` voyage values in OBP. That mapping is still open with Ray, so Azamara
   ships are matched by due date and loading date, not by voyage.

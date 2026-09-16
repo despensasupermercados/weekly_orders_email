@@ -15,6 +15,7 @@ import { mastRows } from '../cims-mast.js';
 import { byFleetOrder } from './fleetStatus.js';
 import { byDueDate } from './runway.js';
 import { normShip } from './fleet.js';
+import { CREW_LINE, STATUS } from './scheduleStatus.js';
 // Ship names do not agree across sources ("Allure of the Seas" / "Allure");
 // the send planner groups by normShip, so every per-ship filter here must too.
 const sameShip = (a, b) => normShip(a) === normShip(b);
@@ -500,6 +501,58 @@ function gapsHtml(gaps, forShip, shipName) {
 </td></tr>`;
 }
 
+// SEND YOUR ORDERING SCHEDULE FIRST. Miguel, 16 Sep 2026: "if that's the
+// case, the email should say: you are missing this file, do it first." A ship
+// with no usable schedule is told so at the top, with the reason the last
+// attempt failed (a screenshot, an unreadable file, a file with no ship name),
+// because "send your schedule" to a crew that already sent one is ignored.
+// On the fleet email it is one short table, so Ray can see who still owes
+// a file without reading thirteen emails.
+const SCHEDULE_LABEL = {
+  [STATUS.NEVER]: 'never sent',
+  [STATUS.NOFILE]: 'mail had no file',
+  [STATUS.IMAGE]: 'sent a picture, not the file',
+  [STATUS.UNREADABLE]: 'file could not be read',
+  [STATUS.UNMATCHED]: 'file has no ship name',
+  [STATUS.STALE]: 'schedule has ended',
+};
+function scheduleHtml(schedules, forShip, shipName) {
+  const list = (schedules || []).filter((s) => s && s.status && s.status !== STATUS.OK
+    && (!forShip || sameShip(s.ship, shipName)));
+  if (!list.length) return '';
+  if (forShip) {
+    const s = list[0];
+    const why = s.status === STATUS.STALE && s.last_due
+      ? `Your Ordering Schedule ended on <strong>${fmtDowFull(s.last_due)}</strong>. We need the new one.`
+      : (CREW_LINE[s.status] || CREW_LINE[STATUS.NEVER]);
+    return `
+<tr><td style="padding:18px 22px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>
+<td bgcolor="${RED_BG}" style="background:${RED_BG};border-left:4px solid ${RED};padding:12px 14px;">
+<div style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${RED};">DO THIS FIRST</div>
+<div style="font-family:${FH};font-size:16px;font-weight:600;color:${NAVY};padding-top:3px;">Send us your Ordering Schedule</div>
+<div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:6px;line-height:1.5;">${why}</div>
+<div style="font-family:${FB};font-size:14px;color:${BODY};padding-top:6px;line-height:1.5;">Send the file to <strong>obp@cims.work</strong>. Put your ship name in the file name.</div>
+<div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:6px;line-height:1.5;">Until we have it, the dates below come from your open orders in OBP, not from your ship's real due dates.</div>
+</td></tr></table>
+</td></tr>`;
+  }
+  const rows = list.map((s, i) => {
+    const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
+    return `<tr>
+<td bgcolor="${zb}" style="background:${zb};padding:7px 10px;border-bottom:1px solid ${BORDER};font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};white-space:nowrap;">${esc(s.ship)}</td>
+<td bgcolor="${zb}" style="background:${zb};padding:7px 10px;border-bottom:1px solid ${BORDER};font-family:${FB};font-size:12px;color:${BODY};">${esc(SCHEDULE_LABEL[s.status] || s.status)}${s.status === STATUS.STALE && s.last_due ? ` (${fmtDowFull(s.last_due)})` : ''}</td>
+<td bgcolor="${zb}" style="background:${zb};padding:7px 10px;border-bottom:1px solid ${BORDER};font-family:${FB};font-size:12px;color:${SLATE};white-space:nowrap;">${s.last_attempt ? `last try ${fmtDowFull(s.last_attempt)}` : ''}</td>
+</tr>`;
+  }).join('');
+  return `
+<tr><td style="padding:24px 22px 0;">
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">Ships with no Ordering Schedule</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Each of these ships was asked to send its file to obp@cims.work. Until then their dates come from open orders only.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
+</td></tr>`;
+}
+
 // find it quickly, and stops opening the email.
 export function renderWeekly(act, all, today, opts = {}) {
   const forShip = opts.audience === 'ship';
@@ -510,10 +563,12 @@ export function renderWeekly(act, all, today, opts = {}) {
   // printed them as ships, so the header of the email announced a number that
   // cannot exist. A reader who spots that stops believing the rest of the page,
   // and they are right to. Count ships.
+  const askAll = (opts.schedules || []).filter((s) => s && s.status && s.status !== STATUS.OK);
   const troubled = new Set([
     ...act.map((r) => r.ship),
     ...(opts.runsOut || []).map((f) => f.ship),
     ...(opts.gaps || []).map((g) => g.ship),
+    ...askAll.map((s) => s.ship),
   ]);
   // AND COUNT THE RIGHT SHIPS. `all` is the classified voyage rows, which exist
   // only for ships with an ordering schedule - 27 of the 47 in service. So a
@@ -540,7 +595,8 @@ export function renderWeekly(act, all, today, opts = {}) {
   // is the header contradicting the body, and the body is the part that matters.
   const gapCount = (opts.gaps || []).filter((g) => !forShip || sameShip(g.ship, shipName)).length;
   const dryCount = (opts.runsOut || []).filter((f) => !forShip || sameShip(f.ship, shipName)).length;
-  const todo = act.length + dryCount + gapCount;
+  const askCount = askAll.filter((s) => !forShip || sameShip(s.ship, shipName)).length;
+  const todo = act.length + dryCount + gapCount + askCount;
   // NAME THE WINDOW, NOT THE SEND DATE. "Orders due - 11 Sep" is the day the
   // email went out, which tells the reader nothing about what it covers. This
   // report looks at the next seven days, so it should say which seven: a crew
@@ -558,6 +614,7 @@ export function renderWeekly(act, all, today, opts = {}) {
     act.length - missed ? `${act.length - missed} to order` : null,
     dryCount ? `${dryCount} running out` : null,
     gapCount ? `${gapCount} to check` : null,
+    askCount ? (forShip ? 'send your Ordering Schedule' : `${askCount} with no schedule`) : null,
   ].filter(Boolean);
   const counts = forShip
     ? (bits.join(' &middot; ') || 'Nothing to do this week')
@@ -573,6 +630,7 @@ export function renderWeekly(act, all, today, opts = {}) {
     act.length ? `${act.length} to order` : null,
     dryCount ? `${dryCount} running out` : null,
     gapCount ? `${gapCount} to check` : null,
+    askCount ? (forShip ? 'send your Ordering Schedule' : `${askCount} with no schedule`) : null,
   ].filter(Boolean).join(', ');
   const preheader = todo
     ? `${todo} to do this week: ${plain}.`
@@ -600,11 +658,13 @@ ${legendHtml()}
 <tr><td style="padding:14px 26px 0;font-family:${FB};font-size:15px;line-height:1.5;color:${BODY};">
 <p style="margin:0;">${intro}</p>
 </td></tr>
+${forShip ? scheduleHtml(opts.schedules, forShip, shipName) : ''}
 
 ${act.length ? `<tr><td style="padding:22px 22px 4px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows}</table></td></tr>` : ''}
 
 ${runsOutHtml(opts.runsOut, forShip, shipName, today)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
+${forShip ? '' : scheduleHtml(opts.schedules, forShip, shipName)}
 ${coverageHtml(all, today, forShip, shipName, opts.gaps, opts.deliveries)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">

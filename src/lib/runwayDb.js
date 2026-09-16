@@ -9,6 +9,7 @@
 import { inService } from './fleetStatus.js';
 import { require_ } from './schema.js';
 import { runsOutFirst, withQuantity, byDueDate } from './runway.js';
+import { obpSource } from './obpSource.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
@@ -32,10 +33,14 @@ const eligible = (t) => `(
    OR ${t}.mot = 'AZAMARA BWS')`;
 
 export async function fleetRunway(hon, today, opts = {}) {
+  // THE FRESHER COPY OF OBP. The workbook mirror (obp_*) or this Worker's own
+  // CSV copy (weekly_obp_*), whichever carries the newer snapshot. See
+  // obpSource.js for why the mirror alone was not enough.
+  const src = await obpSource(hon);
   for (const [table, cols] of [
     ['consumption_snapshot', ['ship', 'part_number', 'month', 'on_hand', 'receipts']],
-    ['obp_inventory', ['ship', 'part_number', 'on_hand', 'snapshot_date']],
-    ['obp_intransit', ['ship', 'part_number', 'eta', 'qty', 'snapshot_date']],
+    [src.inventory.table, ['ship', 'part_number', 'on_hand', 'snapshot_date']],
+    [src.intransit.table, ['ship', 'part_number', src.intransit.etaCol, 'qty', 'snapshot_date']],
     ['par', ['ship', 'part_number', 'description']],
     ['schedule_order', ['ship', 'mot', 'due_date', 'loading_delivery_date']],
   ]) {
@@ -77,10 +82,10 @@ export async function fleetRunway(hon, today, opts = {}) {
     -- Every open line, with its Excel-serial ETA already a date. Read once.
     , transit AS (
       SELECT t.ship, t.part_number, t.qty,
-             date('1899-12-30','+'||CAST(t.eta AS INTEGER)||' days') land
-        FROM obp_intransit t
-       WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-         AND t.eta GLOB '[0-9]*'
+             ${src.intransit.land('t')} land
+        FROM ${src.intransit.table} t
+       WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
+         AND ${src.intransit.etaOk('t')}
     ), nxt AS (
       SELECT ship, part_number, MIN(land) next_eta
         FROM transit WHERE land >= ?4 GROUP BY ship, part_number
@@ -98,9 +103,9 @@ export async function fleetRunway(hon, today, opts = {}) {
     )
     SELECT a.ship, substr(p.description, 1, 34) item, p.description description, p.par_qty, p.brand,
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
-           COALESCE((SELECT i.on_hand FROM obp_inventory i
+           COALESCE((SELECT i.on_hand FROM ${src.inventory.table} i
                       WHERE i.ship = a.ship AND i.part_number = a.part_number
-                        AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
+                        AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
                       LIMIT 1), 0) on_hand,
            COALESCE(n.next_eta, '') next_eta,
            -- what lands for this item on THAT day - not the sum of every open
@@ -182,5 +187,8 @@ export async function fleetRunway(hon, today, opts = {}) {
   // the ships that have an ordering schedule and reported on a smaller fleet
   // than the one reading it.
   const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
-  return { ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut };
+  return {
+    ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut,
+    source: { inventory: src.inventory.source, intransit: src.intransit.source },
+  };
 }
