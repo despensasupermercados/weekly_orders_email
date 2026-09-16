@@ -155,7 +155,13 @@ export function findAnomalies(rows, opts = DEFAULTS) {
 
 const ITEM_COLS = ['item', 'item_description', 'description', 'part', 'part_number', 'sku'];
 const VALUE_COLS = ['on_hand', 'qty', 'quantity', 'consumed', 'usage', 'value', 'count'];
-const DATE_COLS = ['snapshot_date', 'date', 'as_of', 'ts'];
+// `month` IS the date column. The live table is
+// consumption_snapshot(ship, part_number, month, on_hand, receipts) - checked
+// against sqlite_master on 14 Sep 2026 by the night reader, which had logged
+// "anomaly_blocked: no date column the Worker recognises" for four nights. A
+// naming mismatch, not missing data. One monthly snapshot per row, so the
+// fourteen-snapshot window below is fourteen months.
+const DATE_COLS = ['snapshot_date', 'date', 'as_of', 'ts', 'month'];
 
 // Fourteen snapshots is enough for a median to mean something and short enough
 // that a genuine step change - a new machine, a route change - stops being

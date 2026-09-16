@@ -65,8 +65,12 @@ export function rowsFromHtml(html) {
 }
 
 // ---------- workbook path (xlsx must be read with cellStyles: true) ----------
+// buf is a Uint8Array (mime.attachmentsOf().bytes). Community SheetJS does
+// not read cell fills, so `green` and `red` come back false from this path:
+// po_state reads 'raised' rather than 'confirmed' and date_changed is 0. The
+// pasted-body path still sees the colours. Dates and PO numbers are complete.
 export function rowsFromWorkbook(readSync, utils, buf) {
-  const wb = readSync(buf, { type: 'buffer', cellStyles: true, cellDates: true });
+  const wb = readSync(buf, { type: typeof buf === 'string' ? 'binary' : 'array', cellStyles: true, cellDates: true });
   const out = [];
   for (const name of wb.SheetNames) {
     const sh = wb.Sheets[name];

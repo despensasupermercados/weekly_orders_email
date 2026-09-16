@@ -45,10 +45,13 @@ assert.ok(typo.every((u) => u.used >= 0), 'a negative usage is a data fault, nev
 const dry = stockoutDate({ onHand: 9, rate: 7, arrivals: [], today: '2026-09-11' });
 assert.ok(dry > '2026-10-10' && dry < '2026-10-22', `expected mid-October, got ${dry}`);
 
-// An arrival before that date covers it, and then there is nothing to say.
+// A container with this item lands before the ship runs dry: nothing to say.
+// What happens after that landing belongs to the next order, which has not
+// been raised yet. (Dropping this rule on 16 Sep 2026 took the 15 Sep snapshot
+// from 47 findings to 272 - every item that would ever run out in 120 days.)
 assert.equal(
   runsOutFirst({ ship: 'Onward', item: 'TN619C CYAN', onHand: 9, rate: 7,
-    arrivals: [{ date: '2026-09-25', qty: 14 }], today: '2026-09-11', nextLoading: '2026-12-22' }),
+    arrivals: [{ date: '2026-09-25', qty: 14 }], today: '2026-09-11', nextLoading: '2026-09-25' }),
   null, 'stock arriving before the ship runs dry is not a finding');
 
 // An arrival AFTER it runs dry is exactly the case worth an email: the order is

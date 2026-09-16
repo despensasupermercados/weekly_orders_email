@@ -100,7 +100,15 @@ export function stockoutDate({ onHand, rate, arrivals = [], today, horizonDays =
 export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays }) {
   const out = stockoutDate({ onHand, rate, arrivals, today, horizonDays });
   if (!out) return null;
-  // Something already arrives on or before the day it would run dry: covered.
+  // A CONTAINER WITH THIS ITEM LANDS FIRST: NOTHING TO SAY. `arrivals` holds
+  // only the NEXT known landing for the item - the orders after it have not
+  // been raised yet, so a balance that runs dry weeks after that landing is
+  // the next order's business, not a finding. A code review on 16 Sep 2026
+  // proposed dropping this on the case "a small top-up lands early and the
+  // ship still runs dry before the next container"; that case cannot occur in
+  // this data (the top-up IS the next landing), and without the shortcut the
+  // 15 Sep snapshot went from 47 findings to 272 - every item that would
+  // eventually run out inside the horizon. Kept, on purpose.
   const covered = (arrivals || []).some((a) => a.date <= out && Number(a.qty) > 0 && a.date >= today);
   if (covered) return null;
   return {
@@ -213,7 +221,7 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
   }
   if (PAPER_20LB.test(desc)) {
     if (azamara) return { qty: Math.max(0, need - coming), basis: `${need} cases used in ${cycleDays} days` };
-    if (coming >= need) return { qty: 0, basis: 'a pallet is already on the way' };
+    if (coming >= need) return { qty: 0, basis: coming >= PAPER_PALLET ? 'a pallet is already on that order' : `${coming} cases already on that order` };
     return { qty: PAPER_PALLET, basis: `paper is one pallet of ${PAPER_PALLET} cases` };
   }
   if (AZAMARA_STOCK.test(desc)) {
@@ -243,7 +251,9 @@ export function withQuantity(finding, { brand, parQty, due = null, lands = null,
       .reduce((n, a) => n + (Number(a.qty) || 0), 0);
     onHandAtLanding = Math.max(0, (Number(finding.on_hand) || 0) + early - used);
   }
-  const q = orderQuantity({ item: finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding });
+  // Match the rule on the FULL description: `item` is cut to 34 characters for
+  // the email, and a long description can lose its part number in the cut.
+  const q = orderQuantity({ item: finding.description || finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding });
   return {
     ...finding,
     order_due: due || null,

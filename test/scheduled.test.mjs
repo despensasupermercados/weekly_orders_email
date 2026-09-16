@@ -151,3 +151,49 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   assert.ok(!sent.some((m) => m.to.includes('ops@example.com')), 'DRY_RUN_TO is not used when live');
   console.log('ok - live: each ship gets its own email with Ray in copy, onboardsupport gets the fleet list');
 }
+
+// THE LIVE FLEET-LIST SUBJECT COUNTS EVERYTHING TOO. The dry run was fixed to
+// count stockouts and gaps; the live path still read act.length alone, so a
+// Monday with 0 voyages and 39 stockouts would have reached onboardsupport as
+// "0 to fix". And ONE MAILER FAILURE MUST NOT ABORT THE LOOP: ship 12 failing
+// used to mean ships 13-48 were never mailed.
+{
+  sent.length = 0; waits.length = 0;
+  const live = {
+    ...env,
+    SEND_TO_FLEET: 'true',
+    FLEET_TO: 'onboardsupport@example.com',
+    SHIP_CC: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com',
+    MAILER: {
+      fetch: async (_url, init) => {
+        const body = JSON.parse(init.body);
+        if (body.to.includes('ex_printerspecialist@example.com')) throw new Error('transport reset');
+        sent.push(body);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    },
+  };
+  await worker.scheduled({ cron: '0 12 * * MON', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  const digest = sent.find((m) => /^Orders due this week/.test(m.subject));
+  assert.ok(digest, 'the fleet list still goes out after a ship send threw');
+  assert.ok(!/ 0 to fix/.test(digest.subject), `live subject must count stockouts and gaps: ${digest.subject}`);
+  assert.ok(/ 2 to fix/.test(digest.subject), `one stockout + one gap = 2: ${digest.subject}`);
+  assert.ok(sent.some((m) => m.subject.startsWith('Quest:')), 'Quest was still mailed after Explorer threw');
+  assert.ok(/1 of 2 ships mailed/.test(digest.subject), `the digest reports the failed ship: ${digest.subject}`);
+  console.log('ok - live: one transport failure does not abort the loop, and the fleet-list subject counts everything');
+}
+
+// THE NIGHTLY CRON STRING IN CODE EQUALS THE ONE IN wrangler.toml. They drifted
+// once and the weekly path ran every night.
+{
+  const { readFileSync } = await import('node:fs');
+  const toml = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+  const crons = /crons\s*=\s*\[([^\]]*)\]/.exec(toml)[1].match(/"([^"]+)"/g).map((s) => s.slice(1, -1));
+  const src = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  const nightly = /const NIGHTLY_CRON = '([^']+)'/.exec(src)[1];
+  assert.ok(crons.includes(nightly), `NIGHTLY_CRON ${nightly} is not one of wrangler's crons ${crons}`);
+  assert.ok(crons.includes('0 12 * * MON'), 'the weekly cron is Monday 12:00 UTC');
+  console.log('ok - crons: NIGHTLY_CRON matches wrangler.toml character for character');
+}

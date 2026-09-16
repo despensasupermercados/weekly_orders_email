@@ -120,8 +120,15 @@ export function rulesFrom(json) {
 // Pure. Takes the order lines already grouped for one (ship, loading) and says
 // what is wrong with them. No database, no dates, no I/O - so it is testable
 // against a fixture and the fixture is the thing Ray can be shown.
+// order.on_hand, when given, is { black: n, cyan: n, magenta: n, yellow: n } -
+// toner ON BOARD from the latest obp_inventory snapshot. Ray predicted the
+// failure of not reading it: "a ship that doesn't need toner would be pushed
+// to order it or would start ignoring the report", and on 10 Sep 2026 Explorer
+// was flagged for black with 14 black on board. A missing colour is critical
+// only when the ship holds none of it; with stock aboard it is a warn that
+// states the figure. Without an on-hand read it stays critical, as before.
 export function analyseOrder(order, rules = DEFAULT_RULES) {
-  const { ship, loading_delivery_date, lines = [], azamara = false } = order;
+  const { ship, loading_delivery_date, lines = [], azamara = false, on_hand = null } = order;
   const out = [];
   const say = (code, severity, detail) =>
     out.push({ ship, loading_delivery_date, code, severity, detail });
@@ -146,9 +153,19 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
           `${unknown.length} of ${toner.length} toner lines have no readable colour ` +
           `(e.g. "${String(unknown[0].description).slice(0, 60)}") - colour completeness not checked`);
       } else if (missing.length) {
-        say('MISSING_COLOUR', 'critical',
-          `toner ordered for ${[...present].sort().join(', ')} but not ${missing.join(', ')} - ` +
-          `the press stops when the first of those runs out`);
+        const held = (c) => (on_hand && Number.isFinite(Number(on_hand[c])) ? Number(on_hand[c]) : null);
+        const bare = missing.filter((c) => held(c) === null || held(c) <= 0);
+        const stocked = missing.filter((c) => held(c) > 0);
+        if (bare.length) {
+          say('MISSING_COLOUR', 'critical',
+            `toner ordered for ${[...present].sort().join(', ')} but not ${bare.join(', ')} - ` +
+            (on_hand ? `none on board - ` : '') + `the press stops when the first of those runs out`);
+        }
+        if (stocked.length) {
+          say('MISSING_COLOUR', 'warn',
+            `toner ordered for ${[...present].sort().join(', ')} but not ${stocked.join(', ')} - ` +
+            `on board: ${stocked.map((c) => `${c} ${held(c)}`).join(', ')}`);
+        }
       }
     }
   }
@@ -211,6 +228,27 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   const r = await hon.prepare(sql).bind(...loadings, ...ships).all();
   const rows = r.results || [];
 
+  // WHAT IS ON BOARD, per ship and colour, from the latest inventory snapshot.
+  // Without this the rule compares an order line to nothing and calls every
+  // correctly-sized top-up a missing colour.
+  const onHandByShip = new Map();
+  try {
+    const inv = await hon.prepare(
+      `SELECT i.ship AS ship, p.description AS description, i.on_hand AS on_hand
+         FROM obp_inventory i JOIN par p ON p.ship = i.ship AND p.part_number = i.part_number
+        WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
+          AND i.ship IN (${marks(ships.length)})
+          AND p.description LIKE '%TONER%'`).bind(...ships).all();
+    for (const row of inv.results || []) {
+      if (!isColourCartridge(row.description)) continue;
+      const colour = colourOf(row.description);
+      if (!colour) continue;
+      if (!onHandByShip.has(row.ship)) onHandByShip.set(row.ship, {});
+      const m = onHandByShip.get(row.ship);
+      m[colour] = (m[colour] || 0) + (Number(row.on_hand) || 0);
+    }
+  } catch (_) { /* no on-hand read: the rule falls back to critical, as before */ }
+
   const byKey = new Map();
   for (const row of rows) {
     const k = `${row.ship}|${row.loading}`;
@@ -230,6 +268,7 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
       loading_delivery_date: o.loading_delivery_date,
       lines,
       azamara: o.mot === 'AZAMARA BWS',
+      on_hand: onHandByShip.get(o.ship) || null,
     }, rules));
   }
   return { ran: true, reason: null, findings, checked: ordered.length, description_column: descCol };

@@ -1,14 +1,20 @@
 import {
-  isAzamaraMls, rowsFromHtml, parseAzamaraRows,
+  isAzamaraMls, rowsFromHtml, rowsFromWorkbook, parseAzamaraRows,
   notesFromBody, saveAzamara,
 } from './lib/azamaraMls.js';
 import { htmlPartOf, attachmentsOf } from './lib/mime.js';
+// SheetJS community build, bundled by wrangler. Reads Ray's attached MLS
+// workbook when the table is not pasted into the body (11 Sep 2026: 'Azamara
+// MLS REFUSED ... 1 workbook attachment present but the workbook parser is
+// not wired'). Cell fills are not read by this build - see rowsFromWorkbook.
+import * as XLSX from 'xlsx';
 import { voyageStates, actionable, poNotRecorded, dataFaults, escalations, MISSED_CREW_DAYS } from './lib/due.js';
-import { planFleetSend, maskEmail } from './lib/fleet.js';
+import { planFleetSend, maskEmail, normShip } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { unscheduledGaps } from './lib/fallback.js';
 import { fleetRunway } from './lib/runwayDb.js';
+import { inService } from './lib/fleetStatus.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
@@ -87,7 +93,19 @@ function secretEquals(given, expected) {
 }
 
 async function buildWeekly(env, today) {
-  const rows = await voyageStates(env.HON, today);
+  // A THROW HERE MUST NOT TAKE THE EMAIL WITH IT. The gap and runway checks
+  // were already isolated; this one was not, so one D1 error on the schedule
+  // query meant no email, no 'weekly run' log line, and the watchdog only
+  // noticing eight days later. A partial email beats none.
+  let rows = [];
+  try {
+    rows = await voyageStates(env.HON, today);
+  } catch (e) {
+    await logIngest(env, 'cron', `schedule check threw: ${String(e && e.message || e)}`);
+  }
+  // A hull with no crew aboard cannot act on a voyage row either. The runway
+  // and gap checks already filter on inService; the schedule path did not.
+  rows = rows.filter((r) => inService(r.ship, today));
   const act = actionable(rows);
 
   // THE 25 SHIPS WITH NO ORDERING SCHEDULE. Without this they appear nowhere in
@@ -176,13 +194,22 @@ async function ingestEmail(message, env) {
 
     // The table is usually PASTED into the body, not attached - exactly the
     // case the cims-hon handler returns early on.
-    const rows = parseAzamaraRows(rowsFromHtml(body));
+    let rows = parseAzamaraRows(rowsFromHtml(body));
 
-    // The workbook path exists (rowsFromWorkbook, xlsx injected by the caller)
-    // but no library is bundled into this Worker, so an attached .xlsx is NOT
-    // parsed. Say so rather than let it look handled: the attachment keeps the
-    // cell colours, and colour is data in this file.
+    // THE WORKBOOK PATH. The table is usually pasted; when it is only attached,
+    // read the attachment. Body rows win when both exist (they carry colour).
     const workbooks = attachments.filter((a) => /\.xlsx?$/i.test(a.filename));
+    let parsedFrom = rows.length ? 'body' : null;
+    if (!rows.length) {
+      for (const w of workbooks) {
+        try {
+          const wrows = parseAzamaraRows(rowsFromWorkbook(XLSX.read, XLSX.utils, w.bytes));
+          if (wrows.length) { rows = wrows; parsedFrom = w.filename; break; }
+        } catch (e) {
+          await logIngest(env, message.from, `workbook ${w.filename} could not be read: ${String(e && e.message || e)}`);
+        }
+      }
+    }
 
     // REFUSE A PARTIAL WRITE. A run that finds the file but parses nothing, or
     // parses rows with no loading date, means the decode or the layout changed.
@@ -197,8 +224,8 @@ async function ingestEmail(message, env) {
         `(need a loading date on every row). schedule_order left unchanged. ` +
         `Body was ${raw.length} bytes, decoded to ${body.length}.` +
         (workbooks.length
-          ? ` ${workbooks.length} workbook attachment(s) present (${workbooks.map((w) => w.filename).join(', ')}) ` +
-            `but the workbook parser is not wired in this Worker - the data may be in there.`
+          ? ` ${workbooks.length} workbook attachment(s) read (${workbooks.map((w) => w.filename).join(', ')}) ` +
+            `and none carried a row with SHIP + DELIVERY DATE TO BWS headers.`
           : ''));
       return;
     }
@@ -206,7 +233,7 @@ async function ingestEmail(message, env) {
     const notes = notesFromBody(body.replace(/<[^>]+>/g, ' '));
     const r = await saveAzamara(env.HON, usable, 'azamara-mls');
     await logIngest(env, message.from,
-      `Azamara MLS: ${r.written} rows, ${r.missing} with no PO` +
+      `Azamara MLS (from ${parsedFrom}): ${r.written} rows, ${r.missing} with no PO` +
       (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
 }
 
@@ -236,7 +263,9 @@ export default {
   // This comment said "0 12 * * 2" long after wrangler.toml had been corrected
   // to MON; a stale comment about a cron is how the last cron bug survived.
   async scheduled(event, env, ctx) {
-    const today = iso(new Date());
+    // The day the CRON says it is, not the day the code happens to run. Same
+    // calendar day in production; in a test it is what makes the run reproducible.
+    const today = iso(new Date(event.scheduledTime || Date.now()));
 
     if (event.cron === NIGHTLY_CRON) {
       const report = await runWatchdog(env, today, { repair: true });
@@ -297,6 +326,11 @@ export default {
 
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
     const supervisors = list(env.DRY_RUN_TO);
+    // ONE COUNT FOR EVERY SUBJECT LINE. The dry run was fixed to count
+    // stockouts and gaps; the live fleet-list subject still read act.length
+    // alone, so a live Monday with 0 voyages and 39 stockouts would have gone
+    // to onboardsupport as "0 to fix". Computed once, used everywhere.
+    const todo = act.length + gaps.length + runsOut.length;
     // Miguel, 15 Sep 2026: the whole-fleet email goes to onboardsupport; each
     // ship's email goes to the ship with Ray in copy. Every address here was
     // typed by a human into wrangler.toml; nothing is derived.
@@ -313,7 +347,6 @@ export default {
         // THE SUBJECT LINE IS THE ONLY PART MOST PEOPLE READ. Counting
         // act.length alone printed "0 to fix" on a week carrying 39 stockouts
         // and 3 gaps - the email arguing against itself in the inbox list.
-        const todo = act.length + gaps.length + runsOut.length;
         const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html);
         if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
       })());
@@ -352,7 +385,7 @@ export default {
         // The subject must name what is actually inside. "a gap in your
         // deliveries" went out for every ship with no due date, including one
         // carrying eleven stockouts and no gap at all.
-        const dry = runsOut.filter((f) => f.ship === group.ship).length;
+        const dry = runsOut.filter((f) => normShip(f.ship) === normShip(group.ship)).length;
         const subject = [
           n ? `${n} order${n === 1 ? '' : 's'} due` : null,
           dry ? `${dry} running out` : null,
@@ -388,7 +421,7 @@ export default {
         const unreachable = plan.unmapped.flatMap((g) => g.rows);
         try {
           const r = await send(env, digestTo,
-            `Orders due this week - ${act.length} to fix, ${sent} ships mailed` +
+            `Orders due this week - ${todo} to fix, ${sent} of ${plan.sendable.length} ships mailed` +
             (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
             html);
           if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
@@ -482,9 +515,15 @@ export default {
     // in the fleet, tied to their ship, on a public URL. Masked is still enough
     // to check that a ship is mapped and that its domain is right.
     if (url.pathname === '/fleet') {
-      const st = await voyageStates(env.HON, today);
-      const plan = planFleetSend(actionable(st), env.FLEET_MAP);
-      const unlocked = Boolean(env.ADMIN_KEY) && secretEquals(url.searchParams.get('key'), env.ADMIN_KEY);
+      // THE SAME PLAN THE MONDAY RUN USES. This planned from voyage rows alone,
+      // so a stockout-only ship (Quest, 11 items on 12 Sep) was absent from
+      // would_send here and mailed on Monday anyway.
+      const { act, gaps, runsOut } = await buildWeekly(env, today);
+      const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut);
+      const dryFor = (ship) => runsOut.filter((f) => normShip(f.ship) === normShip(ship)).length;
+      const gapsFor = (ship) => gaps.filter((g) => normShip(g.ship) === normShip(ship)).length;
+      const unlocked = Boolean(env.ADMIN_KEY) && secretEquals(
+        request.headers.get('x-admin-key') || url.searchParams.get('key'), env.ADMIN_KEY);
       const show = (addrs) => (unlocked ? addrs : addrs.map(maskEmail));
       return json({
         today,
@@ -500,11 +539,13 @@ export default {
         malformed_entries: unlocked ? plan.malformed : plan.malformed.map((l) => l.replace(/\S+@\S+/g, '***')),
         would_send: plan.sendable.map((g) => ({
           ship: g.ship, to: show(g.to), orders: g.rows.length,
+          running_out: dryFor(g.ship), gaps: gapsFor(g.ship),
           due: g.rows.map((r) => `${r.due_date} ${r.state}`),
         })),
         // The half that matters most: due this week and unreachable.
         unaddressable: plan.unmapped.map((g) => ({
           ship: g.ship, orders: g.rows.length,
+          running_out: dryFor(g.ship), gaps: gapsFor(g.ship),
           due: g.rows.map((r) => `${r.due_date} ${r.state}`),
         })),
       });
@@ -513,14 +554,11 @@ export default {
     // A ship's own email, exactly as that ship would receive it. ?ship=Apex
     if (url.pathname === '/preview-ship') {
       const want = url.searchParams.get('ship') || '';
-      const st = await voyageStates(env.HON, today);
-      // A ship with no ordering schedule has no voyage rows at all, so without
-      // the gaps it is not in the plan and /preview-ship answers "nothing due"
-      // for 25 of 48 ships - the same silence, in the tool built to check for it.
-      const gq = await unscheduledGaps(env.HON, today).catch(() => ({ ran: false, findings: [] }));
-      const gp = gq.ran ? gq.findings : [];
-      const gd = gq.ran ? gq.deliveries || [] : [];
-      const plan = planFleetSend(actionable(st), env.FLEET_MAP, gp);
+      // EXACTLY WHAT MONDAY BUILDS. This planned without the stockouts, so a
+      // stockout-only ship answered 404 "nothing due" here and was mailed on
+      // Monday - the preview lying about the send it previews.
+      const { rows: st, act, gaps: gp, runsOut: ro, deliveries: gd } = await buildWeekly(env, today);
+      const plan = planFleetSend(act, env.FLEET_MAP, gp, ro);
       const g = [...plan.sendable, ...plan.unmapped]
         .find((x) => x.ship.toLowerCase().includes(want.toLowerCase()));
       if (!want || !g) {
@@ -530,7 +568,7 @@ export default {
         }, 404);
       }
       return new Response(
-        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp, deliveries: gd }),
+        renderWeekly(g.rows, st, today, { audience: 'ship', ship: g.ship, gaps: gp, runsOut: ro, deliveries: gd }),
         { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 

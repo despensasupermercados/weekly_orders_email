@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "wrangler": "^3"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }

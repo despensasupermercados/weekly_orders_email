@@ -64,6 +64,32 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       `${name} last snapshot ${d}, ${age} days old`);
   }
 
+  // ---- 1b. Is the feed MOVING, or only being re-stamped? ----
+  // snapshot_date is stamped at ingest and advances every morning whether or
+  // not a single value changed, so a permanently frozen source reads as
+  // permanently fresh to check 1. 10-14 Sep 2026: five snapshots of
+  // obp_inventory, 3482 rows / 13990 on hand every one of them, and check 1
+  // said "fresh" every night. The night reader found it by hand, not this
+  // Worker. Same class of error as the quantity and waste-box rules before it:
+  // the check read the wrong column. Compare CONTENT across recent snapshots.
+  const frozenFor = async (table, valueCol) => {
+    const rows = (await many(hon,
+      `SELECT snapshot_date d, COUNT(*) n, ROUND(SUM(${valueCol}), 2) s
+         FROM ${table} GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 7`)) || [];
+    let run = rows.length ? 1 : 0;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].n === rows[0].n && rows[i].s === rows[0].s) run++;
+      else break;
+    }
+    return { run, latest: rows[0] || null };
+  };
+  for (const [table, col] of [['obp_inventory', 'on_hand'], ['obp_intransit', 'qty']]) {
+    const f = await frozenFor(table, col);
+    if (f.run >= 3) add(f.run >= 5 ? 'critical' : 'warn', 'feed_frozen',
+      `${table} content identical for ${f.run} consecutive snapshots ` +
+      `(${f.latest.n} rows, total ${f.latest.s}) - the source is not moving even though snapshot_date is`);
+  }
+
   // ---- 2. ETA format drift ----
   // obp_intransit.eta is an Excel serial in a TEXT column. If Ray's export ever
   // switches to real dates, every date comparison silently matches nothing and
