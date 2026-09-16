@@ -158,6 +158,25 @@ standing a week later is mentioned again once a week, marked *STILL STANDING n D
 
 ---
 
+## Sending one ship's email on demand
+
+Nothing outside can call this Worker: `ADMIN_KEY` is unset and the workers.dev URL is not
+reachable from a Claude session. So the trigger is a **row in D1**. Every 15 minutes the
+Worker reads its own table `weekly_send_request` and sends any queued ship email exactly as
+Monday would build it, to the ship's `FLEET_MAP` mailbox unless the row names addresses,
+with Ray (`SHIP_CC`) copied plus whatever the row adds. The row is then marked done with the
+mailer's answer, and `ingest_log` gets one line.
+
+```sql
+INSERT INTO weekly_send_request (ship, cc_json, note)
+VALUES ('Voyager', '["Miguel.Sanmartin@dg3.com"]', 'test send, 16 Sep');
+```
+
+The Monday fleet path runs only on its own cron. Any other cron string is logged and sends
+nothing.
+
+---
+
 ## Check it works
 
 | | |

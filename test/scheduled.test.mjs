@@ -225,3 +225,67 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   assert.ok(crons.includes('0 12 * * MON'), 'the weekly cron is Monday 12:00 UTC');
   console.log('ok - crons: NIGHTLY_CRON matches wrangler.toml character for character');
 }
+
+// THE ON-DEMAND SEND QUEUE. Miguel, 16 Sep 2026: "trigger the workflow and
+// pick one ship for testing." Nothing outside can reach this Worker's HTTP
+// surface, so a row in weekly_send_request is the trigger: the 15-minute cron
+// sends that ship's email, to its FLEET_MAP mailbox when no address is given,
+// with Ray copied as on a Monday plus the row's own cc, and marks the row done.
+// The Monday fleet path must NOT run on that cron, or on any cron but its own.
+{
+  sent.length = 0; waits.length = 0; logged.length = 0;
+  const queue = [{ id: 7, ship: 'Explorer', to_json: null, cc_json: '["miguel@example.com"]', note: 'test send' }];
+  const updates = [];
+  const queued = {
+    prepare(sql) {
+      const inner = fakeDb.prepare(sql);
+      const stmt = {
+        bind: (...a) => { stmt._binds = a; return stmt; },
+        run: async () => {
+          if (/UPDATE weekly_send_request/.test(sql)) { updates.push(stmt._binds); queue.length = 0; }
+          return inner.run();
+        },
+        first: inner.first,
+        all: async () => (/FROM weekly_send_request/.test(sql) ? { results: queue.slice() } : inner.all()),
+      };
+      return stmt;
+    },
+  };
+  const live = {
+    ...env, HON: queued,
+    SEND_TO_FLEET: 'true', FLEET_TO: 'onboardsupport@example.com', SHIP_CC: 'ray@example.com', REPLY_TO: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
+  };
+  await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  assert.equal(sent.length, 1, `the request cron sends exactly the queued ship, got ${sent.map((m) => m.subject)}`);
+  assert.ok(sent[0].subject.startsWith('Explorer:'), sent[0].subject);
+  assert.deepEqual(sent[0].to, ['ex_printerspecialist@example.com'], 'no address given: the FLEET_MAP mailbox');
+  assert.deepEqual(sent[0].cc.sort(), ['miguel@example.com', 'ray@example.com'], 'Ray as on a Monday, plus the row\'s cc');
+  assert.equal(sent[0].replyTo, 'ray@example.com');
+  assert.ok(/DO THIS FIRST/.test(sent[0].html), 'the email is the real one Explorer would get');
+  assert.equal(updates.length, 1, 'the row is marked done');
+  assert.equal(updates[0][0], 7);
+  assert.ok(/"sent":true/.test(updates[0][1]), `the result is recorded: ${updates[0][1]}`);
+  assert.ok(!sent.some((m) => /^Orders due this week/.test(m.subject)), 'the fleet list is NOT sent by the request cron');
+
+  // No row pending: one SELECT, nothing sent.
+  sent.length = 0;
+  await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  assert.equal(sent.length, 0, 'an empty queue sends nothing');
+
+  // A cron nobody wired must not fall through to the Monday fleet path.
+  sent.length = 0; waits.length = 0;
+  await worker.scheduled({ cron: '0 9 * * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  assert.equal(sent.length, 0, 'an unhandled cron mails nobody');
+  assert.ok(logged.length, 'and is logged');
+
+  const { readFileSync } = await import('node:fs');
+  const toml = readFileSync(new URL('../wrangler.toml', import.meta.url), 'utf8');
+  const crons = /crons\s*=\s*\[([^\]]*)\]/.exec(toml)[1].match(/"([^"]+)"/g).map((s) => s.slice(1, -1));
+  const src = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.ok(crons.includes(/const REQUEST_CRON = '([^']+)'/.exec(src)[1]), 'REQUEST_CRON is in wrangler.toml');
+  assert.ok(crons.includes(/const WEEKLY_CRON = '([^']+)'/.exec(src)[1]), 'WEEKLY_CRON is in wrangler.toml');
+  console.log('ok - on-demand queue: a row sends one ship\'s real email and is marked done; other crons never mail the fleet');
+}

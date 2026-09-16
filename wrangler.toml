@@ -23,8 +23,18 @@ compatibility_flags = ["nodejs_compat"]
 # All Cloudflare crons are UTC, with no per-worker timezone. 12:00 UTC is 08:00
 # Miami on EDT; Miami is EST Nov-Mar, so in winter the weekly lands at 07:00
 # local. Leave it - an hour early is harmless, an hour late is not.
+#
+# THE THIRD, "*/15 * * * *", IS THE ON-DEMAND SEND QUEUE (REQUEST_CRON in
+# src/index.js). Every 15 minutes the Worker reads weekly_send_request, its own
+# D1 table, and sends any queued ship email; with no row pending it does one
+# SELECT and stops. A row is the trigger, because nothing else can reach this
+# Worker from outside: ADMIN_KEY is unset and workers.dev is unreachable from a
+# session. Queue one with:
+#   INSERT INTO weekly_send_request (ship, cc_json, note)
+#   VALUES ('Voyager', '["Miguel.Sanmartin@dg3.com"]', 'test send, 16 Sep');
+# to_json empty = the ship's FLEET_MAP mailbox. Ray (SHIP_CC) is always copied.
 [triggers]
-crons = ["0 6 * * *", "0 12 * * MON"]
+crons = ["0 6 * * *", "0 12 * * MON", "*/15 * * * *"]
 
 [[d1_databases]]
 binding = "HON"
