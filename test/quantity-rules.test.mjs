@@ -8,7 +8,7 @@
 // source is the exact failure the Brain's corrections layer exists for.
 
 import assert from 'node:assert';
-import { orderQuantity, withQuantity, TONER_BUFFER, WASTE_BOX_ORDER, PAPER_PALLET, RADIANT_MIN } from '../src/lib/runway.js';
+import { orderQuantity, withQuantity, TONER_BUFFER, WASTE_BOX_PAR, PAPER_PALLET, RADIANT_MIN } from '../src/lib/runway.js';
 
 const q = (o) => orderQuantity(o);
 
@@ -24,9 +24,13 @@ assert.equal(q({ item: 'TN634K BLACK TONER', brand: 'Celebrity', rate: 14, inTra
 assert.equal(q({ item: 'TN619C CYAN TONER', brand: 'Royal', rate: 5, inTransit: 35, cycleDays: 30 }).qty, 0);
 
 // Ray 4 Sep Q7: "the exact order is 12 pieces per ship from all brands".
-assert.equal(WASTE_BOX_ORDER, 12);
+// 12 is a PAR (Brain correction recN47v4lrTkjQNpO, 10 Sep 2026): top up to
+// 12, netting what is on the order and what is still aboard when it lands.
+assert.equal(WASTE_BOX_PAR, 12);
 assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 0 }).qty, 12);
 assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Azamara', rate: 3, inTransit: 12 }).qty, 0);
+assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 2, onHandAtLanding: 5 }).qty, 5);
+assert.match(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, onHandAtLanding: 5 }).basis, /par is 12, about 5 still on board/);
 
 // Ray Q19: paper "always ordered in a pallet of 40 cases for royal and
 // celebrity ships" - and paper has no par, so consumption never sets the size.
