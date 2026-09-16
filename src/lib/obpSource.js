@@ -40,14 +40,36 @@ async function latest(db, table) {
   }
 }
 
+// A MIRROR THAT HAS NOT MOVED IS NOT FRESHER, WHATEVER ITS STAMP SAYS.
+// snapshot_date is stamped at ingest and advances every morning whether or
+// not a single value changed; that is exactly how the 10-16 Sep freeze read
+// as "fresh" for six days. So a mirror snapshot whose row count and total
+// equal the previous snapshot's is treated as stale: a CSV copy loaded the
+// day before beats it. The moment the workbook is really refreshed the
+// content differs, the mirror wins on date again, and the CSV copy steps
+// back until the next one arrives.
+async function frozen(db, table, col) {
+  try {
+    const rows = (await db.prepare(
+      `SELECT snapshot_date d, COUNT(*) n, ROUND(SUM(${col}), 2) s
+         FROM ${table} GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 2`).all()).results || [];
+    return rows.length === 2 && rows[0].n === rows[1].n && rows[0].s === rows[1].s;
+  } catch (_) {
+    return false;
+  }
+}
+
 export async function obpSource(hon) {
   const mirrorInv = await latest(hon, 'obp_inventory');
   const mirrorTr = await latest(hon, 'obp_intransit');
   const csvInv = (await columnsOf(hon, CSV_INVENTORY)) ? await latest(hon, CSV_INVENTORY) : null;
   const csvTr = (await columnsOf(hon, CSV_INTRANSIT)) ? await latest(hon, CSV_INTRANSIT) : null;
 
-  const useCsvInv = Boolean(csvInv) && (!mirrorInv || csvInv >= mirrorInv);
-  const useCsvTr = Boolean(csvTr) && (!mirrorTr || csvTr >= mirrorTr);
+  const mirrorInvFrozen = csvInv && mirrorInv && csvInv < mirrorInv ? await frozen(hon, 'obp_inventory', 'on_hand') : false;
+  const mirrorTrFrozen = csvTr && mirrorTr && csvTr < mirrorTr ? await frozen(hon, 'obp_intransit', 'qty') : false;
+
+  const useCsvInv = Boolean(csvInv) && (!mirrorInv || csvInv >= mirrorInv || mirrorInvFrozen);
+  const useCsvTr = Boolean(csvTr) && (!mirrorTr || csvTr >= mirrorTr || mirrorTrFrozen);
 
   return {
     inventory: useCsvInv
@@ -56,7 +78,7 @@ export async function obpSource(hon) {
     intransit: useCsvTr
       ? { source: 'csv', table: CSV_INTRANSIT, latest: csvTr, land: CSV_LAND, etaOk: CSV_ETA_OK, etaCol: 'eta_date' }
       : { source: 'mirror', table: 'obp_intransit', latest: mirrorTr, land: MIRROR_LAND, etaOk: MIRROR_ETA_OK, etaCol: 'eta' },
-    mirror: { inventory: mirrorInv, intransit: mirrorTr },
+    mirror: { inventory: mirrorInv, intransit: mirrorTr, frozen: { inventory: mirrorInvFrozen, intransit: mirrorTrFrozen } },
     csv: { inventory: csvInv, intransit: csvTr },
   };
 }
