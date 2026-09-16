@@ -101,16 +101,16 @@ const esc = (s) => String(s == null ? '' : s)
 // lines and pushed the first real row off the first screen. The colour is the
 // code the crew already read on OBP; two or three words is all the key needs.
 export const LEGEND = [
-  [RED, RED_BG, 'LATE', 'past the due date'],
-  [AMBER, AMBER_BG, 'ORDER NOW', 'before the due date'],
-  [GREEN_INK, '#EAF5E6', 'OK', 'on order'],
+  [RED, RED_BG, 'LATE', 'the date passed'],
+  [AMBER, AMBER_BG, 'ORDER NOW', 'order before the date'],
+  [GREEN_INK, '#EAF5E6', 'OK', 'already ordered'],
 ];
 
 function chip(row) {
   // RED is reserved for past the cut-off. Nothing a crew can still act on is
   // red, because then red stops meaning "too late".
-  if (row.state === 'MISSED') return [RED, RED_BG, 'OVERDUE'];
-  if (row.state === 'ORDERED') return [GREEN_INK, '#EAF5E6', 'ORDERED'];
+  if (row.state === 'MISSED') return [RED, RED_BG, 'LATE'];
+  if (row.state === 'ORDERED') return [GREEN_INK, '#EAF5E6', 'OK'];
   const d = row.days_to_due;
   if (d <= 0) return [RED, RED_BG, 'TODAY'];
   return [AMBER, AMBER_BG, d === 1 ? '1 DAY' : `${d} DAYS`];
@@ -128,11 +128,11 @@ function rowHtml(row, i) {
   const [fg, bg, label] = chip(row);
   const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
   const moved = row.date_changed
-    ? `<div style="font-family:${FB};font-size:12px;color:${RED};padding-top:3px;">Due date moved since the last schedule &mdash; check it.</div>`
+    ? `<div style="font-family:${FB};font-size:12px;color:${RED};padding-top:3px;">The due date changed. Please check it.</div>`
     : '';
   const what = row.state === 'MISSED'
-    ? 'No order raised and the due date has passed.'
-    : 'No order raised yet.';
+    ? 'No order yet. The due date already passed.'
+    : 'No order yet. Please order now.';
   // THE DEADLINE LEADS. It used to be the third line, inside a sentence, after
   // the ship name and a restatement of what the reader could already see from
   // the colour. The date block is now the first thing in the row and carries
@@ -288,8 +288,8 @@ function coverageHtml(all, today, forShip, shipName, gaps, deliveries) {
   if (!forShip && !loud.length) {
     return `
 <tr><td style="padding:26px 26px 0;">
-<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Coverage &mdash; next six months</div>
-<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships have a delivery booked every month to ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
+<div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 0 3px;">Next six months</div>
+<div style="font-family:${FB};font-size:13px;color:${BODY};">All <strong>${built.length}</strong> ships have a delivery every month until ${months[months.length - 1].label} ${months[months.length - 1].year}.</div>
 </td></tr>`;
   }
 
@@ -321,26 +321,26 @@ function coverageHtml(all, today, forShip, shipName, gaps, deliveries) {
     const firstHole = b.cells.findIndex((c) => c && c.text);
     const say = (t) => `<div style="font-family:${FB};font-size:14px;color:${BODY};padding:12px 4px 0;">${t}</div>`;
     if (firstHole >= 0) {
-      shipLine = say(`Act in <strong>${months[firstHole].label} ${months[firstHole].year}</strong>.`);
+      shipLine = say(`Please act in <strong>${months[firstHole].label} ${months[firstHole].year}</strong>.`);
     } else if (lastCovered >= 0) {
-      shipLine = say(`Stock is on the way up to <strong>${months[lastCovered].label} ${months[lastCovered].year}</strong>.` +
+      shipLine = say(`Stock is coming until <strong>${months[lastCovered].label} ${months[lastCovered].year}</strong>.` +
         (lastCovered < months.length - 1
-          ? ' Nothing is booked after that yet. That is normal &mdash; those orders are not raised.'
+          ? ' After that, nothing is ordered yet. That is normal.'
           : ''));
     }
   }
 
   const calmLine = (loud.length && calm.length)
     ? `<div style="font-family:${FB};font-size:12px;color:${SLATE};padding:10px 4px 0;">` +
-      `<strong style="color:${GREEN_INK};">${calm.length} ship${calm.length === 1 ? '' : 's'} covered every month:</strong> ` +
+      `<strong style="color:${GREEN_INK};">${calm.length} ship${calm.length === 1 ? '' : 's'} are ok every month:</strong> ` +
       `${calm.map((b) => esc(b.ship)).join(', ')}.</div>`
     : '';
 
-  const title = forShip ? 'Your next six months' : 'Coverage &mdash; next six months';
+  const title = forShip ? 'Your next six months' : 'Next six months';
   return `
 <tr><td style="padding:26px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is on the way. Nothing to do here today.${readFromTransit ? ' Read from your open orders in OBP &mdash; no ordering schedule is loaded for your ship.' : ''}</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Green means stock is coming. Nothing to do here.${readFromTransit ? ' This is from your open orders in OBP. We have no order schedule for your ship.' : ''}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;table-layout:fixed;">
 <tr>${forShip ? '' : `<th align="left" style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.8px;color:${SLATE};padding:0 8px 6px 2px;">SHIP</th>`}${head}</tr>
 ${body}
@@ -377,32 +377,32 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // open (Ray Q21) - never a container whose due date has passed.
 function addLine(f, fg) {
   const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
-  const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; covers to ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
+  const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; enough until ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
   const dry = dryUntil(f);
   if (!f.order_due) {
     // Ray, 1 Sep 2026 Q22: a missed order goes to the inventory manager on
     // board as a manual order. That is who to ask; this is what to ask for.
     const whyNot = f.has_schedule
-      ? 'No order is open on your schedule to add this to.'
-      : 'No ordering schedule is loaded for this ship, so there is no order to add this to.';
+      ? 'There is no open order to add this to.'
+      : 'We have no order schedule for your ship, so there is no open order to add this to.';
     const ask = f.add_qty != null
-      ? `Due today: ask the inventory manager for a manual order, add ${big(f.add_qty)}`
-      : 'Due today: ask the inventory manager for a manual order.';
+      ? `Do this today: ask your Inventory Manager for a manual order. Add ${big(f.add_qty)}`
+      : 'Do this today: ask your Inventory Manager for a manual order.';
     const coming = dry
-      ? ` A container with this item lands <strong>${fmtDowFull(dry.date)}</strong> &mdash; ${redDays(dry.days)} with none before that.`
-      : ' Nothing for it is on the way.';
+      ? ` More is coming on <strong>${fmtDowFull(dry.date)}</strong>. But you will have none for ${redDays(dry.days)} before that.`
+      : ' Nothing more is coming.';
     return `<div style="font-family:${FB};font-size:13px;color:${RED};padding-top:5px;">${whyNot} ${ask}</div>` +
       `<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">${coming.trim()}</div>${why}`;
   }
   // What happens between running dry and the order being aboard.
   let after;
-  if (!dry) after = 'It arrives before you run out.';
-  else if (dry.byOrder) after = `It arrives ${redDays(dry.days)} after you run out. If you cannot wait, ask the inventory manager for a manual order.`;
-  else after = `A container with this item lands <strong>${fmtDowFull(dry.date)}</strong> first &mdash; ${redDays(dry.days)} with none before that.`;
+  if (!dry) after = 'It will arrive before you run out. Good.';
+  else if (dry.byOrder) after = `It will arrive ${redDays(dry.days)} after you run out. If you cannot wait, ask your Inventory Manager for a manual order.`;
+  else after = `More is coming on <strong>${fmtDowFull(dry.date)}</strong> first. But you will have none for ${redDays(dry.days)} before that.`;
   const order = `the order due <strong>${fmtDowFull(f.order_due)}</strong>`;
   let head;
-  if (f.add_qty == null) head = `Add it to ${order}. No fixed rule for this item &mdash; use your statistics file.`;
-  else if (f.add_qty === 0) head = `${order[0].toUpperCase()}${order.slice(1)} already carries enough. Nothing to add.`;
+  if (f.add_qty == null) head = `Add it to ${order}. Check your statistics file for how many.`;
+  else if (f.add_qty === 0) head = `${order[0].toUpperCase()}${order.slice(1)} already has enough. Add nothing.`;
   else head = `Add ${big(f.add_qty)} to ${order}.`;
   return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">${head} ${after}</div>${why}`;
 }
@@ -420,7 +420,7 @@ function runsOutHtml(findings, forShip, shipName, today) {
     // route is a manual order) or the open order is due within the week.
     // AMBER when a line can still be added in time.
     const [fg, bg, label] = !f.order_due
-      ? [RED, RED_BG, f.has_schedule ? 'NO OPEN ORDER' : 'NO SCHEDULE']
+      ? [RED, RED_BG, f.has_schedule ? 'NO ORDER' : 'NO SCHEDULE']
       : (soon(f.order_due) ? [RED, RED_BG, 'DUE THIS WEEK'] : [AMBER, AMBER_BG, 'ADD TO ORDER']);
     // The ship name is redundant on a ship's own email, and repeating it on
     // every row is the kind of noise that makes a page feel long.
@@ -440,16 +440,16 @@ ${tiles}
   <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
-  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; uses <strong>${Math.round(f.rate)}</strong> a month &middot; empty <strong>${fmtDowFull(f.stockout)}</strong></div>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; you use <strong>${Math.round(f.rate)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
   ${addLine(f, fg)}
 </td></tr></table>
 </td></tr>`;
   }).join('');
-  const title = forShip ? 'You will run out of these' : 'Running out before the next delivery';
+  const title = forShip ? 'These will run out soon' : 'Ships running out soon';
   return `
 <tr><td style="padding:24px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">The first date is the last day a line can still be added to the order; the second is the day that order is on board. Miss the first and the ship waits for the next one.</div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">DUE DATE is the last day you can add to the order. ARRIVES is the day it comes on board. If you miss the due date, you wait for the next order.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
 </td></tr>`;
 }
@@ -471,14 +471,14 @@ function gapsHtml(gaps, forShip, shipName) {
     const zb = i % 2 ? '#FAFBFC' : '#FFFFFF';
     return `<tr><td bgcolor="${zb}" style="background:${zb};padding:9px 10px;border-bottom:1px solid ${BORDER};">
 <div style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${esc(g.ship)}</div>
-<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmtDowFull(g.after_delivery)}</strong> and <strong>${fmtDowFull(g.next_delivery)}</strong> &mdash; ${g.gap_days} days, against this ship's usual ${g.own_interval}.</div>
+<div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:2px;">Nothing arrives between <strong>${fmtDowFull(g.after_delivery)}</strong> and <strong>${fmtDowFull(g.next_delivery)}</strong>. That is <strong>${g.gap_days} days</strong>. Your ship normally waits ${g.own_interval}.</div>
 </td></tr>`;
   }).join('');
-  const title = forShip ? 'A gap in your deliveries' : 'Ships with no ordering schedule';
+  const title = forShip ? 'A long wait between deliveries' : 'Ships with no order schedule';
   return `
 <tr><td style="padding:24px 22px 0;">
 <div style="font-family:${FH};font-size:13px;font-weight:600;color:${NAVY};padding:0 4px 3px;">${title}</div>
-<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">Read from open orders only, because no ordering schedule is loaded for ${forShip ? 'your ship' : 'these ships'}. There is no due date to quote, so this is a question rather than an instruction: <strong>if a loading in that gap was meant to be ordered, it has not been.</strong></div>
+<div style="font-family:${FB};font-size:11px;color:${SLATE};padding:0 4px 10px;">We have no order schedule for ${forShip ? 'your ship' : 'these ships'}, so we only see the open orders. Please check: <strong>was an order missed in this gap?</strong></div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ${BORDER};">${rows}</table>
 </td></tr>`;
 }
@@ -544,7 +544,7 @@ export function renderWeekly(act, all, today, opts = {}) {
   ].filter(Boolean);
   const counts = forShip
     ? (bits.join(' &middot; ') || 'Nothing to do this week')
-    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${checked.size} ships clear`;
+    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${checked.size} ships ok`;
   const strap = `${window} &middot; ${counts}`;
   // THE PREHEADER IS THE FIRST AND OFTEN THE ONLY LINE READ. On a phone it sits
   // next to the subject in the inbox list, before anyone opens anything. It was
@@ -559,8 +559,11 @@ export function renderWeekly(act, all, today, opts = {}) {
   ].filter(Boolean).join(', ');
   const preheader = todo
     ? `${todo} to do this week: ${plain}.`
-    : 'Nothing closes for you this week.';
-  const intro = 'Order in OBP <strong>before the date shown</strong>.';
+    : 'Nothing to order this week.';
+  // A WARM OPENER, THEN ONE INSTRUCTION. Miguel, 16 Sep 2026: the crew are
+  // Filipino printer specialists; "some words are too complex - write for them
+  // like a brother would." Short words, one idea a line, no policy up front.
+  const intro = `${forShip ? `Hi ${esc(shipName)} team,` : 'Hi team,'} here is what to order this week. Please order in OBP <strong>before the DUE DATE</strong>.`;
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders due this week</title></head>
@@ -588,14 +591,14 @@ ${gapsHtml(opts.gaps, forShip, shipName)}
 ${coverageHtml(all, today, forShip, shipName, opts.gaps, opts.deliveries)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 14px;">${forShip ? 'Nothing else closes for you this week.' : 'Not listed means nothing closes for you this week.'} Next run: <strong>Monday 08:00 Miami time</strong>.</p>
-<p style="margin:0;">Thank you,<br><strong>Ray Guerra</strong><br><span style="color:${SLATE};">Supply Chain Manager &middot; DG3 Diversified Global Graphics Group</span></p>
+<p style="margin:0 0 14px;">${forShip ? 'That is all for this week.' : 'Ships not listed have nothing due this week.'} Next email: <strong>Monday 08:00 Miami time</strong>.</p>
+<p style="margin:0;">Thank you, and take care,<br><strong>Ray Guerra</strong><br><span style="color:${SLATE};">Supply Chain Manager &middot; DG3 Diversified Global Graphics Group</span></p>
 </td></tr>
 
 <tr><td style="padding:22px 26px 28px;"><div style="border-top:1px solid ${BORDER};padding-top:13px;font-family:${FB};font-size:11px;line-height:1.65;color:#9CA3AF;">
-<strong>After the due date, nothing can be added to that container.</strong> It becomes an emergency shipment.<br>
+<strong>After the due date, you cannot add to that order.</strong> It becomes an emergency shipment, and that costs a lot.<br>
 <strong>No PO means no order.</strong><br><br>
-Dates come from your ship's Ordering Schedule. Azamara uses the BWS delivery date on Ray's monthly schedule. A loading counts as ordered when an open order in OBP arrives on that date. If a line looks wrong, reply and we check it before the next run.
+Dates come from your ship's Ordering Schedule. Azamara ships use the BWS date on Ray's monthly schedule. We count a loading as ordered when OBP shows an open order for that date. If something looks wrong, reply to this email and we will check it.
 </div></td></tr>
 
 </table></td></tr></table></body></html>`;
