@@ -15,22 +15,23 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 ## What Miguel has to do
 
-Three things, each a few minutes, each one a human has to do because the code cannot:
+One thing left, and two done on 16 Sep 2026:
 
-1. **Route `obp-csv@cims.work` to this Worker** (Cloudflare dashboard, zone `cims.work`,
-   Email → Email Routing → Routing rules → Create address → *Send to a Worker* →
-   `weekly-orders-email`). Leave `obp@cims.work` alone — it belongs to `cims-hon`.
-2. **Edit the Power Automate flow "OBP nightly"** (Miguel's environment) so that each run
-   also attaches the three files from SharePoint *OnboardPrintAdmin / Shared Documents /
-   General / Inventory Reporting / Exports* — `onboardinventory.csv`, `intransititems.csv`,
-   `acceptedorderdetails.csv` — and adds `obp-csv@cims.work` as a second recipient. Three
-   *Get file content* steps and one more address. See **The OBP feed** below for why.
-3. **Set `ADMIN_KEY` as a Worker secret.** Until it is set every endpoint except `/health`
+1. **Set `ADMIN_KEY` as a Worker secret.** Until it is set every endpoint except `/health`
    returns 503, so nobody can see `/fleet` (who will be mailed) or `/preview-ship` before a
-   Monday.
+   Monday. Still unset on 16 Sep (`/fleet` answered `ADMIN_KEY is not set`).
+2. ~~Route `obp-csv@cims.work` to this Worker~~ **Done 16 Sep**: Cloudflare Email Routing,
+   zone `cims.work`, `obp-csv@cims.work` → Worker `weekly-orders-email`, Active.
+   `obp@cims.work` still belongs to `cims-hon` and was not touched.
+3. ~~Edit the Power Automate flow~~ **Done 16 Sep**: the flow is named **"HON — nightly OBP"**
+   in Miguel's *My flows* ("OBP nightly" is only the subject of the email it sends). After
+   its unchanged workbook email it now runs three *Get file content* steps for the Exports
+   CSVs and a second *Send an email (V2)* to `obp-csv@cims.work`, subject "OBP nightly CSV".
+   The first run landed here at 18:25Z as `ingest_log` 280: 3481 inventory rows for 50
+   ships, 1962 in-transit rows for 48.
 
-Then **verify, do not assume**: `GET /health` shows `obp_source.csv_snapshot` the morning
-after the first CSV mail, and `mail_received` counts every mail that reached *this* Worker.
+Then **verify, do not assume**: `GET /health` shows `obp_source.csv_snapshot` with today's date
+every morning, and `mail_received` counts every mail that reached *this* Worker.
 
 There is **no mail secret to add.** Sending goes through the `MAILER` service binding to
 `cims-mailer`, which holds the only Resend key in the estate and reads no `Authorization`
@@ -59,7 +60,7 @@ of it fails quietly:
 |---|---|---|---|
 | 1 | An app exports three CSVs from the OBP database at 00:00 EST into SharePoint `Inventory Reporting / Exports` | Jerwin Villaluz (Dec 2024) | works every night |
 | 2 | A trigger refreshes `OBPInventoryReporting.Linked.xlsx` from those CSVs | same | **intermittent** — fired 5 days out of 46 (1 Aug–16 Sep 2026) |
-| 3 | The flow "OBP nightly" mails the workbook to `obp@cims.work`; `cims-hon` ingests it into `obp_inventory` / `obp_intransit` | Miguel's flow, `cims-hon` | works |
+| 3 | The flow "HON — nightly OBP" mails the workbook to `obp@cims.work`; `cims-hon` ingests it into `obp_inventory` / `obp_intransit` | Miguel's flow, `cims-hon` | works |
 
 On 16 Sep 2026 the export said Allure had 17 magenta aboard; the workbook, and therefore
 `obp_inventory`, said 10. Six days of this email were computed from 10 September stock and
