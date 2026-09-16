@@ -139,9 +139,14 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 //    (all open ports are +3, and the buffer follows delivery frequency)
 //    [recN47v4lrTkjQNpO]. Until the 192-port transit table is parsed, +3 is the
 //    one figure that is sourced for every open port. It is the only buffer used.
-//  WASTE TONER BOX (C4070):
+//  WASTE TONER BOX (C4070): 12 IS A PAR, NOT AN ORDER QUANTITY.
 //    "the exact order is 12 pieces per ship from all brands" - Ray, 4 Sep Q7;
 //    "12 base, 24 permitted on high volume" - Ray, round 9 [recGzzU4LphovQ1ne].
+//    The Brain corrected the reading on 10 Sep 2026 [recN47v4lrTkjQNpO]: 12 is
+//    what should be ABOARD, and comparing an order line to it is a unit error.
+//    So the waste box is a top-up to 12, like the MFD par rule - and this file
+//    repeated the corrected error once before the corrections field was read.
+//    A later Brain record beats an earlier document.
 //  20 LB PAPER, Royal and Celebrity:
 //    "always ordered in a pallet of 40 cases" - Ray, 1 Sep Q19. Paper has no
 //    par; 40 is the order set.
@@ -158,7 +163,7 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 // ---------------------------------------------------------------------------
 
 export const TONER_BUFFER = 3;      // Ray Q20 + Brain 7 Sep: +3 at every open port
-export const WASTE_BOX_ORDER = 12;  // Ray 4 Sep Q7
+export const WASTE_BOX_PAR = 12;    // Ray 4 Sep Q7 + round 9; a PAR per the Brain, 10 Sep
 export const PAPER_PALLET = 40;     // Ray 1 Sep Q19, Royal and Celebrity only
 export const RADIANT_MIN = 10;      // Ray 1 Sep Q20
 
@@ -185,7 +190,8 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
   const left = Math.max(0, Math.floor(Number(onHandAtLanding) || 0));
 
   if (WASTE_BOX_C4070.test(desc)) {
-    return { qty: Math.max(0, WASTE_BOX_ORDER - coming), basis: `waste box is ${WASTE_BOX_ORDER} per order` };
+    const aboard = left > 0 ? `, about ${left} still on board when it lands` : '';
+    return { qty: Math.max(0, WASTE_BOX_PAR - left - coming), basis: `waste box par is ${WASTE_BOX_PAR}${aboard}` };
   }
   if (PRINT_SHOP_TONER.test(desc)) {
     return { qty: Math.max(0, need + TONER_BUFFER - coming), basis: `${need} used in ${cycleDays} days + ${TONER_BUFFER} spare` };
