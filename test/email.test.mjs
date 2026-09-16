@@ -33,14 +33,14 @@ assert.ok(/Wed 9 Sep to Tue 15 Sep/.test(fleet),
 // THE COUNT WAS WRONG ON THE FACE OF THE EMAIL: it counted ORDERED voyages and
 // printed them as ships, so a 48-ship fleet was announced as "102 ships clear".
 // A reader who spots an impossible number stops believing the whole page.
-assert.ok(/\b1 of 2 ships clear\b/.test(fleet),
-  `the clear count must be ships, not voyages: ${fleet.match(/[\w ]*ships clear/)?.[0]}`);
+assert.ok(/\b1 of 2 ships ok\b/.test(fleet),
+  `the clear count must be ships, not voyages: ${fleet.match(/[\w ]*ships ok/)?.[0]}`);
 
 // A SHIP'S EMAIL CARRIES ONLY THAT SHIP. A crew member who has to hunt for
 // their own line in a fleet-wide table stops opening the email.
 const ship = renderWeekly(act, all, '2026-09-09', { audience: 'ship', ship: 'Celebrity Apex' });
 assert.ok(ship.includes('Celebrity Apex'), "the ship's name must head its own email");
-assert.ok(!ship.includes('ships clear'), 'a ship must not be shown fleet-wide counts');
+assert.ok(!ship.includes('ships ok'), 'a ship must not be shown fleet-wide counts');
 assert.ok(!ship.includes('Quest'), "one ship's email must never name another ship");
 
 // Ray signs it, and the escalation path stays in both versions.
@@ -53,8 +53,8 @@ for (const html of [fleet, ship]) {
 // Overdue must read as overdue, not as a countdown.
 const overdue = renderWeekly(
   [{ ...row('Apex', '2026-09-01', '2026-09-28'), state: 'MISSED', days_to_due: -8 }], all, '2026-09-09');
-assert.ok(overdue.includes('OVERDUE'));
-assert.ok(overdue.includes('the due date has passed'));
+assert.ok(overdue.includes('LATE'));
+assert.ok(overdue.includes('The due date already passed'));
 
 console.log('ok - email: every listed row carries a real deadline, a ship sees only itself,');
 console.log('     and the no-PO-no-order rule is stated to the crew');
@@ -176,7 +176,7 @@ assert.ok(shipCov.includes('SEP') && shipCov.includes('FEB'),
 
 // A STRIP SHOWS A SHAPE; IT DOES NOT SAY WHAT THE SHAPE MEANS. A reader who is
 // unsure does not act, so the ship's email says it in words underneath.
-assert.ok(/Stock is on the way up to|Act in /.test(shipCov),
+assert.ok(/Stock is coming until|Please act in /.test(shipCov),
   "a ship's strip must be followed by one plain sentence");
 
 // The fleet digest keeps the column, because there the ship name IS the row.
@@ -198,8 +198,8 @@ console.log('     its own six months full width with the meaning stated in words
     deliveries: [{ ship: 'Navigator', date: '2026-10-24' }, { ship: 'Navigator', date: '2026-11-09' }, { ship: 'Explorer', date: '2026-10-01' }],
   });
   assert.ok(/Your next six months/.test(nav), 'a schedule-free ship gets its strip');
-  assert.ok(/no ordering schedule is loaded for your ship/.test(nav), 'and is told which source drew it');
-  assert.ok(/Stock is on the way up to <strong>Nov 2026/.test(nav), 'the strip reads to the last landing');
+  assert.ok(/We have no order schedule for your ship/.test(nav), 'and is told which source drew it');
+  assert.ok(/Stock is coming until <strong>Nov 2026/.test(nav), 'the strip reads to the last landing');
   assert.ok(!/Explorer/.test(nav), "another ship's deliveries never leak in");
   // A ship WITH a schedule is drawn from its voyage rows, never from transit.
   const sched = renderWeekly([], [{ ship: 'Quest', loading_delivery_date: '2026-10-14', due_date: '2026-07-03', state: 'ORDERED' }], '2026-09-15', {
@@ -241,7 +241,7 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(!/RUNS OUT/.test(html), 'no tile is ever labelled RUNS OUT');
   const tile = /DUE DATE<\/div>\s*<div[^>]*>MON<\/div>\s*<div[^>]*>21<\/div>\s*<div[^>]*>SEP<\/div>/;
   assert.ok(tile.test(html), 'with no open order the DUE DATE tile is today');
-  assert.ok(/Due today: ask the inventory manager for a manual order/.test(html), 'and the text says why');
-  assert.ok(/empty <strong>Sun 27 Sep/.test(html), 'the day it runs out is in the text');
+  assert.ok(/Do this today: ask your Inventory Manager for a manual order/.test(html), 'and the text says why');
+  assert.ok(/empty by <strong>Sun 27 Sep/.test(html), 'the day it runs out is in the text');
   console.log('ok - email: the first tile is always DUE DATE; no open order means due today');
 }
