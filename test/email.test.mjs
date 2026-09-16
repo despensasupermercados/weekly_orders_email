@@ -54,7 +54,7 @@ for (const html of [fleet, ship]) {
 const overdue = renderWeekly(
   [{ ...row('Apex', '2026-09-01', '2026-09-28'), state: 'MISSED', days_to_due: -8 }], all, '2026-09-09');
 assert.ok(overdue.includes('LATE'));
-assert.ok(overdue.includes('the due date has passed'));
+assert.ok(overdue.includes('The due date already passed'));
 
 console.log('ok - email: every listed row carries a real deadline, a ship sees only itself,');
 console.log('     and the no-PO-no-order rule is stated to the crew');
