@@ -9,7 +9,7 @@ import { htmlPartOf, attachmentsOf } from './lib/mime.js';
 // not wired'). Cell fills are not read by this build - see rowsFromWorkbook.
 import * as XLSX from 'xlsx';
 import { voyageStates, actionable, poNotRecorded, dataFaults, escalations, MISSED_CREW_DAYS } from './lib/due.js';
-import { planFleetSend, maskEmail, normShip } from './lib/fleet.js';
+import { planFleetSend, parseFleetMap, maskEmail, normShip } from './lib/fleet.js';
 import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { unscheduledGaps } from './lib/fallback.js';
@@ -28,6 +28,17 @@ import { renderWatchdog } from './lib/watchdogEmail.js';
 // WEEKLY EMAIL every night - which is exactly what happened when the cron was
 // added before this file was.
 const NIGHTLY_CRON = '0 6 * * *';
+// The Monday fleet email. Named, and matched EXPLICITLY below: the weekly
+// path used to be "whatever is not the nightly", which is one added cron
+// away from mailing the fleet at the wrong hour.
+const WEEKLY_CRON = '0 12 * * MON';
+// ON-DEMAND SENDS. Every 15 minutes the Worker looks at weekly_send_request
+// (its own table) and sends the queued ship emails. This exists because the
+// Worker has no HTTP surface a session can reach (ADMIN_KEY unset, workers.dev
+// blocked from the container), and Miguel, 16 Sep 2026: "trigger the workflow
+// and pick one ship for testing." A row in D1 is the trigger. One SELECT per
+// tick; buildWeekly runs only when a row is pending.
+const REQUEST_CRON = '*/15 * * * *';
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const json = (o, s = 200) =>
@@ -97,6 +108,80 @@ function secretEquals(given, expected) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+// The subject line of one ship's email: what is actually inside it.
+function shipSubject(ship, { rows = [], runsOut = [], gaps = [], ask = [] }) {
+  const n = rows.length;
+  const same = (x) => normShip(x.ship) === normShip(ship);
+  const dry = runsOut.filter(same).length;
+  const hasGap = gaps.some(same);
+  const needs = ask.some(same);
+  return [
+    n ? `${n} order${n === 1 ? '' : 's'} due` : null,
+    dry ? `${dry} running out` : null,
+    !n && !dry && hasGap ? 'a gap in your deliveries' : null,
+    needs ? 'send your Ordering Schedule' : null,
+  ].filter(Boolean).join(', ') || 'nothing to do this week';
+}
+
+const parseList = (s) => { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v.map(String) : []; } catch (_) { return []; } };
+
+// Queued sends. A row names a ship and, optionally, addresses; with none given
+// the ship's FLEET_MAP mailbox is used, so every address is still one a human
+// typed. SHIP_CC (Ray) is copied as on a Monday, plus whatever cc the row adds.
+async function runSendRequests(env, today) {
+  const hon = env.HON;
+  await hon.prepare(
+    `CREATE TABLE IF NOT EXISTS weekly_send_request (
+       id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT NOT NULL, to_json TEXT, cc_json TEXT, note TEXT,
+       requested_at TEXT NOT NULL DEFAULT (datetime('now')), done_at TEXT, result TEXT)`).run();
+  const pending = (await hon.prepare(
+    `SELECT id, ship, to_json, cc_json, note FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
+  if (!pending.length) return 0;
+
+  const { rows, act, gaps, runsOut, deliveries, schedules } = await buildWeekly(env, today);
+  const ask = needsSchedule(schedules);
+  const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
+  const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const replyTo = list(env.REPLY_TO)[0] || null;
+  let sent = 0;
+  for (const q of pending) {
+    let result;
+    let to = [];
+    try {
+      const key = normShip(q.ship);
+      const mapped = plan.sendable.find((g) => normShip(g.ship) === key);
+      const group = mapped || plan.unmapped.find((g) => normShip(g.ship) === key);
+      to = parseList(q.to_json);
+      if (!to.length && mapped) to = mapped.to;
+      if (!to.length) {
+        const { map } = parseFleetMap(env.FLEET_MAP);
+        const hit = map.get(key);
+        if (hit) to = hit.to;
+      }
+      if (!to.length) {
+        result = { sent: false, reason: `no address for ${q.ship}: not in FLEET_MAP and none given` };
+      } else {
+        const shipName = group ? group.ship : q.ship;
+        const shipRows = group ? group.rows : [];
+        const cc = [...new Set([...list(env.SHIP_CC), ...parseList(q.cc_json)])];
+        result = await send(env, to,
+          `${shipName}: ${shipSubject(shipName, { rows: shipRows, runsOut, gaps, ask })}`,
+          renderWeekly(shipRows, rows, today, { audience: 'ship', ship: shipName, gaps, runsOut, deliveries, schedules }),
+          'orders-due-weekly', cc, replyTo);
+        if (result.sent) sent++;
+      }
+    } catch (e) {
+      result = { sent: false, threw: String((e && e.message) || e).slice(0, 300) };
+    }
+    await hon.prepare(`UPDATE weekly_send_request SET done_at = datetime('now'), result = ?2 WHERE id = ?1`)
+      .bind(q.id, JSON.stringify(result).slice(0, 600)).run();
+    await logIngest(env, 'cron',
+      `on-demand send #${q.id} ${q.ship} -> ${to.join(', ') || '(no address)'}: ` +
+      (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`) + (q.note ? ` | ${q.note}` : ''));
+  }
+  return sent;
 }
 
 async function buildWeekly(env, today) {
@@ -303,6 +388,11 @@ export default {
     // calendar day in production; in a test it is what makes the run reproducible.
     const today = iso(new Date(event.scheduledTime || Date.now()));
 
+    if (event.cron === REQUEST_CRON) {
+      await runSendRequests(env, today);
+      return;
+    }
+
     if (event.cron === NIGHTLY_CRON) {
       const report = await runWatchdog(env, today, { repair: true });
       await logIngest(env, 'watchdog',
@@ -343,6 +433,13 @@ export default {
           renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night');
         if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
       })());
+      return;
+    }
+
+    // ONLY THE MONDAY CRON MAILS THE FLEET. Anything else that reaches here is
+    // a trigger nobody wired a handler for, and it is logged, not mailed.
+    if (event.cron !== WEEKLY_CRON) {
+      await logIngest(env, 'cron', `unhandled cron "${event.cron}" - nothing run`);
       return;
     }
 
@@ -438,19 +535,10 @@ export default {
       // digest below never ran either - a silent partial send, which is the one
       // outcome worse than not sending at all.
       for (const group of plan.sendable) {
-        const n = group.rows.length;
         // The subject must name what is actually inside. "a gap in your
         // deliveries" went out for every ship with no due date, including one
         // carrying eleven stockouts and no gap at all.
-        const dry = runsOut.filter((f) => normShip(f.ship) === normShip(group.ship)).length;
-        const needs = ask.some((s) => normShip(s.ship) === normShip(group.ship));
-        const hasGap = gaps.some((g) => normShip(g.ship) === normShip(group.ship));
-        const subject = [
-          n ? `${n} order${n === 1 ? '' : 's'} due` : null,
-          dry ? `${dry} running out` : null,
-          !n && !dry && hasGap ? 'a gap in your deliveries' : null,
-          needs ? 'send your Ordering Schedule' : null,
-        ].filter(Boolean).join(', ');
+        const subject = shipSubject(group.ship, { rows: group.rows, runsOut, gaps, ask });
         try {
           const r = await send(
             env,
