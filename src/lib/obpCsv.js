@@ -22,6 +22,7 @@
 // never written here; obpSource.js decides which copy the readers use.
 
 import { CSV_INVENTORY, CSV_INTRANSIT } from './obpSource.js';
+import { columnsOf } from './schema.js';
 
 export const CSV_FILES = {
   inventory: 'onboardinventory.csv',
@@ -131,15 +132,18 @@ export function mapIntransit(rows, snapshotDate) {
 }
 
 export const DDL = [
+  // source: 'csv' for a row from the export, 'mirror-fill' for a ship the
+  // export did not cover, copied from the workbook mirror so that ship keeps
+  // its best-known figures instead of reading as empty. See fillFromMirror.
   `CREATE TABLE IF NOT EXISTS ${CSV_INVENTORY} (
      ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT, category TEXT,
-     on_hand REAL, update_date TEXT, snapshot_date TEXT NOT NULL,
+     on_hand REAL, update_date TEXT, snapshot_date TEXT NOT NULL, source TEXT,
      PRIMARY KEY (ship, part_number, snapshot_date))`,
   `CREATE TABLE IF NOT EXISTS ${CSV_INTRANSIT} (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT, qty REAL,
      po_number TEXT, vendor_invoice TEXT, voyage TEXT, port TEXT,
-     eta_date TEXT, order_date TEXT, snapshot_date TEXT NOT NULL)`,
+     eta_date TEXT, order_date TEXT, snapshot_date TEXT NOT NULL, source TEXT)`,
   `CREATE INDEX IF NOT EXISTS ${CSV_INTRANSIT}_snap ON ${CSV_INTRANSIT} (snapshot_date, ship)`,
 ];
 
@@ -166,8 +170,41 @@ async function replaceSnapshot(hon, table, records, snapshotDate, cols) {
   await hon.prepare(`DELETE FROM ${table} WHERE snapshot_date < date(?, '-${KEEP_DAYS} day')`).bind(snapshotDate).run();
 }
 
-const INV_COLS = ['ship', 'part_number', 'description', 'category', 'on_hand', 'update_date', 'snapshot_date'];
-const TR_COLS = ['ship', 'part_number', 'description', 'qty', 'po_number', 'vendor_invoice', 'voyage', 'port', 'eta_date', 'order_date', 'snapshot_date'];
+const INV_COLS = ['ship', 'part_number', 'description', 'category', 'on_hand', 'update_date', 'snapshot_date', 'source'];
+const TR_COLS = ['ship', 'part_number', 'description', 'qty', 'po_number', 'vendor_invoice', 'voyage', 'port', 'eta_date', 'order_date', 'snapshot_date', 'source'];
+
+// A SHIP THE EXPORT DID NOT COVER KEEPS ITS MIRROR FIGURES. The readers pick
+// the CSV table by snapshot date for the whole fleet, so a snapshot that
+// carries half the ships would make the other half read as nothing aboard
+// and nothing coming - a false stockout for every one of them. Every ship
+// absent from the snapshot is copied in from the mirror's latest snapshot,
+// marked 'mirror-fill'. On a complete export this writes nothing. On 16 Sep
+// 2026 it is what made a half-file (the connector cuts at 200,000 characters)
+// worth loading at all: 22 ships fresh, the rest as good as before.
+export async function fillFromMirror(hon, snapshotDate) {
+  // The mirror's optional columns are cims-hon's to name; read them only if
+  // they exist rather than fail the whole fill over a description.
+  const col = (cols, name) => (cols && cols.has(name) ? `m.${name}` : 'NULL');
+  const ic = await columnsOf(hon, 'obp_inventory');
+  const tc = await columnsOf(hon, 'obp_intransit');
+  if (!ic || !tc) return { inventory: 0, intransit: 0, reason: 'mirror tables not found' };
+  const inv = await hon.prepare(
+    `INSERT OR REPLACE INTO ${CSV_INVENTORY} (ship, part_number, description, category, on_hand, update_date, snapshot_date, source)
+     SELECT m.ship, m.part_number, ${col(ic, 'description')}, ${col(ic, 'category')}, m.on_hand, NULL, ?1, 'mirror-fill'
+       FROM obp_inventory m
+      WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
+        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INVENTORY} WHERE snapshot_date = ?1)`).bind(snapshotDate).run();
+  const tr = await hon.prepare(
+    `INSERT INTO ${CSV_INTRANSIT} (ship, part_number, description, qty, po_number, vendor_invoice, voyage, port, eta_date, order_date, snapshot_date, source)
+     SELECT m.ship, m.part_number, ${col(tc, 'description')}, m.qty, ${col(tc, 'po_number')}, ${col(tc, 'vendor_invoice')}, NULL, NULL,
+            CASE WHEN m.eta GLOB '[0-9]*' THEN date('1899-12-30', '+' || CAST(m.eta AS INTEGER) || ' days') END,
+            NULL, ?1, 'mirror-fill'
+       FROM obp_intransit m
+      WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
+        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INTRANSIT} WHERE snapshot_date = ?1)`).bind(snapshotDate).run();
+  const n = (r) => (r && r.meta && typeof r.meta.changes === 'number') ? r.meta.changes : (r && typeof r.changes === 'number' ? r.changes : null);
+  return { inventory: n(inv), intransit: n(tr) };
+}
 
 const textOf = (a) => {
   if (a.content && a.content.length) return a.content;
@@ -192,7 +229,7 @@ export async function ingestObpCsv(hon, attachments, today) {
   await ensureTables(hon);
 
   if (inv) {
-    const rows = mapInventory(parseCsv(textOf(inv)), today);
+    const rows = mapInventory(parseCsv(textOf(inv)), today).map((r) => ({ ...r, source: 'csv' }));
     if (rows.length < MIN_INVENTORY_ROWS) {
       out.refused.push(`${CSV_FILES.inventory} parsed to ${rows.length} rows, below ${MIN_INVENTORY_ROWS} - not a fleet-wide export, not written`);
     } else {
@@ -203,7 +240,7 @@ export async function ingestObpCsv(hon, attachments, today) {
     }
   }
   if (tr) {
-    const rows = mapIntransit(parseCsv(textOf(tr)), today);
+    const rows = mapIntransit(parseCsv(textOf(tr)), today).map((r) => ({ ...r, source: 'csv' }));
     const dated = rows.filter((r) => r.eta_date);
     if (!rows.length) {
       out.refused.push(`${CSV_FILES.intransit} parsed to 0 rows - not written`);
@@ -214,6 +251,10 @@ export async function ingestObpCsv(hon, attachments, today) {
       out.intransit = rows.length;
       out.intransit_undated = rows.length - dated.length;
     }
+  }
+  if (out.inventory || out.intransit) {
+    try { out.filled = await fillFromMirror(hon, today); }
+    catch (e) { out.refused.push(`mirror fill threw: ${String((e && e.message) || e)}`); }
   }
   return out;
 }

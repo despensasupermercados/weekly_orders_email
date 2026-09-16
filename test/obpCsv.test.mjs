@@ -156,3 +156,30 @@ db.prepare('INSERT INTO obp_intransit VALUES (?,?,?,?,?)').run('Allure', 'A3VX33
 src = await obpSource(hon);
 assert.equal(src.inventory.source, 'mirror', 'a newer mirror snapshot takes over');
 console.log('ok - obp csv: a truncated file is refused, and a newer mirror snapshot takes precedence again');
+
+// A SHIP THE EXPORT DID NOT COVER KEEPS ITS MIRROR FIGURES. The 16 Sep 2026
+// load was half a file: the connector cuts at 200,000 characters. A snapshot
+// carrying half the fleet must not make the other half read as empty.
+{
+  db.exec('DELETE FROM obp_inventory; DELETE FROM obp_intransit;');
+  db.prepare('INSERT INTO obp_inventory VALUES (?,?,?,?)').run('Allure', 'A3VX330 / 99PRD67087', 10, '2026-09-21');
+  db.prepare('INSERT INTO obp_inventory VALUES (?,?,?,?)').run('Voyager', 'A3VX330 / 99PRD67087', 8, '2026-09-21');
+  db.prepare('INSERT INTO obp_intransit VALUES (?,?,?,?,?)').run('Voyager', 'A3VX330 / 99PRD67087', serial('2026-10-16'), 6, '2026-09-21');
+  const half = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS; i++) half.push(invLine('Adventure', `P${i}`, 'FILLER', 1));
+  half.push(invLine('Allure', 'A3VX330 / 99PRD67087', 'TN619M MAGENTA TONER', 17));
+  const r2 = await ingestObpCsv(hon, [
+    { filename: CSV_FILES.inventory, content: half.join('\n') },
+    { filename: CSV_FILES.intransit, content: [TR_HEAD, trLine('Allure', 'A3VX330 / 99PRD67087', 'TN619M MAGENTA TONER', 6, '10/20/2026 12:00:00 AM')].join('\n') },
+  ], '2026-09-21');
+  assert.equal(r2.refused.length, 0, r2.refused.join('; '));
+  assert.equal(r2.filled.inventory, 1, 'Voyager, absent from the export, is filled from the mirror');
+  assert.equal(r2.filled.intransit, 1);
+  const v = db.prepare(`SELECT on_hand, source FROM ${CSV_INVENTORY} WHERE ship='Voyager' AND snapshot_date='2026-09-21'`).get();
+  assert.deepEqual(v, { on_hand: 8, source: 'mirror-fill' });
+  const a = db.prepare(`SELECT on_hand, source FROM ${CSV_INVENTORY} WHERE ship='Allure' AND snapshot_date='2026-09-21'`).get();
+  assert.deepEqual(a, { on_hand: 17, source: 'csv' }, 'a ship the export covers is not overwritten by the fill');
+  const vt = db.prepare(`SELECT eta_date, qty, source FROM ${CSV_INTRANSIT} WHERE ship='Voyager' AND snapshot_date='2026-09-21'`).get();
+  assert.deepEqual(vt, { eta_date: '2026-10-16', qty: 6, source: 'mirror-fill' }, 'the mirror\'s Excel serial becomes an ISO date in the fill');
+  console.log('ok - obp csv: a half-fleet export is completed from the mirror, ship by ship, never overwriting fresh rows');
+}
