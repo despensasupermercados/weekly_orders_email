@@ -5,8 +5,9 @@
 //   onboardinventory.csv     what is aboard each ship
 //   intransititems.csv       every open order line and the day it lands
 //   acceptedorderdetails.csv receipts (not used by this Worker yet)
-// The Power Automate flow "OBP nightly" attaches them and mails them to
-// obp-csv@cims.work, which routes here. Column names are the export's own,
+// The Power Automate flow "HON — nightly OBP" (its mails are titled "OBP
+// nightly") attaches them and mails them to obp-csv@cims.work, which routes
+// here. Column names are the export's own,
 // checked against the live files on 16 Sep 2026:
 //   inventory: ShipName,UpdateDate,PartID,PartCategory,PartNumber,PartDescr,
 //              PartsSortOrder,Quantity,PartPrice,Total Price,InventoryID,

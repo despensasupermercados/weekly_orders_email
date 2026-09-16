@@ -106,7 +106,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       if (age >= 2) add(age >= 4 ? 'critical' : 'warn', 'csv_feed',
         `the OBP CSV copy last arrived ${src.csv.inventory}, ${age} days ago - the readers have fallen back ` +
         `to the workbook mirror (${src.mirror.inventory || 'none'}), the copy that stalls. Check the ` +
-        `"OBP nightly" flow still attaches the three CSVs and sends to obp-csv@cims.work`);
+        `"HON — nightly OBP" flow (Miguel's Power Automate) still attaches the three CSVs and sends to obp-csv@cims.work`);
     }
   } catch (e) {
     add('warn', 'csv_feed', `source check threw: ${String(e && e.message || e)}`);
