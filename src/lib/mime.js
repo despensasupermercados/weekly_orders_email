@@ -17,13 +17,24 @@ function decodeQuotedPrintable(s) {
     .replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
 
-function decodeBase64(s) {
+function base64Bytes(s) {
   const clean = s.replace(/[^A-Za-z0-9+/=]/g, '');
-  if (!clean) return '';
+  if (!clean) return new Uint8Array(0);
   const bin = atob(clean);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder('utf-8').decode(bytes);
+  return bytes;
+}
+function decodeBase64(s) {
+  return new TextDecoder('utf-8').decode(base64Bytes(s));
+}
+// The BYTES of a part, for a workbook attachment. Running an .xlsx through the
+// UTF-8 text decoder above replaces every invalid byte with U+FFFD, which is
+// why the workbook path could never be wired on `content` alone.
+function bodyBytes(head, body) {
+  const enc = headerValue(head, 'Content-Transfer-Encoding').toLowerCase();
+  if (enc.startsWith('base64')) return base64Bytes(body);
+  return new TextEncoder().encode(enc.startsWith('quoted-printable') ? decodeQuotedPrintable(body) : body);
 }
 
 function headerValue(head, name) {
@@ -120,6 +131,7 @@ export function attachmentsOf(raw) {
       // Bytes are decoded but not parsed. Whoever wires the workbook path gets
       // a buffer, not another decoding problem.
       content: decodeBody(ph, pb),
+      bytes: bodyBytes(ph, pb),
     });
   }
   return out;

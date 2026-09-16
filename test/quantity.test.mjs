@@ -93,3 +93,26 @@ assert.equal(rulesFrom('{not json')._invalid, true);
 
 console.log('ok - completeness: a missing colour is critical, an unreadable line is a question,');
 console.log('     and a waste box no longer masks the colour it was hiding');
+
+// ON-HAND CHANGES THE VERDICT. Explorer, 10 Sep 2026: flagged critical for
+// black with 14 black on board. With an on-hand read, a colour the ship still
+// holds is a warn that states the figure; a colour it holds none of stays
+// critical. Without a read, unchanged: critical.
+{
+  const lines = [
+    { description: 'TN619C CYAN TONER', qty: 4 }, { description: 'TN619M MAGENTA TONER', qty: 4 },
+    { description: 'TN619Y YELLOW TONER', qty: 4 },
+  ];
+  const withStock = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines,
+    on_hand: { black: 14, cyan: 12, magenta: 13, yellow: 13 } });
+  assert.equal(withStock.length, 1);
+  assert.equal(withStock[0].severity, 'warn');
+  assert.match(withStock[0].detail, /black 14/);
+  const bare = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines,
+    on_hand: { black: 0, cyan: 12, magenta: 13, yellow: 13 } });
+  assert.equal(bare[0].severity, 'critical');
+  assert.match(bare[0].detail, /none on board/);
+  const unknown = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines });
+  assert.equal(unknown[0].severity, 'critical');
+  console.log('ok - colour completeness reads on-hand: stocked colour is a warn with the figure, none aboard is critical');
+}

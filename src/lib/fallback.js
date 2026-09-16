@@ -95,7 +95,7 @@ export function gapFindings(deliveries, today, opts = {}) {
 
   const live = out.filter((f) => inService(f.ship, today));
   live.sort((a, b) => byFleetOrder(a.ship, b.ship)
-    || (b.gap_days - a.gap_days) || (a.next_delivery < b.next_delivery ? -1 : 1));
+    || (b.gap_days - a.gap_days) || (a.next_delivery < b.next_delivery ? -1 : a.next_delivery > b.next_delivery ? 1 : 0));
   return live;
 }
 

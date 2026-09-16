@@ -43,10 +43,17 @@ export async function fleetRunway(hon, today, opts = {}) {
     if (!probe.ok) return { ran: false, reason: probe.reason, findings: [], measured: 0 };
   }
 
+  // MONTH ARITHMETIC ON INTEGERS, NOT ON A DATE. setUTCMonth(-1) on the 31st
+  // rolls forward into the same month (31 Mar - 1 -> 3 Mar), so on a month-end
+  // run prevMonth equalled the current month and last month's usage was never
+  // found. Found in code review, 16 Sep 2026.
+  const monthsBack = (ym, n) => {
+    const [y, m] = String(ym).slice(0, 7).split('-').map(Number);
+    const idx = y * 12 + (m - 1) - n;
+    return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
+  };
   const month = String(today).slice(0, 7);
-  const from = new Date(Date.parse(today + 'T00:00:00Z'));
-  from.setUTCMonth(from.getUTCMonth() - 4);
-  const fromMonth = from.toISOString().slice(0, 7);
+  const fromMonth = monthsBack(month, 4);
 
   // Usage per month is Ray's formula, computed in SQL because the alternative
   // is pulling three years of snapshots for 48 ships into a Worker.
@@ -89,7 +96,7 @@ export async function fleetRunway(hon, today, opts = {}) {
          AND s.due_date >= ?4
          AND s.loading_delivery_date IS NOT NULL AND s.loading_delivery_date != ''
     )
-    SELECT a.ship, substr(p.description, 1, 34) item, p.par_qty, p.brand,
+    SELECT a.ship, substr(p.description, 1, 34) item, p.description description, p.par_qty, p.brand,
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
            COALESCE((SELECT i.on_hand FROM obp_inventory i
                       WHERE i.ship = a.ship AND i.part_number = a.part_number
@@ -122,11 +129,7 @@ export async function fleetRunway(hon, today, opts = {}) {
      WHERE ${ITEM_FILTER}
        AND MAX(a.avg3, COALESCE(a.lastm, 0)) > 0`;
 
-  const prevMonth = (() => {
-    const d = new Date(Date.parse(today + 'T00:00:00Z'));
-    d.setUTCMonth(d.getUTCMonth() - 1);
-    return d.toISOString().slice(0, 7);
-  })();
+  const prevMonth = monthsBack(month, 1);
 
   const rows = (await hon.prepare(sql).bind(month, fromMonth, prevMonth, today).all()).results || [];
   if (!rows.length) {
@@ -152,7 +155,7 @@ export async function fleetRunway(hon, today, opts = {}) {
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
     if (f) findings.push({
-      ...withQuantity(f, {
+      ...withQuantity({ ...f, description: r.description }, {
         brand: r.brand,
         parQty: r.par_qty == null ? null : Number(r.par_qty),
         due: r.order_due || null,

@@ -63,19 +63,24 @@ and colour is data in that file.
 
 ## Going live to the fleet
 
-`SEND_TO_FLEET` is `"false"`. While it is false the Monday cron mails the whole list to
-`DRY_RUN_TO` — Miguel and Ray — and no ship hears anything.
+**LIVE since 15 Sep 2026** (Miguel: "the one who has all the ships will go to onboardsupport;
+the individual ships will go to each ship and cc Ray on each"). Every Monday 08:00 Miami:
 
-To go live:
+| who | gets |
+|---|---|
+| `FLEET_TO` (onboardsupport@DG3.com) | the whole-fleet list |
+| each ship with a finding | its own email, to the mailbox in `FLEET_MAP`, with `SHIP_CC` (Ray) in copy |
+| `DRY_RUN_TO` | nothing, unless `SEND_TO_FLEET` is set back to `"false"` |
 
-1. Fill in **`FLEET_MAP`**: `Ship = address, address; Ship = address`. Newlines and `#`
-   comments are allowed.
-2. Run **`GET /fleet`**. It prints which ship would be mailed at which address, and which
-   ships have something due and **cannot be reached at all**. Read this before step 3.
-   Addresses are masked by default; set `ADMIN_KEY` as a secret and pass `?key=` to check them
-   character by character.
-3. Run **`GET /preview-ship?ship=Apex`** to see one crew's email as that crew would get it.
-4. Set `SEND_TO_FLEET = "true"`.
+`FLEET_MAP` carries all 48 ships. Every line comes from the `ship_contact` table in the
+cims-timecard database (roles printer_specialist / printer / printer_manager), which names its
+own sources per row; 47 of the 48 mailboxes are delivery-proven in cims-mail, Journey's is not
+yet. `test/fleetMap.test.mjs` reads the map back out of `wrangler.toml` and fails on a missing,
+duplicated, malformed or wrong-domain ship.
+
+To stand down for a week: set `SEND_TO_FLEET = "false"`. One line, no code change. To check
+who would be mailed: **`GET /fleet`** (addresses masked unless `ADMIN_KEY` is passed) and
+**`GET /preview-ship?ship=Apex`** for one crew's email as that crew would get it.
 
 **An address is only ever used if a human typed it into `FLEET_MAP`.** Nothing in the code
 derives a mailbox from a ship name. A guessed address either bounces, which is merely useless,

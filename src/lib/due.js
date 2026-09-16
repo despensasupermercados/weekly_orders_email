@@ -94,6 +94,11 @@ const isCovered = (r) =>
 // landing on that loading date is a DISAGREEMENT BETWEEN SOURCES, not proof of
 // either. It goes to Ray as PO_NOT_RECORDED and never to the ship - chasing a
 // printer who already ordered is how the email loses its authority.
+// A DATE THAT IS NOT A DATE. Ordering-schedule rows are cims-hon's ingest, and a
+// '9/25/2026' in due_date makes julianday() return NULL, which `null <= 7`
+// then reads as DUE NOW; the renderer's month lookup throws on it. Refuse the
+// row as NO_DUE_DATE (a data fault for engineering) rather than guess.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export function classifyAll(rows, today) {
   const byShip = new Map();
   for (const r of rows) {
@@ -122,7 +127,7 @@ export function classifyAll(rows, today) {
       } else if (azamara && r.order_lines > 0) {
         state = 'PO_NOT_RECORDED'; // Ray's problem, not the ship's
         lastCovered = r.loading_delivery_date;
-      } else if (!r.loading_delivery_date) {
+      } else if (!r.loading_delivery_date || !ISO_DATE.test(String(r.loading_delivery_date))) {
         // NO LOADING DATE = THE ORDERED TEST CANNOT RUN.
         // order_lines joins obp_intransit.eta to this column, so a NULL here
         // matches nothing and the voyage reads as unordered no matter how much
@@ -132,7 +137,7 @@ export function classifyAll(rows, today) {
         state = 'NO_LOADING_DATE';
       } else if (r.loading_delivery_date < today) {
         state = 'past'; // already sailed, nothing useful to say
-      } else if (!r.due_date) {
+      } else if (!r.due_date || !ISO_DATE.test(String(r.due_date))) {
         // NO DUE DATE = NOTHING TO TELL A SHIP.
         // days_to_due is NULL when due_date is NULL, and `null <= WINDOW_DAYS`
         // is TRUE in JavaScript because null coerces to 0. This voyage used to
