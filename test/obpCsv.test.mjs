@@ -183,3 +183,30 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.deepEqual(vt, { eta_date: '2026-10-16', qty: 6, source: 'mirror-fill' }, 'the mirror\'s Excel serial becomes an ISO date in the fill');
   console.log('ok - obp csv: a half-fleet export is completed from the mirror, ship by ship, never overwriting fresh rows');
 }
+
+// A MIRROR THAT HAS NOT MOVED IS NOT FRESHER. The workbook mirror is stamped
+// every morning whether or not a value changed. A CSV copy loaded yesterday
+// must beat a mirror snapshot from today whose content equals yesterday's;
+// a mirror that really changed wins on date again.
+{
+  db.exec('DELETE FROM obp_inventory; DELETE FROM obp_intransit;');
+  db.exec(`DELETE FROM ${CSV_INVENTORY}; DELETE FROM ${CSV_INTRANSIT};`);
+  db.prepare(`INSERT INTO ${CSV_INVENTORY} (ship, part_number, on_hand, snapshot_date, source) VALUES (?,?,?,?,?)`).run('Allure', 'A3VX330 / 99PRD67087', 17, '2026-09-16', 'csv');
+  db.prepare(`INSERT INTO ${CSV_INTRANSIT} (ship, part_number, qty, eta_date, snapshot_date, source) VALUES (?,?,?,?,?,?)`).run('Allure', 'A3VX330 / 99PRD67087', 6, '2026-10-20', '2026-09-16', 'csv');
+  // The mirror: identical content on 16 and 17 Sep - re-stamped, not refreshed.
+  for (const d of ['2026-09-16', '2026-09-17']) {
+    db.prepare('INSERT INTO obp_inventory VALUES (?,?,?,?)').run('Allure', 'A3VX330 / 99PRD67087', 10, d);
+    db.prepare('INSERT INTO obp_intransit VALUES (?,?,?,?,?)').run('Allure', 'A3VX330 / 99PRD67087', serial('2026-10-14'), 6, d);
+  }
+  let s = await obpSource(hon);
+  assert.equal(s.inventory.source, 'csv', 'a re-stamped mirror does not outrank yesterday\'s CSV copy');
+  assert.equal(s.intransit.source, 'csv');
+  assert.equal(s.mirror.frozen.inventory, true);
+  // 18 Sep: the workbook really refreshed - the content moved - so the mirror wins.
+  db.prepare('INSERT INTO obp_inventory VALUES (?,?,?,?)').run('Allure', 'A3VX330 / 99PRD67087', 14, '2026-09-18');
+  db.prepare('INSERT INTO obp_intransit VALUES (?,?,?,?,?)').run('Allure', 'A3VX330 / 99PRD67087', serial('2026-10-14'), 9, '2026-09-18');
+  s = await obpSource(hon);
+  assert.equal(s.inventory.source, 'mirror', 'a mirror whose content changed is fresher and wins');
+  assert.equal(s.intransit.source, 'mirror');
+  console.log('ok - obp source: a re-stamped, unchanged mirror never outranks a CSV copy; a real refresh does');
+}
