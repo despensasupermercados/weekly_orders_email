@@ -395,10 +395,14 @@ export default {
 
     if (event.cron === NIGHTLY_CRON) {
       const report = await runWatchdog(env, today, { repair: true });
+      // "ADMIN_KEY set/unset" is presence only, never the value. A session
+      // cannot reach this Worker's HTTP surface, so this line is the only way
+      // to see from D1 whether the secret exists (asked 16 Sep 2026).
       await logIngest(env, 'watchdog',
-        report.healthy
+        (report.healthy
           ? 'night check clean'
-          : `night check: ${report.counts.critical} critical, ${report.counts.warn} warn, ${report.repairs.length} repaired`);
+          : `night check: ${report.counts.critical} critical, ${report.counts.warn} warn, ${report.repairs.length} repaired`) +
+        ` | ADMIN_KEY ${env.ADMIN_KEY ? 'set' : 'unset'}`);
       if (report.healthy) return; // silence means healthy
 
       // The night check is an ENGINEERING digest - stale feeds, format drift,
