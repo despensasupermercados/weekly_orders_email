@@ -245,3 +245,33 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(/empty by <strong>Sun 27 Sep/.test(html), 'the day it runs out is in the text');
   console.log('ok - email: the first tile is always DUE DATE; no open order means due today');
 }
+
+// SEND YOUR ORDERING SCHEDULE FIRST. Miguel, 16 Sep 2026: "the email should
+// say: you are missing this file, do it first." A ship with no usable schedule
+// is told at the top, with the reason its last attempt failed, and where to
+// send the file. The fleet email lists the same ships in one table. A ship
+// whose schedule is fine sees nothing about it.
+{
+  const { renderWeekly: rw } = await import('../src/lib/email.js');
+  const schedules = [
+    { ship: 'Ascent', status: 'image', detail: 'sent a png', last_attempt: '2026-09-12', last_due: null },
+    { ship: 'Allure', status: 'stale', detail: 'ended', last_attempt: '2026-09-09', last_due: '2026-03-11' },
+    { ship: 'Apex', status: 'ok', detail: 'fine', last_attempt: '2026-09-12', last_due: '2027-02-07' },
+  ];
+  const ascent = rw([], [], '2026-09-14', { audience: 'ship', ship: 'Ascent', schedules });
+  assert.ok(/DO THIS FIRST/.test(ascent), 'the ask leads the ship email');
+  assert.ok(/picture/.test(ascent), 'Ascent is told a screenshot is not the file');
+  assert.ok(/obp@cims\.work/.test(ascent), 'and where to send it');
+  assert.ok(/Ascent &mdash; 1 to do/.test(ascent), `the ask counts as a thing to do: ${ascent.match(/&mdash; \d+ to do/)?.[0]}`);
+  assert.ok(/send your Ordering Schedule/.test(ascent), 'the preheader names it');
+  const allure = rw([], [], '2026-09-14', { audience: 'ship', ship: 'Allure', schedules });
+  assert.ok(/ended on <strong>Wed 11 Mar<\/strong>/.test(allure), 'a stale schedule names the day it ended');
+  const apex = rw([], [], '2026-09-14', { audience: 'ship', ship: 'Apex', schedules });
+  assert.ok(!/DO THIS FIRST/.test(apex), 'a ship with a schedule is not asked');
+  const fleet2 = rw([], [], '2026-09-14', { schedules, checked: ['Ascent', 'Allure', 'Apex'] });
+  assert.ok(/Ships with no Ordering Schedule/.test(fleet2), 'the fleet email carries the list');
+  assert.ok(/sent a picture, not the file/.test(fleet2) && /schedule has ended/.test(fleet2), 'with the reason per ship');
+  assert.ok(!/DO THIS FIRST/.test(fleet2), 'the fleet email does not shout the ship-level ask');
+  assert.ok(/2 with no schedule/.test(fleet2) && /1 of 3 ships ok/.test(fleet2), `the strap counts them: ${fleet2.match(/[^>]*ships ok/)?.[0]}`);
+  console.log('ok - email: a ship with no usable schedule is told what to send, why the last try failed, and where');
+}

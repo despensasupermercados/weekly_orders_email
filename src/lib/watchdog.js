@@ -42,6 +42,7 @@ import { voyageStates, dataFaults, escalations, MISSED_CREW_DAYS } from './due.j
 import { quantityFindings, rulesFrom } from './quantity.js';
 import { anomalyFindings } from './anomaly.js';
 import { normShip } from './fleet.js';
+import { obpSource } from './obpSource.js';
 
 const one = async (db, sql, ...b) => (await db.prepare(sql).bind(...b).first()) || {};
 const many = async (db, sql, ...b) => ((await db.prepare(sql).bind(...b).all()).results || []);
@@ -88,6 +89,27 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     if (f.run >= 3) add(f.run >= 5 ? 'critical' : 'warn', 'feed_frozen',
       `${table} content identical for ${f.run} consecutive snapshots ` +
       `(${f.latest.n} rows, total ${f.latest.s}) - the source is not moving even though snapshot_date is`);
+  }
+
+  // ---- 1c. Which copy of OBP is being read, and is the CSV route alive? ----
+  // The readers take the fresher of the workbook mirror and this Worker's own
+  // CSV copy (obpSource.js). Once the CSV route exists it is the copy that
+  // moves every night; if it stops, the readers fall back to the mirror, which
+  // is the copy that stalls - so the fallback itself is worth a line.
+  let source = null;
+  try {
+    const src = await obpSource(hon);
+    source = { inventory: src.inventory.source, intransit: src.intransit.source,
+      csv_snapshot: src.csv.inventory, mirror_snapshot: src.mirror.inventory };
+    if (src.csv.inventory) {
+      const age = Math.round((Date.parse(today) - Date.parse(src.csv.inventory)) / 86400000);
+      if (age >= 2) add(age >= 4 ? 'critical' : 'warn', 'csv_feed',
+        `the OBP CSV copy last arrived ${src.csv.inventory}, ${age} days ago - the readers have fallen back ` +
+        `to the workbook mirror (${src.mirror.inventory || 'none'}), the copy that stalls. Check the ` +
+        `"OBP nightly" flow still attaches the three CSVs and sends to obp-csv@cims.work`);
+    }
+  } catch (e) {
+    add('warn', 'csv_feed', `source check threw: ${String(e && e.message || e)}`);
   }
 
   // ---- 2. ETA format drift ----
@@ -366,6 +388,40 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     add('warn', 'anomaly_blocked', `anomaly check threw: ${String(e && e.message || e)}`);
   }
 
+  // ---- 15. Did the Monday emails actually land? ----
+  // cims-mailer records every send and Resend's delivery webhooks update it:
+  // delivered, delayed, bounced, complained. Forty-eight emails went out and
+  // nothing read the answer. MAIL is a read-only binding to cims-mail's D1;
+  // without it this check cannot run and says so in counts, never as a finding
+  // that would make a clean fixture look sick.
+  let delivery = 'no MAIL binding';
+  if (env.MAIL) {
+    try {
+      const mails = await many(env.MAIL,
+        `SELECT to_json, subject, status, delivery_status, delivery_detail, created_at
+           FROM mail_log
+          WHERE app = 'weekly-orders-email' AND template_id = 'orders-due-weekly'
+            AND created_at >= datetime(?, '-8 day')
+          ORDER BY created_at DESC LIMIT 200`, today);
+      for (const m of mails) {
+        let to = '';
+        try { to = JSON.parse(m.to_json || '[]').join(', '); } catch (_) { to = String(m.to_json || ''); }
+        const bad = ['failed', 'dead'].includes(m.status) || ['bounced', 'complained', 'failed'].includes(m.delivery_status);
+        if (bad) {
+          add('critical', 'delivery',
+            `${m.subject} -> ${to}: ${m.delivery_status || m.status}` +
+            (m.delivery_detail ? ` (${String(m.delivery_detail).slice(0, 120)})` : '') +
+            ` - that ship did not get its email`);
+        } else if (m.delivery_status === 'delayed') {
+          add('warn', 'delivery', `${m.subject} -> ${to}: delayed since ${m.created_at}`);
+        }
+      }
+      delivery = `${mails.length} weekly emails checked`;
+    } catch (e) {
+      add('warn', 'delivery_blocked', `delivery check threw: ${String(e && e.message || e)}`);
+    }
+  }
+
   return {
     today,
     healthy: findings.length === 0 && repairs.length === 0,
@@ -377,6 +433,57 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       ships_covered: covered,
       fleet: fleet.n || null,
       last_send: lastSend.ts || null,
+      obp_source: source,
+      delivery,
     },
   };
+}
+
+// ---- Memory: what has this watchdog already said? ----
+//
+// Miguel, 10 Sep 2026, on why WATCHDOG_TO was emptied: "this watchdog HAS NO
+// STATE - it cannot tell that it said the same thing yesterday, so a standing
+// condition would have arrived nightly forever. A nightly mail that always
+// arrives is one that gets filtered." So: a finding is NEW the first night it
+// appears and is mailed then; after that it is standing and stays quiet; a
+// CRITICAL finding still standing a week later is mentioned again, once a
+// week, so a real problem cannot go silent either. The key strips digits, so
+// "3 days old" and "4 days old" are the same finding, not two new ones.
+//
+// weekly_watchdog_seen is this Worker's own table. Rows older than 30 days
+// are dropped; a finding that comes back after a month is new again.
+export const SEEN_TABLE = 'weekly_watchdog_seen';
+export const REMIND_EVERY_DAYS = 7;
+export const findingKey = (f) => `${f.check}|${String(f.detail || '').replace(/\d+/g, '#').slice(0, 300)}`;
+
+export async function rememberFindings(hon, report, today) {
+  const findings = report.findings || [];
+  const out = { fresh: [], standing: [], reminders: [] };
+  try {
+    await hon.prepare(
+      `CREATE TABLE IF NOT EXISTS ${SEEN_TABLE} (key TEXT PRIMARY KEY, check_ TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)`).run();
+    const seen = new Map(((await hon.prepare(`SELECT key, first_seen FROM ${SEEN_TABLE}`).all()).results || [])
+      .map((r) => [r.key, r.first_seen]));
+    for (const f of findings) {
+      const key = findingKey(f);
+      const first = seen.get(key);
+      if (!first) {
+        out.fresh.push(f);
+      } else {
+        out.standing.push({ ...f, first_seen: first });
+        const days = Math.round((Date.parse(today) - Date.parse(first)) / 86400000);
+        if (f.severity === 'critical' && days > 0 && days % REMIND_EVERY_DAYS === 0) out.reminders.push({ ...f, first_seen: first, days });
+      }
+      await hon.prepare(
+        `INSERT INTO ${SEEN_TABLE} (key, check_, first_seen, last_seen) VALUES (?1, ?2, ?3, ?3)
+         ON CONFLICT(key) DO UPDATE SET last_seen = ?3`).bind(key, f.check, today).run();
+    }
+    await hon.prepare(`DELETE FROM ${SEEN_TABLE} WHERE last_seen < date(?1, '-30 day')`).bind(today).run();
+  } catch (e) {
+    // If memory fails, mail everything: a duplicate digest costs less than a
+    // finding nobody hears about.
+    out.fresh = findings.slice();
+    out.error = String((e && e.message) || e);
+  }
+  return out;
 }

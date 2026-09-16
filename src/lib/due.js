@@ -28,13 +28,15 @@ export const MAX_GAP_DAYS = 35;
 // as a string silently matches nothing and produces a confident wrong answer:
 // it cost a "76 lines short across 33 ships" report that was pure artefact.
 // Always convert.
-const ETA_TO_DATE = "date('1899-12-30', '+' || CAST(i.eta AS INTEGER) || ' days')";
+// The landing-date expression now comes from obpSource, which knows whether
+// the row is the workbook mirror (serial) or this Worker's CSV copy (ISO).
+import { obpSource } from './obpSource.js';
 
 // An open order's ETA equals that voyage's LOADING DELIVERY DATE. Verified on
 // Summit: all 5 of its ordered future voyages match exactly, the 2 it has not
 // ordered match nothing. VoyageNum would be a better key but cims-hon drops it
 // at ingest, and the Azamara HOPO <-> OBP voyage mapping is still open with Ray.
-const SQL = `
+const sqlFor = (src) => `
 WITH eligible AS (
   SELECT ship,
          -- GROUP BY A KEY THAT IS NEVER NULL.
@@ -68,17 +70,17 @@ SELECT e.ship, e.voyage, e.due_date, e.loading_delivery_date, e.loading_port,
        e.po_state, e.date_changed, e.mot,
        CAST(julianday(e.due_date) - julianday(?1) AS INTEGER) AS days_to_due,
        (SELECT COUNT(*)
-          FROM obp_intransit i
+          FROM ${src.intransit.table} i
          WHERE i.ship = e.ship
-           AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-           AND ${ETA_TO_DATE} = e.loading_delivery_date) AS order_lines
+           AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
+           AND ${src.intransit.land('i')} = e.loading_delivery_date) AS order_lines
   FROM eligible e
  ORDER BY e.ship, e.loading_delivery_date`;
 
 const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 
 export async function voyageStates(hon, today) {
-  const r = await hon.prepare(SQL).bind(today).all();
+  const r = await hon.prepare(sqlFor(await obpSource(hon))).bind(today).all();
   return classifyAll(r.results || [], today);
 }
 

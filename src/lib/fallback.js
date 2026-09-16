@@ -32,7 +32,8 @@
 // authority in one send.
 
 import { inService, byFleetOrder } from './fleetStatus.js';
-import { require_, firstPresent } from './schema.js';
+import { require_ } from './schema.js';
+import { obpSource } from './obpSource.js';
 
 // Below this, a gap is ordinary biweekly rhythm and not worth a word.
 export const MIN_GAP_DAYS = 35;
@@ -105,34 +106,28 @@ export function gapFindings(deliveries, today, opts = {}) {
 // empty list: an empty list here reads as "all 25 ships are fine", which is the
 // same silence this module exists to remove.
 
-const ETA_COLS = ['eta'];
 const ELIGIBLE = `(
      UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELBIWEEKLYHOTEL%'
   OR UPPER(REPLACE(REPLACE(mot,'-',''),' ','')) LIKE 'HOTELMONTHLY%'
   OR mot = 'AZAMARA BWS')`;
 
 export async function unscheduledGaps(hon, today, opts = {}) {
-  const probe = await require_(hon, 'obp_intransit', ['ship', 'snapshot_date']);
+  // The fresher copy of the in-transit list: the workbook mirror or this
+  // Worker's CSV copy. The source supplies the landing-date expression, because
+  // the mirror stores an Excel serial in a TEXT column and the CSV a real date,
+  // and reading either as the other matched nothing silently once.
+  const src = await obpSource(hon);
+  const probe = await require_(hon, src.intransit.table, ['ship', 'snapshot_date', src.intransit.etaCol]);
   if (!probe.ok) return { ran: false, reason: probe.reason, findings: [], ships: 0 };
-  const etaCol = firstPresent(probe.columns, ETA_COLS);
-  if (!etaCol) {
-    return {
-      ran: false, findings: [], ships: 0,
-      reason: `obp_intransit has no recognisable eta column (looked for ${ETA_COLS.join(', ')}). ` +
-        `The schedule-free check is UNKNOWN, not clean.`,
-    };
-  }
 
-  // eta is an Excel serial in a TEXT column. Reading it as a string matched
-  // nothing silently once and produced a confident wrong count.
   const rows = (await hon.prepare(`
-    SELECT DISTINCT ship,
-           date('1899-12-30', '+' || CAST(${etaCol} AS INTEGER) || ' days') AS date
-      FROM obp_intransit
-     WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-       AND ${etaCol} GLOB '[0-9]*'
-       AND ship NOT IN (SELECT DISTINCT ship FROM schedule_order WHERE ${ELIGIBLE})
-     ORDER BY ship, date`).all()).results || [];
+    SELECT DISTINCT t.ship,
+           ${src.intransit.land('t')} AS date
+      FROM ${src.intransit.table} t
+     WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
+       AND ${src.intransit.etaOk('t')}
+       AND t.ship NOT IN (SELECT DISTINCT ship FROM schedule_order WHERE ${ELIGIBLE})
+     ORDER BY t.ship, date`).all()).results || [];
 
   if (!rows.length) {
     return {

@@ -206,3 +206,65 @@ assert.equal(clean.repairs.length, 0);
 
 console.log('ok - watchdog catches stale feed, format drift, scope leaks and expired schedules,');
 console.log('     repairs only its own rows, and recognises the hyphenated MOT variant');
+
+// ---- Memory: a finding is mailed the night it appears, then goes quiet ----
+// Miguel emptied WATCHDOG_TO on 10 Sep 2026 because a stateless check would
+// repeat a standing condition nightly until it was filtered. The feed freeze of
+// 10-16 Sep was then detected every night and told nobody. Memory is the fix:
+// new once, quiet after, a weekly reminder while a critical stands.
+{
+  process.emitWarning = () => {};
+  const { DatabaseSync } = await import('node:sqlite');
+  const { rememberFindings, findingKey } = await import('../src/lib/watchdog.js');
+  const db = new DatabaseSync(':memory:');
+  const hon = {
+    prepare(sql) {
+      const binds = [];
+      const stmt = {
+        bind(...a) { binds.push(...a); return stmt; },
+        async all() { return { results: db.prepare(sql).all(...binds) }; },
+        async first() { return db.prepare(sql).get(...binds) ?? null; },
+        async run() { return db.prepare(sql).run(...binds); },
+      };
+      return stmt;
+    },
+  };
+  const frozen = (n) => ({ severity: 'critical', check: 'feed_frozen', detail: `obp_inventory content identical for ${n} consecutive snapshots (3482 rows, total 13990)` });
+  const cover = { severity: 'warn', check: 'coverage', detail: '36 of 48 ships have an ordering schedule loaded' };
+  assert.equal(findingKey(frozen(5)), findingKey(frozen(6)), 'a count that ticks up is the same finding, not a new one');
+
+  const n1 = await rememberFindings(hon, { findings: [frozen(5), cover] }, '2026-09-11');
+  assert.equal(n1.fresh.length, 2, 'night one: everything is new');
+  const n2 = await rememberFindings(hon, { findings: [frozen(6), cover] }, '2026-09-12');
+  assert.equal(n2.fresh.length, 0, 'night two: nothing new, nothing to mail');
+  assert.equal(n2.standing.length, 2);
+  assert.equal(n2.reminders.length, 0);
+  const n8 = await rememberFindings(hon, { findings: [frozen(12), cover] }, '2026-09-18');
+  assert.equal(n8.fresh.length, 0);
+  assert.equal(n8.reminders.length, 1, 'a critical still standing after seven days is mentioned again');
+  assert.equal(n8.reminders[0].check, 'feed_frozen', 'the warn is not');
+  const n9 = await rememberFindings(hon, { findings: [frozen(13), cover, { severity: 'critical', check: 'delivery', detail: 'Apex: 1 order due -> ax@x: bounced' }] }, '2026-09-19');
+  assert.equal(n9.fresh.length, 1, 'a genuinely new finding is new');
+  assert.equal(n9.fresh[0].check, 'delivery');
+  console.log('ok - watchdog memory: new once, quiet after, a weekly reminder only while a critical stands');
+}
+
+// ---- Delivery: Monday's emails are checked against cims-mail's log ----
+{
+  const mailRows = [
+    { to_json: '["ax_printer@celebrity.com"]', subject: 'Apex: 1 order due', status: 'sent', delivery_status: 'bounced', delivery_detail: '550 no such user', created_at: '2026-09-07 12:00:10' },
+    { to_json: '["qs_pm@azamaraships.com"]', subject: 'Quest: 3 running out', status: 'sent', delivery_status: 'delayed', delivery_detail: null, created_at: '2026-09-07 12:00:11' },
+    { to_json: '["an_printerspecialist@rccl.com"]', subject: 'Anthem: 1 order due', status: 'sent', delivery_status: 'delivered', delivery_detail: null, created_at: '2026-09-07 12:00:12' },
+  ];
+  const MAIL = fakeDb([['FROM mail_log', mailRows]]);
+  const r = await runWatchdog({ HON: fakeDb(base), MAIL }, TODAY, { repair: false });
+  const del = r.findings.filter((f) => f.check === 'delivery');
+  assert.equal(del.length, 2, `one bounce and one delay: ${JSON.stringify(del)}`);
+  assert.ok(del.some((f) => f.severity === 'critical' && /Apex/.test(f.detail) && /bounced/.test(f.detail)), 'a bounce is critical and names the ship');
+  assert.ok(del.some((f) => f.severity === 'warn' && /Quest/.test(f.detail)), 'a delay is a warning');
+  assert.ok(!del.some((f) => /Anthem/.test(f.detail)), 'a delivered email is not mentioned');
+  assert.equal(r.counts.delivery, '3 weekly emails checked');
+  const none = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });
+  assert.equal(none.counts.delivery, 'no MAIL binding', 'without the binding the check says it cannot run');
+  console.log('ok - watchdog delivery: a bounced Monday email is critical, a delay is a warning, delivered is silent');
+}

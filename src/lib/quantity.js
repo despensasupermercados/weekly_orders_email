@@ -43,6 +43,7 @@
 // says zero because it was looking at the wrong column.
 
 import { require_, firstPresent } from './schema.js';
+import { obpSource } from './obpSource.js';
 
 // The four process colours. A press missing any one of them is stopped.
 export const COLOURS = ['black', 'cyan', 'magenta', 'yellow'];
@@ -190,7 +191,9 @@ const DESC_COLS = ['item_description', 'description', 'item', 'part_description'
 const QTY_COLS = ['qty', 'quantity', 'order_qty', 'qty_ordered', 'open_qty'];
 
 export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
-  const probe = await require_(hon, 'obp_intransit', ['ship', 'eta', 'snapshot_date']);
+  // The fresher copy of the in-transit list - see obpSource.js.
+  const src = await obpSource(hon);
+  const probe = await require_(hon, src.intransit.table, ['ship', src.intransit.etaCol, 'snapshot_date']);
   if (!probe.ok) return { ran: false, reason: probe.reason, findings: [] };
 
   const descCol = firstPresent(probe.columns, DESC_COLS);
@@ -200,7 +203,7 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
       ran: false,
       findings: [],
       reason:
-        `obp_intransit has no recognisable description column (looked for ${DESC_COLS.join(', ')}). ` +
+        `${src.intransit.table} has no recognisable description column (looked for ${DESC_COLS.join(', ')}). ` +
         `Order lines cannot be read, so completeness is UNKNOWN, not clean.`,
     };
   }
@@ -210,7 +213,7 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   const ordered = states.filter((s) => s.state === 'ORDERED' && s.loading_delivery_date);
   if (!ordered.length) return { ran: true, reason: null, findings: [], checked: 0 };
 
-  const ETA = "date('1899-12-30', '+' || CAST(i.eta AS INTEGER) || ' days')";
+  const ETA = src.intransit.land('i');
   const loadings = [...new Set(ordered.map((o) => o.loading_delivery_date))];
   const ships = [...new Set(ordered.map((o) => o.ship))];
   // Plain placeholders rather than json_each: the list is at most a few dozen
@@ -220,8 +223,8 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   const sql = `
     SELECT i.ship AS ship, ${ETA} AS loading, i.${descCol} AS description
            ${qtyCol ? `, i.${qtyCol} AS qty` : ', NULL AS qty'}
-      FROM obp_intransit i
-     WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
+      FROM ${src.intransit.table} i
+     WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
        AND ${ETA} IN (${marks(loadings.length)})
        AND i.ship IN (${marks(ships.length)})`;
 
@@ -235,8 +238,8 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   try {
     const inv = await hon.prepare(
       `SELECT i.ship AS ship, p.description AS description, i.on_hand AS on_hand
-         FROM obp_inventory i JOIN par p ON p.ship = i.ship AND p.part_number = i.part_number
-        WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
+         FROM ${src.inventory.table} i JOIN par p ON p.ship = i.ship AND p.part_number = i.part_number
+        WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
           AND i.ship IN (${marks(ships.length)})
           AND p.description LIKE '%TONER%'`).bind(...ships).all();
     for (const row of inv.results || []) {
