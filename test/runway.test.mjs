@@ -45,19 +45,14 @@ assert.ok(typo.every((u) => u.used >= 0), 'a negative usage is a data fault, nev
 const dry = stockoutDate({ onHand: 9, rate: 7, arrivals: [], today: '2026-09-11' });
 assert.ok(dry > '2026-10-10' && dry < '2026-10-22', `expected mid-October, got ${dry}`);
 
-// An arrival before that date is CREDITED, not treated as cover. 9 + 14 at 7 a
-// month lasts to mid-December; the next container is 22 Dec, so the ship is
-// still dry for a few days and that is a finding. (An earlier version returned
-// null whenever anything landed first - a small early top-up hid a real gap.)
-const topped = runsOutFirst({ ship: 'Onward', item: 'TN619C CYAN', onHand: 9, rate: 7,
-  arrivals: [{ date: '2026-09-25', qty: 14 }], today: '2026-09-11', nextLoading: '2026-12-22' });
-assert.ok(topped, 'a top-up that still leaves the ship dry before the next container is a finding');
-assert.ok(topped.stockout > '2026-12-10' && topped.stockout < '2026-12-22', `got ${topped.stockout}`);
-// A top-up big enough to reach the next container is not.
+// A container with this item lands before the ship runs dry: nothing to say.
+// What happens after that landing belongs to the next order, which has not
+// been raised yet. (Dropping this rule on 16 Sep 2026 took the 15 Sep snapshot
+// from 47 findings to 272 - every item that would ever run out in 120 days.)
 assert.equal(
   runsOutFirst({ ship: 'Onward', item: 'TN619C CYAN', onHand: 9, rate: 7,
-    arrivals: [{ date: '2026-09-25', qty: 40 }], today: '2026-09-11', nextLoading: '2026-12-22' }),
-  null, 'enough arriving to reach the next container is not a finding');
+    arrivals: [{ date: '2026-09-25', qty: 14 }], today: '2026-09-11', nextLoading: '2026-09-25' }),
+  null, 'stock arriving before the ship runs dry is not a finding');
 
 // An arrival AFTER it runs dry is exactly the case worth an email: the order is
 // placed, and it is still too late for this item.

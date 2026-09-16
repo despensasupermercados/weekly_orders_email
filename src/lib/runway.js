@@ -100,12 +100,17 @@ export function stockoutDate({ onHand, rate, arrivals = [], today, horizonDays =
 export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays }) {
   const out = stockoutDate({ onHand, rate, arrivals, today, horizonDays });
   if (!out) return null;
-  // NO "COVERED" SHORTCUT. stockoutDate already credits every arrival on its
-  // day, so `out` is the day it runs dry AFTER what is coming has been counted.
-  // An earlier version then returned null if any arrival landed before `out` -
-  // which discarded the finding exactly when a small top-up lands early and
-  // the ship still runs dry before the next container. Found in code review,
-  // 16 Sep 2026.
+  // A CONTAINER WITH THIS ITEM LANDS FIRST: NOTHING TO SAY. `arrivals` holds
+  // only the NEXT known landing for the item - the orders after it have not
+  // been raised yet, so a balance that runs dry weeks after that landing is
+  // the next order's business, not a finding. A code review on 16 Sep 2026
+  // proposed dropping this on the case "a small top-up lands early and the
+  // ship still runs dry before the next container"; that case cannot occur in
+  // this data (the top-up IS the next landing), and without the shortcut the
+  // 15 Sep snapshot went from 47 findings to 272 - every item that would
+  // eventually run out inside the horizon. Kept, on purpose.
+  const covered = (arrivals || []).some((a) => a.date <= out && Number(a.qty) > 0 && a.date >= today);
+  if (covered) return null;
   return {
     ship, item,
     code: 'RUNS_OUT',
