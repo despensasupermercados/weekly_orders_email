@@ -19,7 +19,10 @@ One thing left, and two done on 16 Sep 2026:
 
 1. **Set `ADMIN_KEY` as a Worker secret.** Until it is set every endpoint except `/health`
    returns 503, so nobody can see `/fleet` (who will be mailed) or `/preview-ship` before a
-   Monday. Still unset on 16 Sep (`/fleet` answered `ADMIN_KEY is not set`).
+   Monday. Unset on 16 Sep at 20:00Z (`/fleet` answered `ADMIN_KEY is not set`); Miguel
+   believes he set it since. Verify without asking: every 06:00Z night-check line in
+   `ingest_log` ends `| ADMIN_KEY set` or `| ADMIN_KEY unset` (presence only, never the
+   value). From a browser: `/fleet` answers 401 when it is set, 503 when it is not.
 2. ~~Route `obp-csv@cims.work` to this Worker~~ **Done 16 Sep**: Cloudflare Email Routing,
    zone `cims.work`, `obp-csv@cims.work` → Worker `weekly-orders-email`, Active.
    `obp@cims.work` still belongs to `cims-hon` and was not touched.
