@@ -37,6 +37,7 @@ export const WHY = {
   [STATUS.IMAGE]: 'You sent a picture. We need the Excel file.',
   [STATUS.UNREADABLE]: 'Your file opened empty. Send the original from your Inventory Manager.',
   [STATUS.UNMATCHED]: 'Your file name has no ship name. Rename it.',
+  [STATUS.WRONGTYPE]: 'You sent a PDF or other file. We need the Excel file.',
   [STATUS.STALE]: 'Your schedule has ended. Send the new one.',
 };
 

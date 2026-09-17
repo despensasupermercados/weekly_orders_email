@@ -249,6 +249,44 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   console.log('ok - watchdog memory: new once, quiet after, a weekly reminder only while a critical stands');
 }
 
+// REVIEW OF 17 Sep 2026: a finding that grows from warn to critical is news,
+// and a reminder counts from the last time it was mailed, so one missed night
+// cannot skip a week.
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const { rememberFindings } = await import('../src/lib/watchdog.js');
+  const db = new DatabaseSync(':memory:');
+  const hon = {
+    prepare(sql) {
+      const binds = [];
+      const stmt = {
+        bind(...a) { binds.push(...a); return stmt; },
+        async all() { return { results: db.prepare(sql).all(...binds) }; },
+        async first() { return db.prepare(sql).get(...binds) ?? null; },
+        async run() { return db.prepare(sql).run(...binds); },
+      };
+      return stmt;
+    },
+  };
+  const feed = (sev, days) => ({ severity: sev, check: 'feed', detail: `obp_inventory last snapshot 2026-09-19, ${days} days old` });
+  const d1 = await rememberFindings(hon, { findings: [feed('warn', 2)] }, '2026-09-21');
+  assert.equal(d1.fresh.length, 1);
+  const d2 = await rememberFindings(hon, { findings: [feed('warn', 3)] }, '2026-09-22');
+  assert.equal(d2.fresh.length, 0, 'same warning, same finding');
+  const d3 = await rememberFindings(hon, { findings: [feed('critical', 4)] }, '2026-09-23');
+  assert.equal(d3.fresh.length, 1, 'warn -> critical is mailed as new');
+  assert.ok(d3.fresh[0].escalated, 'and marked as an escalation');
+  const d4 = await rememberFindings(hon, { findings: [feed('critical', 5)] }, '2026-09-24');
+  assert.equal(d4.fresh.length, 0);
+  assert.equal(d4.reminders.length, 0);
+  // Night 7 after the escalation mail (09-30) is missed entirely; night 8 must still remind.
+  const d8 = await rememberFindings(hon, { findings: [feed('critical', 12)] }, '2026-10-01');
+  assert.equal(d8.reminders.length, 1, 'eight days after the last mail: reminded, not skipped to day 14');
+  const d9 = await rememberFindings(hon, { findings: [feed('critical', 13)] }, '2026-10-02');
+  assert.equal(d9.reminders.length, 0, 'and not again the next night');
+  console.log('ok - watchdog memory: an escalation is news; reminders count from the last mail');
+}
+
 // ---- Delivery: Monday's emails are checked against cims-mail's log ----
 {
   const mailRows = [

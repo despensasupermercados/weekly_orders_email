@@ -155,12 +155,20 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
           `(e.g. "${String(unknown[0].description).slice(0, 60)}") - colour completeness not checked`);
       } else if (missing.length) {
         const held = (c) => (on_hand && Number.isFinite(Number(on_hand[c])) ? Number(on_hand[c]) : null);
-        const bare = missing.filter((c) => held(c) === null || held(c) <= 0);
+        // A NULL ON-HAND IS NOT "NONE ON BOARD". Unread and empty are both
+        // critical, but the words must not claim a figure that was not read.
+        const bare = missing.filter((c) => held(c) !== null && held(c) <= 0);
+        const unread = missing.filter((c) => held(c) === null);
         const stocked = missing.filter((c) => held(c) > 0);
         if (bare.length) {
           say('MISSING_COLOUR', 'critical',
             `toner ordered for ${[...present].sort().join(', ')} but not ${bare.join(', ')} - ` +
-            (on_hand ? `none on board - ` : '') + `the press stops when the first of those runs out`);
+            `none on board - the press stops when the first of those runs out`);
+        }
+        if (unread.length) {
+          say('MISSING_COLOUR', 'critical',
+            `toner ordered for ${[...present].sort().join(', ')} but not ${unread.join(', ')} - ` +
+            `on-hand not read for ${unread.join(', ')} - the press stops when the first of those runs out`);
         }
         if (stocked.length) {
           say('MISSING_COLOUR', 'warn',
@@ -248,6 +256,7 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
       if (!colour) continue;
       if (!onHandByShip.has(row.ship)) onHandByShip.set(row.ship, {});
       const m = onHandByShip.get(row.ship);
+      if (row.on_hand == null || row.on_hand === '') continue; // absent, not zero
       m[colour] = (m[colour] || 0) + (Number(row.on_hand) || 0);
     }
   } catch (_) { /* no on-hand read: the rule falls back to critical, as before */ }

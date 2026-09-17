@@ -395,3 +395,58 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   assert.ok(!sent.some((m) => /^Orders due this week/.test(m.subject)), 'the fleet list is NOT sent by the monthly chase');
   console.log('ok - monthly chase: the 2nd-of-month cron mails every ship out of compliance, one each, cc Ray, and nobody else');
 }
+
+
+// REVIEW OF 17 Sep 2026. (1) One ship's transport error must not end the
+// chase for the ships after it. (2) If the schedule judgement did not run,
+// the chase row is given back to the queue, not consumed as "nobody missing".
+{
+  sent.length = 0; waits.length = 0; logged.length = 0;
+  const queue = [{ id: 20, ship: '*', to_json: null, cc_json: null, note: null, kind: 'chase' }];
+  const updates = [];
+  const mkQueued = (throwOnSchedule) => ({
+    prepare(sql) {
+      const inner = fakeDb.prepare(sql);
+      const stmt = {
+        bind: (...a) => { stmt._binds = a; return stmt; },
+        run: async () => {
+          if (/result = 'claimed'/.test(sql)) { const row = queue.find((q) => q.id === stmt._binds[0]); const ok = Boolean(row && !row.claimed); if (ok) row.claimed = true; return { success: true, meta: { changes: ok ? 1 : 0 } }; }
+          if (/UPDATE weekly_send_request SET done_at = NULL/.test(sql)) { updates.push(['unclaim', ...stmt._binds]); const row = queue.find((q) => q.id === stmt._binds[0]); if (row) row.claimed = false; return { success: true }; }
+          if (/UPDATE weekly_send_request/.test(sql)) { updates.push(['done', ...stmt._binds]); queue.length = 0; }
+          return inner.run();
+        },
+        first: inner.first,
+        all: async () => {
+          if (throwOnSchedule && /END\) upcoming/.test(sql)) throw new Error('D1_ERROR: too many requests');
+          return /FROM weekly_send_request/.test(sql) ? { results: queue.slice() } : inner.all();
+        },
+      };
+      return stmt;
+    },
+  });
+  const base = {
+    ...env, SEND_TO_FLEET: 'true', FLEET_TO: 'onboardsupport@example.com', SHIP_CC: 'ray@example.com', REPLY_TO: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nIcon = ic_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
+  };
+  // (2) first: the judgement throws -> row un-claimed, nothing sent.
+  await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, { ...base, HON: mkQueued(true) }, ctx);
+  await Promise.all(waits);
+  assert.equal(sent.length, 0, 'nothing chased when the judgement did not run');
+  assert.ok(updates.some((u) => u[0] === 'unclaim' && u[1] === 20 && /schedule status check did not run/.test(u[2])), `row given back with the reason: ${JSON.stringify(updates)}`);
+  assert.equal(queue.length, 1, 'and it is still pending');
+  // (1) then: Explorer's send throws, Icon is still chased.
+  updates.length = 0; waits.length = 0;
+  const flaky = { ...base, HON: mkQueued(false), MAILER: { fetch: async (_u, init) => {
+    const b = JSON.parse(init.body);
+    if (/^Explorer:/.test(b.subject)) throw new Error('transport reset');
+    sent.push(b); return new Response(JSON.stringify({ ok: true, id: 'x' }), { status: 200 });
+  } } };
+  await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, flaky, ctx);
+  await Promise.all(waits);
+  assert.deepEqual(sent.map((m) => m.subject), ['Icon: send your Ordering Schedule file within 24 hours'], 'the ship after the failure is still mailed');
+  assert.ok(sent[0].idempotencyKey && /^chase:20:icon$/.test(sent[0].idempotencyKey), `each send carries an idempotency key: ${sent[0].idempotencyKey}`);
+  const done = updates.find((u) => u[0] === 'done');
+  assert.ok(done && /"count":1,"of":2/.test(done[2]), `the row records 1 of 2: ${done && done[2]}`);
+  assert.ok(logged.length, 'and the run is logged');
+  console.log('ok - chase queue: one ship\'s transport error does not stop the rest; a failed judgement gives the row back');
+}

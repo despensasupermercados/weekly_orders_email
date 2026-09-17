@@ -126,8 +126,10 @@ export async function unscheduledGaps(hon, today, opts = {}) {
       FROM ${src.intransit.table} t
      WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
        AND ${src.intransit.etaOk('t')}
-       AND t.ship NOT IN (SELECT DISTINCT ship FROM schedule_order WHERE ${ELIGIBLE})
-     ORDER BY t.ship, date`).all()).results || [];
+       -- a USABLE schedule: an eligible row still ahead. A ship whose schedule
+       -- ended is no better off than one that never sent one (review, 17 Sep 2026).
+       AND t.ship NOT IN (SELECT DISTINCT ship FROM schedule_order WHERE ${ELIGIBLE} AND due_date >= ?1)
+     ORDER BY t.ship, date`).bind(today).all()).results || [];
 
   if (!rows.length) {
     return {

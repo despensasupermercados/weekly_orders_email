@@ -127,3 +127,14 @@ console.log('ok - fleet: a ship whose only finding is a stockout is planned, add
   assert.equal(plan2.sendable[0].rows.length, 0, 'with no voyage rows - the renderer draws the ask from opts');
   console.log('ok - fleet: a missing ordering schedule alone puts a ship on the send list');
 }
+
+
+// REVIEW OF 17 Sep 2026: a THIRD entry for a duplicated ship must not quietly win.
+{
+  const { parseFleetMap } = await import('../src/lib/fleet.js');
+  const { map, bad } = parseFleetMap('Apex = a@example.com\nApex = b@example.com\nApex = c@example.com\nIcon = ic@example.com');
+  assert.ok(!map.has('apex'), 'every Apex entry is ignored');
+  assert.ok(map.has('icon'));
+  assert.equal(bad.filter((b) => /Apex/.test(b)).length, 2, 'the second and third entries are both reported');
+  console.log('ok - fleet map: a duplicated ship stays unaddressable however many entries it has');
+}

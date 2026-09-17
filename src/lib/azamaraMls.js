@@ -35,8 +35,9 @@ export function toIso(v) {
   if (isFinite(n) && n > 20000 && n < 80000) {
     return new Date(Date.UTC(1899, 11, 30) + n * 86400000).toISOString().slice(0, 10);
   }
-  const d = new Date(s);
-  return isNaN(d) ? null : d.toISOString().slice(0, 10);
+  // No Date(s) fallback: "2-Oct" became 2001-10-02 and "2026" became
+  // 2026-01-01 (review, 17 Sep 2026). A date we cannot read is null.
+  return null;
 }
 
 // ---------- HTML body path ----------
@@ -54,7 +55,7 @@ export function rowsFromHtml(html) {
       const inner = td[2] || '';
       const text = norm(
         inner.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
-             .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+             .replace(/&nbsp;|&#160;|&#xa0;|&ensp;|&emsp;|&thinsp;|&#8203;|&#x200b;/gi, ' ').replace(/&amp;/gi, '&')
       );
       const bg = (attrs.match(/background(?:-color)?:\s*([^;"']+)/i) || [])[1] || '';
       cells.push({ text, green: GREEN.test(bg), red: RED_FONT.test(attrs) || RED_FONT.test(inner) });
@@ -148,7 +149,10 @@ export function parseAzamaraRows(rows) {
       const t = port; port = country; country = t;
     }
 
-    const poNum = norm(po && po.text);
+    // A PO is letters or digits; an entity or punctuation left in a blank
+    // cell is not a PO and must not read as "raised".
+    const poRaw = norm(po && po.text);
+    const poNum = /[A-Za-z0-9]/.test(poRaw) ? poRaw : '';
     out.push({
       ship,
       po_number: poNum || null,

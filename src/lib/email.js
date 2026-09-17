@@ -514,6 +514,7 @@ const SCHEDULE_LABEL = {
   [STATUS.IMAGE]: 'sent a picture, not the file',
   [STATUS.UNREADABLE]: 'file could not be read',
   [STATUS.UNMATCHED]: 'file has no ship name',
+  [STATUS.WRONGTYPE]: 'sent a PDF, not the Excel file',
   [STATUS.STALE]: 'schedule has ended',
 };
 function scheduleHtml(schedules, forShip, shipName) {

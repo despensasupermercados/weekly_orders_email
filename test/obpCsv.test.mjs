@@ -260,3 +260,22 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.ok(/column\(s\) ShipProvDate not in the header/.test(r5.refused[0] || ''), r5.refused[0]);
   console.log('ok - obp csv: absent is null not zero; a renamed, blank or all-zero Quantity column is refused by name');
 }
+
+
+// REVIEW OF 17 Sep 2026: (1) "OBP" in a subject plus any .csv is NOT the feed;
+// (2) a mail with the inventory file only must not re-stamp the whole mirror
+// in-transit snapshot as today's CSV copy.
+{
+  assert.ok(!isObpCsvMail('ships.csv', 'OBP / Azamara MLS Sept'), 'only the three export names identify the feed');
+  assert.ok(isObpCsvMail('OnboardInventory.csv', 'anything'));
+  const invOnly = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) invOnly.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', 3));
+  const r = await ingestObpCsv(hon, [{ filename: CSV_FILES.inventory, content: invOnly.join('\r\n') }], '2026-09-18');
+  assert.equal(r.refused.length, 0, r.refused.join('; '));
+  assert.ok(r.inventory > 0);
+  assert.equal(r.intransit, 0, 'no in-transit file, nothing written');
+  assert.ok(r.filled && (r.filled.intransit === null || r.filled.intransit === 0), `the in-transit table is not filled from the mirror: ${JSON.stringify(r.filled)}`);
+  const trLatest = await hon.prepare('SELECT MAX(snapshot_date) d FROM weekly_obp_intransit').first();
+  assert.notEqual(trLatest && trLatest.d, '2026-09-18', 'yesterday\'s in-transit copy stays the latest');
+  console.log('ok - obp csv: strict file-name identity; an inventory-only mail leaves the in-transit copy alone');
+}

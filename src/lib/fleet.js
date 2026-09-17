@@ -29,6 +29,7 @@ export function normShip(name) {
 // maintains it.
 export function parseFleetMap(text) {
   const map = new Map();
+  const dupes = new Set();
   const bad = [];
   for (const raw of String(text || '').split(/[;\n]+/)) {
     const line = raw.trim();
@@ -48,9 +49,14 @@ export function parseFleetMap(text) {
     // case one crew would receive the other crew's orders. Refuse both, report
     // both, and let the ship fall through to "unaddressable", which is loud.
     const key = normShip(ship);
+    if (dupes.has(key)) {
+      bad.push(`${line}   << duplicate - ALL entries for this ship IGNORED`);
+      continue;
+    }
     if (map.has(key)) {
       bad.push(`${line}   << duplicate of "${map.get(key).ship}" - BOTH IGNORED`);
       map.delete(key);
+      dupes.add(key); // a third entry must not quietly win
       continue;
     }
     map.set(key, { ship, to: addrs });

@@ -119,10 +119,13 @@ export const num = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-export function isObpCsvMail(names, subject = '') {
+// The three file names are the identity, nothing looser: "OBP" in a subject
+// plus any .csv once routed an Azamara mail into this path and lost its MLS
+// table (review, 17 Sep 2026). The subject is accepted for compatibility and
+// ignored.
+export function isObpCsvMail(names, _subject = '') {
   const n = String(names || '').toLowerCase();
-  return Object.values(CSV_FILES).some((f) => n.includes(f)) ||
-    (/\bobp\b/i.test(String(subject || '')) && /\.csv\b/i.test(n));
+  return Object.values(CSV_FILES).some((f) => n.includes(f));
 }
 
 export function mapInventory(rows, snapshotDate) {
@@ -207,27 +210,35 @@ const TR_COLS = ['ship', 'part_number', 'description', 'qty', 'po_number', 'vend
 // marked 'mirror-fill'. On a complete export this writes nothing. On 16 Sep
 // 2026 it is what made a half-file (the connector cuts at 200,000 characters)
 // worth loading at all: 22 ships fresh, the rest as good as before.
-export async function fillFromMirror(hon, snapshotDate) {
+// ONLY THE TABLE THAT WAS WRITTEN THIS RUN IS FILLED. A mail with the
+// inventory file but a missing or refused in-transit file used to fill the
+// in-transit table for EVERY ship from the stale mirror, re-stamped today, so
+// the readers dropped yesterday's real CSV lines for the frozen ones (review,
+// 17 Sep 2026). And a ship that IS in the export but has nothing in transit
+// is not "uncovered": coverage is the inventory file's ship set when it was
+// written, not the in-transit file's.
+export async function fillFromMirror(hon, snapshotDate, wrote = { inventory: true, intransit: true }) {
   // The mirror's optional columns are cims-hon's to name; read them only if
   // they exist rather than fail the whole fill over a description.
   const col = (cols, name) => (cols && cols.has(name) ? `m.${name}` : 'NULL');
   const ic = await columnsOf(hon, 'obp_inventory');
   const tc = await columnsOf(hon, 'obp_intransit');
   if (!ic || !tc) return { inventory: 0, intransit: 0, reason: 'mirror tables not found' };
-  const inv = await hon.prepare(
+  const inv = !wrote.inventory ? null : await hon.prepare(
     `INSERT OR REPLACE INTO ${CSV_INVENTORY} (ship, part_number, description, category, on_hand, update_date, snapshot_date, source)
      SELECT m.ship, m.part_number, ${col(ic, 'description')}, ${col(ic, 'category')}, m.on_hand, NULL, ?1, 'mirror-fill'
        FROM obp_inventory m
       WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
         AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INVENTORY} WHERE snapshot_date = ?1)`).bind(snapshotDate).run();
-  const tr = await hon.prepare(
+  const coverage = wrote.inventory ? CSV_INVENTORY : CSV_INTRANSIT;
+  const tr = !wrote.intransit ? null : await hon.prepare(
     `INSERT INTO ${CSV_INTRANSIT} (ship, part_number, description, qty, po_number, vendor_invoice, voyage, port, eta_date, order_date, snapshot_date, source)
      SELECT m.ship, m.part_number, ${col(tc, 'description')}, m.qty, ${col(tc, 'po_number')}, ${col(tc, 'vendor_invoice')}, NULL, NULL,
             CASE WHEN m.eta GLOB '[0-9]*' THEN date('1899-12-30', '+' || CAST(m.eta AS INTEGER) || ' days') END,
             NULL, ?1, 'mirror-fill'
        FROM obp_intransit m
       WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INTRANSIT} WHERE snapshot_date = ?1)`).bind(snapshotDate).run();
+        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${coverage} WHERE snapshot_date = ?1 AND source = 'csv')`).bind(snapshotDate).run();
   const n = (r) => (r && r.meta && typeof r.meta.changes === 'number') ? r.meta.changes : (r && typeof r.changes === 'number' ? r.changes : null);
   return { inventory: n(inv), intransit: n(tr) };
 }
@@ -293,7 +304,7 @@ export async function ingestObpCsv(hon, attachments, today) {
     }
   }
   if (out.inventory || out.intransit) {
-    try { out.filled = await fillFromMirror(hon, today); }
+    try { out.filled = await fillFromMirror(hon, today, { inventory: Boolean(out.inventory), intransit: Boolean(out.intransit) }); }
     catch (e) { out.refused.push(`mirror fill threw: ${String((e && e.message) || e)}`); }
   }
   return out;
