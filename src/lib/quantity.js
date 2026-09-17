@@ -198,6 +198,9 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
 const DESC_COLS = ['item_description', 'description', 'item', 'part_description', 'part', 'material_description'];
 const QTY_COLS = ['qty', 'quantity', 'order_qty', 'qty_ordered', 'open_qty'];
 
+// D1's limit is 100 bound variables per statement; stay well under it.
+export const BIND_CHUNK = 40;
+
 export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   // The fresher copy of the in-transit list - see obpSource.js.
   const src = await obpSource(hon);
@@ -224,33 +227,43 @@ export async function quantityFindings(hon, states, rules = DEFAULT_RULES) {
   const ETA = src.intransit.land('i');
   const loadings = [...new Set(ordered.map((o) => o.loading_delivery_date))];
   const ships = [...new Set(ordered.map((o) => o.ship))];
-  // Plain placeholders rather than json_each: the list is at most a few dozen
-  // values, and a portable query is one fewer thing that can be unavailable at
-  // 02:00 with nobody watching.
+  // Plain placeholders rather than json_each, BUT NEVER MORE THAN D1 ALLOWS:
+  // 100 bound variables per statement. Binding every loading date and every
+  // ship at once passed that on 17 Sep 2026 ("too many SQL variables") and
+  // the whole check was blocked. Ships go in chunks; the landing dates are
+  // filtered here, where a Set costs nothing.
   const marks = (n) => Array(n).fill('?').join(',');
-  const sql = `
+  const wanted = new Set(loadings);
+  const rows = [];
+  for (let i = 0; i < ships.length; i += BIND_CHUNK) {
+    const chunk = ships.slice(i, i + BIND_CHUNK);
+    const sql = `
     SELECT i.ship AS ship, ${ETA} AS loading, i.${descCol} AS description
            ${qtyCol ? `, i.${qtyCol} AS qty` : ', NULL AS qty'}
       FROM ${src.intransit.table} i
      WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
-       AND ${ETA} IN (${marks(loadings.length)})
-       AND i.ship IN (${marks(ships.length)})`;
-
-  const r = await hon.prepare(sql).bind(...loadings, ...ships).all();
-  const rows = r.results || [];
+       AND i.ship IN (${marks(chunk.length)})`;
+    const r = await hon.prepare(sql).bind(...chunk).all();
+    for (const row of r.results || []) if (wanted.has(row.loading)) rows.push(row);
+  }
 
   // WHAT IS ON BOARD, per ship and colour, from the latest inventory snapshot.
   // Without this the rule compares an order line to nothing and calls every
   // correctly-sized top-up a missing colour.
   const onHandByShip = new Map();
   try {
-    const inv = await hon.prepare(
-      `SELECT i.ship AS ship, p.description AS description, i.on_hand AS on_hand
-         FROM ${src.inventory.table} i JOIN par p ON p.ship = i.ship AND p.part_number = i.part_number
-        WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
-          AND i.ship IN (${marks(ships.length)})
-          AND p.description LIKE '%TONER%'`).bind(...ships).all();
-    for (const row of inv.results || []) {
+    const invRows = [];
+    for (let i = 0; i < ships.length; i += BIND_CHUNK) {
+      const chunk = ships.slice(i, i + BIND_CHUNK);
+      const inv = await hon.prepare(
+        `SELECT i.ship AS ship, p.description AS description, i.on_hand AS on_hand
+           FROM ${src.inventory.table} i JOIN par p ON p.ship = i.ship AND p.part_number = i.part_number
+          WHERE i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
+            AND i.ship IN (${marks(chunk.length)})
+            AND p.description LIKE '%TONER%'`).bind(...chunk).all();
+      invRows.push(...(inv.results || []));
+    }
+    for (const row of invRows) {
       if (!isColourCartridge(row.description)) continue;
       const colour = colourOf(row.description);
       if (!colour) continue;

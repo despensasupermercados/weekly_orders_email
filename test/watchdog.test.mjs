@@ -47,7 +47,7 @@ const base = [
   ['Azamara MLS REFUSED%', []],
   // The mail route. In the clean fixture an MLS arrived recently and mail is
   // reaching the Worker, so check 9 stays quiet.
-  ["note LIKE 'Azamara MLS:%'", { ts: '2026-09-01 08:00:00' }],
+  ["note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'", { ts: '2026-09-01 08:00:00' }],
   ["sender NOT IN ('cron', 'watchdog')", { n: 6, ts: '2026-09-01 08:00:00' }],
   // The ship-name join. Both sides spell Summit the same way, so nothing is
   // unmatched and the check stays quiet.
@@ -163,7 +163,7 @@ assert.ok(blind.findings.some((f) => f.check === 'anomaly_blocked'),
 // A feed that has NEVER delivered must not read as a feed with nothing to say.
 const noRoute = await runWatchdog(
   { HON: fakeDb(withRow("sender NOT IN ('cron', 'watchdog')", { n: 0, ts: null })
-      .map(([f, v]) => (f === "note LIKE 'Azamara MLS:%'" ? [f, { ts: null }] : [f, v]))) },
+      .map(([f, v]) => (f === "note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'" ? [f, { ts: null }] : [f, v]))) },
   TODAY, { repair: false });
 const route = noRoute.findings.find((f) => f.check === 'mail_route');
 assert.ok(route, 'a Worker that has never received mail must say so');
@@ -175,7 +175,7 @@ assert.ok(/azamara@cims\.work/.test(route.detail),
 // parses as an MLS: the route is fine and the identity test or the format is
 // not. Telling Miguel to go fix a Cloudflare rule here would waste the day.
 const noMls = await runWatchdog(
-  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'", { ts: null })) }, TODAY, { repair: false });
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'", { ts: null })) }, TODAY, { repair: false });
 const parse = noMls.findings.find((f) => f.check === 'mail_route');
 assert.ok(parse, 'mail that never parses as an MLS must be reported');
 assert.ok(!/Email Routing/.test(parse.detail),
@@ -184,7 +184,7 @@ assert.ok(/ingest_log/.test(parse.detail), 'it must point at the rejected-mail l
 
 // Ray publishes monthly. Silence past that window is the feed stopping.
 const staleMls = await runWatchdog(
-  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'", { ts: '2026-06-01 08:00:00' })) },
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'", { ts: '2026-06-01 08:00:00' })) },
   TODAY, { repair: false });
 assert.ok(staleMls.findings.some((f) => f.check === 'mail_route' && f.detail.includes('101 days ago')),
   'an MLS that stopped arriving must be reported with its age');
@@ -192,7 +192,7 @@ assert.ok(staleMls.findings.some((f) => f.check === 'mail_route' && f.detail.inc
 // ...and a publication inside the window is silence, not a finding. A check
 // that fires on a healthy month is filtered within two.
 const freshMls = await runWatchdog(
-  { HON: fakeDb(withRow("note LIKE 'Azamara MLS:%'",
+  { HON: fakeDb(withRow("note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'",
     { ts: '2026-08-20 08:00:00' })) }, TODAY, { repair: false });
 assert.ok(!freshMls.findings.some((f) => f.check === 'mail_route'),
   `${AZAMARA_MAX_SILENCE_DAYS} days is the window, and 21 is inside it`);
