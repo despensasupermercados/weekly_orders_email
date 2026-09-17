@@ -2,7 +2,7 @@
 // Runs the Azamara parser against a faithful reconstruction of the pasted table
 // from Ray's "Azamara MLS - September 2026" email, colours included.
 
-import { rowsFromHtml, parseAzamaraRows, isAzamaraMls } from '../src/lib/azamaraMls.js';
+import { rowsFromHtml, parseAzamaraRows, isAzamaraMls, toIso } from '../src/lib/azamaraMls.js';
 import assert from 'node:assert';
 
 const G = 'style="background:#C6EFCE"';
@@ -54,3 +54,13 @@ assert.equal(rows.filter((r) => r.po_state === 'none').length, 6, 'six voyages w
 assert.equal(rows.find((r) => r.ship === 'Journey').due_date, '2026-10-02', 'US date order');
 
 console.log(`ok - ${rows.length} rows, ${rows.filter((r) => r.po_state === 'none').length} with no PO`);
+
+
+// REVIEW OF 17 Sep 2026: a date we cannot read is null, never a guess.
+assert.equal(toIso('2-Oct'), null, '"2-Oct" used to become 2001-10-02');
+assert.equal(toIso('2026'), null);
+assert.equal(toIso('12'), null);
+assert.equal(toIso('10/2/2026'), '2026-10-02');
+assert.equal(toIso('2026-10-02'), '2026-10-02');
+assert.equal(toIso(46281), new Date(Date.UTC(1899, 11, 30) + 46281 * 86400000).toISOString().slice(0, 10), 'Excel serial');
+console.log('ok - azamara toIso: no guessed dates');

@@ -116,3 +116,16 @@ console.log('     and a waste box no longer masks the colour it was hiding');
   assert.equal(unknown[0].severity, 'critical');
   console.log('ok - colour completeness reads on-hand: stocked colour is a warn with the figure, none aboard is critical');
 }
+
+
+// REVIEW OF 17 Sep 2026: an on-hand that was not read is not "none on board".
+{
+  const r = analyseOrder({ ship: 'Apex', loading_delivery_date: '2026-10-09', lines: [toner('K'), toner('M'), toner('Y')], on_hand: { magenta: 2 } });
+  const mc = r.findings ? r.findings.filter((f) => f.code === 'MISSING_COLOUR') : r.filter((f) => f.code === 'MISSING_COLOUR');
+  assert.ok(mc.some((f) => f.severity === 'critical' && /on-hand not read for cyan/.test(f.detail)), `unread is named as unread: ${JSON.stringify(mc)}`);
+  assert.ok(!mc.some((f) => /none on board/.test(f.detail)), 'and never called empty');
+  const z = analyseOrder({ ship: 'Apex', loading_delivery_date: '2026-10-09', lines: [toner('K'), toner('M'), toner('Y')], on_hand: { cyan: 0 } });
+  const mz = z.findings ? z.findings.filter((f) => f.code === 'MISSING_COLOUR') : z.filter((f) => f.code === 'MISSING_COLOUR');
+  assert.ok(mz.some((f) => /none on board/.test(f.detail)), 'a real zero is still none on board');
+  console.log('ok - quantity: unread on-hand is said to be unread, a real zero is empty');
+}

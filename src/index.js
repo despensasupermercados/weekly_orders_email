@@ -82,7 +82,11 @@ async function readAll(stream) {
 // replyTo: where a crew's reply lands. The mail is FROM cims@cims.work, which
 // no person reads; a printer who hits reply must reach Ray (REPLY_TO), the one
 // person who can answer. Sent only when set, so the watchdog digest is unchanged.
-async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc = [], replyTo = null) {
+// idempotencyKey: cims-mailer keeps mail_log.idempotency_key UNIQUE, so a
+// re-fired cron or a retried queue row cannot mail the same ship twice for
+// the same reason on the same day (review of 17 Sep 2026: the Monday path
+// had no such guard).
+async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc = [], replyTo = null, idempotencyKey = null) {
   if (!env.MAILER) return { sent: false, reason: 'MAILER service binding not configured' };
   const res = await env.MAILER.fetch('https://mailer/send', {
     method: 'POST',
@@ -97,6 +101,7 @@ async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc
       // post the same body they always did.
       ...(cc && cc.length ? { cc } : {}),
       ...(replyTo ? { replyTo } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       subject,
       html,
       critical: true,
@@ -166,7 +171,7 @@ async function runSendRequests(env, today) {
     `SELECT id, ship, to_json, cc_json, note, kind FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
   if (!pending.length) return 0;
 
-  const { rows, act, gaps, runsOut, deliveries, schedules } = await buildWeekly(env, today);
+  const { rows, act, gaps, runsOut, deliveries, schedules, schedulesRan, schedulesReason } = await buildWeekly(env, today);
   const ask = needsSchedule(schedules);
   const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
   const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -190,14 +195,14 @@ async function runSendRequests(env, today) {
       const missing = ask.find((s) => normShip(s.ship) === key);
       if (!missing) return { sent: false, to, reason: `${shipName} is not missing its Ordering Schedule, not chased` };
       const r = await send(env, to, chaseSubject(shipName),
-        renderChase({ ship: shipName, missing: ask, sentAtMs }), CHASE_TEMPLATE, cc, replyTo);
+        renderChase({ ship: shipName, missing: ask, sentAtMs }), CHASE_TEMPLATE, cc, replyTo, `chase:${q.id}:${key}`);
       return { ...r, to };
     }
     const shipRows = group ? group.rows : [];
     const r = await send(env, to,
       `${shipName}: ${shipSubject(shipName, { rows: shipRows, runsOut, gaps, ask })}`,
       renderWeekly(shipRows, rows, today, { audience: 'ship', ship: shipName, gaps, runsOut, deliveries, schedules }),
-      'orders-due-weekly', cc, replyTo);
+      'orders-due-weekly', cc, replyTo, `req:${q.id}:${key}`);
     return { ...r, to };
   }
 
@@ -215,16 +220,29 @@ async function runSendRequests(env, today) {
     const lines = [];
     try {
       if (!SEND_KINDS.includes(q.kind || 'weekly')) throw new Error(`unknown kind '${q.kind}'`);
+      if (q.ship === '*' && kind !== 'chase') throw new Error("ship '*' is only for kind 'chase'");
+      // A CHASE NEEDS THE JUDGEMENT TO HAVE RUN. If the schedule check threw,
+      // "nobody is missing" is not known, it is unknown: give the row back to
+      // the queue (un-claim it) and say why, instead of consuming it as done.
+      if (kind === 'chase' && !schedulesRan) {
+        await hon.prepare(`UPDATE weekly_send_request SET done_at = NULL, result = ?2 WHERE id = ?1`)
+          .bind(q.id, `waiting: schedule status check did not run (${String(schedulesReason || 'unknown').slice(0, 200)})`).run();
+        await logIngest(env, 'cron', `on-demand chase #${q.id} ${q.ship}: schedule status check did not run (${schedulesReason}); row left pending`);
+        continue;
+      }
       const targets = q.ship === '*'
         ? (kind === 'chase' ? ask.map((s) => s.ship) : [])
         : [q.ship];
-      if (q.ship === '*' && kind !== 'chase') throw new Error("ship '*' is only for kind 'chase'");
       const results = [];
       for (const ship of targets) {
-        const r = await sendOne(q, ship, kind);
+        // EVERY SHIP IS ISOLATED, as on a Monday: one transport error must not
+        // end the month's chase for the ships after it.
+        let r;
+        try { r = await sendOne(q, ship, kind); }
+        catch (e) { r = { sent: false, to: [], threw: String((e && e.message) || e).slice(0, 200) }; }
         if (r.sent) sent++;
         results.push({ ship, ...r });
-        lines.push(`${ship} -> ${(r.to || []).join(', ') || '(no address)'}: ${r.sent ? 'sent' : 'NOT SENT ' + (r.reason || r.error || JSON.stringify(r))}`);
+        lines.push(`${ship} -> ${(r.to || []).join(', ') || '(no address)'}: ${r.sent ? 'sent' : 'NOT SENT ' + (r.reason || r.threw || r.error || JSON.stringify(r))}`);
       }
       result = (q.ship !== '*' && targets.length === 1)
         ? results[0]
@@ -233,11 +251,19 @@ async function runSendRequests(env, today) {
     } catch (e) {
       result = { sent: false, threw: String((e && e.message) || e).slice(0, 300) };
     }
-    await hon.prepare(`UPDATE weekly_send_request SET done_at = datetime('now'), result = ?2 WHERE id = ?1`)
-      .bind(q.id, JSON.stringify(result).slice(0, 600)).run();
+    // The record must be written even if D1 hiccups: a row left 'claimed'
+    // with nothing said is the one outcome the night check has to catch
+    // (queue_stuck), so at least name it in the log.
+    try {
+      await hon.prepare(`UPDATE weekly_send_request SET done_at = datetime('now'), result = ?2 WHERE id = ?1`)
+        .bind(q.id, JSON.stringify(result).slice(0, 600)).run();
+    } catch (e) {
+      lines.push(`(result could not be recorded: ${String((e && e.message) || e).slice(0, 120)})`);
+    }
     await logIngest(env, 'cron',
       `on-demand ${kind} send #${q.id} ${q.ship}: ` +
       (lines.length ? lines.join(' | ') : (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`)) +
+      (result.threw ? ` | THREW ${result.threw}` : '') +
       (q.note ? ` | ${q.note}` : ''));
   }
   return sent;
@@ -295,8 +321,12 @@ async function buildWeekly(env, today) {
   // crew can fix this one themselves, so the email asks them, with the reason
   // the last attempt failed. A throw here loses a section, never the email.
   let schedules = [];
+  let schedulesRan = false;
+  let schedulesReason = null;
   try {
     const s = await scheduleStatuses(env.HON, env.FLEET_MAP, today);
+    schedulesRan = Boolean(s.ran);
+    schedulesReason = s.reason || null;
     if (s.ran) schedules = s.statuses;
     else await logIngest(env, 'cron', `schedule status check did not run: ${s.reason}`);
   } catch (e) {
@@ -305,7 +335,7 @@ async function buildWeekly(env, today) {
 
   const checkedShips = [...checked];
   return {
-    rows, act, gaps, runsOut, deliveries, schedules, checked: checkedShips,
+    rows, act, gaps, runsOut, deliveries, schedules, schedulesRan, schedulesReason, checked: checkedShips,
     html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, schedules, checked: checkedShips }),
   };
 }
@@ -333,7 +363,14 @@ async function ingestEmail(message, env) {
     const subject = message.headers.get('subject') || '';
 
     let raw = '';
-    try { raw = new TextDecoder().decode(await readAll(message.raw)); } catch (_) { /* best effort */ }
+    try {
+      raw = new TextDecoder().decode(await readAll(message.raw));
+    } catch (e) {
+      // Not "best effort": an unread mail logged as a bad parse blames the
+      // sender for our failure. Say what happened and bounce it back.
+      await logIngest(env, message.from, `raw could not be read: ${String((e && e.message) || e).slice(0, 200)} - subject "${subject.slice(0, 90)}"`);
+      throw e;
+    }
 
     // DECODE BEFORE PARSING. Outlook sends quoted-printable or base64; handing
     // raw MIME to the HTML parser drops rows and writes nulls. See lib/mime.js.
@@ -508,9 +545,14 @@ export default {
         const subject = memory.fresh.length
           ? `Night check - ${memory.fresh.length} new${newCrit ? `, ${newCrit} need${newCrit === 1 ? 's' : ''} a human` : ''}`
           : `Night check - ${memory.reminders.length} still standing after a week`;
-        const r = await send(env, to, subject,
-          renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night');
-        if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
+        try {
+          const r = await send(env, to, subject,
+            renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night',
+            [], null, `night:${today}`);
+          if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
+        } catch (e) {
+          await logIngest(env, 'watchdog', `digest send THREW: ${String((e && e.message) || e)}`);
+        }
       })());
       return;
     }
@@ -580,8 +622,12 @@ export default {
         // THE SUBJECT LINE IS THE ONLY PART MOST PEOPLE READ. Counting
         // act.length alone printed "0 to fix" on a week carrying 39 stockouts
         // and 3 gaps - the email arguing against itself in the inbox list.
-        const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html, 'orders-due-weekly', [], replyTo);
-        if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+        try {
+          const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html, 'orders-due-weekly', [], replyTo, `weekly:${today}:dryrun`);
+          if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+        } catch (e) {
+          await logIngest(env, 'cron', `weekly send THREW: ${String((e && e.message) || e)}`);
+        }
       })());
       return;
     }
@@ -597,6 +643,17 @@ export default {
     // fleet list that goes to the supervisors, the subject line counts them,
     // and a log line names them - because the ships nobody can reach are the
     // ones most likely to miss a container.
+    // ONCE PER MONDAY. A re-delivered or re-fired cron must not mail 48 ships
+    // twice; the "weekly fleet send" line is written only after a live run.
+    try {
+      const done = await env.HON.prepare(
+        `SELECT 1 x FROM ingest_log WHERE source = ?1 AND sender = 'cron' AND note LIKE 'weekly fleet send:%' AND ts >= ?2 LIMIT 1`)
+        .bind(INGEST_SOURCE, today).first();
+      if (done && done.x) {
+        await logIngest(env, 'cron', `weekly fleet send already done today (${today}); this invocation sends nothing`);
+        return;
+      }
+    } catch (_) { /* no read = no evidence of a send; the idempotency key is the second guard */ }
     const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
     if (!plan.sendable.length) {
       await logIngest(env, 'cron',
@@ -626,7 +683,8 @@ export default {
             renderWeekly(group.rows, rows, today, { audience: 'ship', ship: group.ship, gaps, runsOut, deliveries, schedules }),
             'orders-due-weekly',
             shipCc,
-            replyTo
+            replyTo,
+            `weekly:${today}:${normShip(group.ship)}`
           );
           if (r.sent) sent++;
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
@@ -647,12 +705,14 @@ export default {
       const digestTo = fleetTo.length ? fleetTo : supervisors;
       if (!digestTo.length) await logIngest(env, 'cron', 'FLEET_TO and DRY_RUN_TO are both empty. Fleet list not sent.');
       if (digestTo.length) {
-        const unreachable = plan.unmapped.flatMap((g) => g.rows);
+        // Keyed on SHIPS, not voyage rows: a ship whose only finding is a
+        // stockout, a gap or a schedule ask has no rows and was going unnamed.
+        const unreachable = plan.unmapped;
         try {
           const r = await send(env, digestTo,
             `Orders due this week - ${todo} to fix, ${sent} of ${plan.sendable.length} ships mailed` +
             (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
-            html, 'orders-due-weekly', [], replyTo);
+            html, 'orders-due-weekly', [], replyTo, `weekly:${today}:fleet`);
           if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
         } catch (e) {
           await logIngest(env, 'cron', `weekly supervisor send THREW: ${String((e && e.message) || e)}`);

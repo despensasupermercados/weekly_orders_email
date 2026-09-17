@@ -33,6 +33,7 @@ export const STATUS = {
   IMAGE: 'image',           // a picture of the schedule, not the file
   UNREADABLE: 'unreadable', // the file was read and yielded no DG3 orders
   UNMATCHED: 'unmatched',   // the file could not be tied to a ship
+  WRONGTYPE: 'wrongtype',   // a PDF or other non-spreadsheet file
 };
 
 // What went wrong with one ingest-log line, or null if it read fine.
@@ -40,7 +41,11 @@ export function classifyNote(note) {
   const n = String(note || '');
   if (/could not map to a known ship/i.test(n)) return STATUS.UNMATCHED;
   if (/\b0 DG3 orders\b/.test(n)) return STATUS.UNREADABLE;
-  if (/no spreadsheet attachment/i.test(n)) return /image\//i.test(n) ? STATUS.IMAGE : STATUS.NOFILE;
+  if (/no spreadsheet attachment/i.test(n)) {
+    if (/\b0 attachments\b/.test(n)) return STATUS.NOFILE;
+    if (/image\//i.test(n)) return STATUS.IMAGE;
+    return STATUS.WRONGTYPE; // a PDF, a Word file, a CSV: a file, but not the one
+  }
   return null;
 }
 
@@ -52,8 +57,15 @@ export const CREW_LINE = {
   [STATUS.IMAGE]: 'You sent us a picture of the Ordering Schedule. We need the Excel file, not a picture.',
   [STATUS.UNREADABLE]: 'We got your Ordering Schedule file but we could not read it. Please send the original Excel file from your Inventory Manager, not a copy or a PDF.',
   [STATUS.UNMATCHED]: 'We got an Ordering Schedule file but it does not say which ship it is for.',
+  [STATUS.WRONGTYPE]: 'You sent us a PDF or another kind of file. We need the Excel file itself.',
   [STATUS.STALE]: 'Your Ordering Schedule has ended. We need the new one.',
 };
+
+// "... Beyond Ordering Schedule.xls → Beyond (via filename): ..." -> 'beyond'.
+export function mappedShip(note) {
+  const m = /→\s*([^(:→]+?)\s*\(via\b/.exec(String(note || ''));
+  return m ? normShip(m[1]) : null;
+}
 
 // Pure: ships [{ship, address}], schedule [{ship, upcoming, last_due}],
 // attempts [{sender, ts, note}] newest first.
@@ -66,12 +78,17 @@ export function judgeShips({ ships, schedule, attempts, today }) {
     const row = sched.get(key);
     const addr = String(s.address || '').toLowerCase();
     const nameRe = new RegExp(`\\b${s.ship.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    // By sender first, then by the ship's name in the line: Millennium's
-    // printer writes from celebritycruises.com while FLEET_MAP carries
-    // celebrity.com, and cims-hon names the ship it mapped the file to.
-    const mine = attempts.filter((a) =>
-      (addr && String(a.sender || '').toLowerCase() === addr) ||
-      nameRe.test(String(a.note || '')));
+    // A line cims-hon MAPPED to a ship ("... -> Beyond (via filename)") belongs
+    // to that ship only, whoever sent it: Ascent forwarding Beyond's file is
+    // Beyond's attempt, not Ascent's. Otherwise by sender, then by the ship's
+    // name in the line: Millennium's printer writes from celebritycruises.com
+    // while FLEET_MAP carries celebrity.com.
+    const mine = attempts.filter((a) => {
+      const n = String(a.note || '');
+      const to = mappedShip(n);
+      if (to) return to === key;
+      return (addr && String(a.sender || '').toLowerCase() === addr) || nameRe.test(n);
+    });
     const last = mine[0] || null;
     let status;
     let detail;
@@ -112,13 +129,18 @@ export async function scheduleStatuses(hon, fleetMapText, today) {
     const schedule = (await hon.prepare(
       `SELECT ship,
               SUM(CASE WHEN due_date >= ?1 AND ${ELIGIBLE} THEN 1 ELSE 0 END) upcoming,
-              MAX(due_date) last_due
+              MAX(CASE WHEN ${ELIGIBLE} THEN due_date END) last_due
          FROM schedule_order GROUP BY ship`).bind(today).all()).results || [];
-    // cims-hon's lines about schedule files, newest first. This Worker's own
-    // "not an Azamara MLS, ignored" lines mention nothing of the sort.
+    // cims-hon's lines about schedule files, newest first: source = 'email' is
+    // cims-hon's ingest. THIS WORKER'S OWN LINES ARE EXCLUDED ON PURPOSE - its
+    // chase-send line names every chased ship and says "schedule", and on
+    // 17 Sep 2026 it re-judged all six chased ships as "never sent" (found by
+    // the code review that night). A no-attachment line does not say
+    // "schedule" at all, so it is selected by its own prefix.
     const attempts = (await hon.prepare(
       `SELECT sender, ts, note FROM ingest_log
-        WHERE lower(note) LIKE '%schedule%'
+        WHERE source = 'email'
+          AND (lower(note) LIKE '%schedule%' OR note LIKE 'no spreadsheet attachment%')
           AND note NOT LIKE 'not an Azamara MLS%'
           AND ts >= date(?1, '-120 day')
         ORDER BY ts DESC LIMIT 400`).bind(today).all()).results || [];

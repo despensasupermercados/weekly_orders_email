@@ -4,7 +4,7 @@
 // they appeared on 9-13 Sep 2026, and that the ships who cannot be helped by
 // this ask (Azamara, hulls not in service) are never asked.
 
-import { judgeShips, classifyNote, STATUS, needsSchedule, CREW_LINE } from '../src/lib/scheduleStatus.js';
+import { judgeShips, classifyNote, STATUS, needsSchedule, CREW_LINE, mappedShip } from '../src/lib/scheduleStatus.js';
 import assert from 'node:assert';
 
 assert.equal(classifyNote('1 spreadsheet(s) — UPDATED _ Xcel Ordering Schedule.xls: schedule — could not map to a known ship, skipped'), STATUS.UNMATCHED);
@@ -63,3 +63,29 @@ for (const line of Object.values(CREW_LINE)) assert.ok(!/ingest|parse|null|row/i
 
 console.log('ok - schedule status: each ship is told why its last attempt failed, Azamara and');
 console.log('     out-of-service hulls are never asked, and the crew lines carry no jargon');
+
+
+// REVIEW OF 17 Sep 2026. (1) A line cims-hon mapped to a ship belongs to that
+// ship, whoever sent it; (2) a PDF is a wrong file, not "no file"; (3) the
+// mapping arrow is read exactly.
+{
+  assert.equal(mappedShip('1 spreadsheet(s) — Beyond Ordering Schedule Aug 19.xls → Beyond (via filename): 29 DG3 orders (9 upcoming) from 988 rows'), 'beyond');
+  assert.equal(mappedShip('1 spreadsheet(s) — SISO_Ordering Schedule.xls → Independence (via sender ID): 24 DG3 orders'), 'independence');
+  assert.equal(mappedShip('no spreadsheet attachment; 1 attachments: x.png:image/png'), null);
+  assert.equal(classifyNote('no spreadsheet attachment; 1 attachments: Ascent Ordering Schedule.pdf:application/pdf'), STATUS.WRONGTYPE);
+  assert.ok(CREW_LINE[STATUS.WRONGTYPE], 'the crew line exists for it');
+  const two = [
+    { ship: 'Ascent', address: 'at_printer@celebrity.com' },
+    { ship: 'Beyond', address: 'by_printer@celebrity.com' },
+  ];
+  const attempts = [
+    // Ascent's printer forwarded Beyond's file; cims-hon mapped it to Beyond and it read empty.
+    { sender: 'at_printer@celebrity.com', ts: '2026-09-16 18:00:00', note: '1 spreadsheet(s) — Beyond Ordering Schedule.xls → Beyond (via filename): 0 DG3 orders (0 upcoming) from 0 rows' },
+    { sender: 'at_printer@celebrity.com', ts: '2026-09-12 16:15:26', note: 'no spreadsheet attachment; 1 attachments: Updated Ordering Schedule CEL Ascent.png:image/png' },
+  ];
+  const out = judgeShips({ ships: two, schedule: [], attempts, today: '2026-09-17' });
+  const by = Object.fromEntries(out.map((s) => [s.ship, s]));
+  assert.equal(by.Beyond.status, STATUS.UNREADABLE, 'the mapped line is Beyond\'s attempt');
+  assert.equal(by.Ascent.status, STATUS.IMAGE, 'Ascent keeps its own last attempt, the picture');
+  console.log('ok - schedule status: a line mapped to a ship is that ship\'s attempt; a PDF is the wrong file, not no file');
+}

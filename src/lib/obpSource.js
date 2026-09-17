@@ -48,14 +48,25 @@ async function latest(db, table) {
 // day before beats it. The moment the workbook is really refreshed the
 // content differs, the mirror wins on date again, and the CSV copy steps
 // back until the next one arrives.
-async function frozen(db, table, col) {
+// The mirror's EFFECTIVE date: the first snapshot date of its current
+// content, i.e. the day it last actually changed. Comparing only the last two
+// snapshots was not enough (review, 17 Sep 2026): a mirror that really moved
+// on the 18th and was re-stamped unchanged on the 19th read as "frozen" and
+// lost to a CSV copy from the 16th, two days older than its content.
+async function effectiveDate(db, table, col) {
   try {
     const rows = (await db.prepare(
       `SELECT snapshot_date d, COUNT(*) n, ROUND(SUM(${col}), 2) s
-         FROM ${table} GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 2`).all()).results || [];
-    return rows.length === 2 && rows[0].n === rows[1].n && rows[0].s === rows[1].s;
+         FROM ${table} GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 60`).all()).results || [];
+    if (!rows.length) return null;
+    let eff = rows[0].d;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].n === rows[0].n && rows[i].s === rows[0].s) eff = rows[i].d;
+      else break;
+    }
+    return eff;
   } catch (_) {
-    return false;
+    return null;
   }
 }
 
@@ -65,11 +76,15 @@ export async function obpSource(hon) {
   const csvInv = (await columnsOf(hon, CSV_INVENTORY)) ? await latest(hon, CSV_INVENTORY) : null;
   const csvTr = (await columnsOf(hon, CSV_INTRANSIT)) ? await latest(hon, CSV_INTRANSIT) : null;
 
-  const mirrorInvFrozen = csvInv && mirrorInv && csvInv < mirrorInv ? await frozen(hon, 'obp_inventory', 'on_hand') : false;
-  const mirrorTrFrozen = csvTr && mirrorTr && csvTr < mirrorTr ? await frozen(hon, 'obp_intransit', 'qty') : false;
+  // A mirror stamped after the CSV copy only wins if its CONTENT changed
+  // after the CSV copy's date; a re-stamp of the same figures is not fresher.
+  const invEff = csvInv && mirrorInv && csvInv < mirrorInv ? (await effectiveDate(hon, 'obp_inventory', 'on_hand')) || mirrorInv : mirrorInv;
+  const trEff = csvTr && mirrorTr && csvTr < mirrorTr ? (await effectiveDate(hon, 'obp_intransit', 'qty')) || mirrorTr : mirrorTr;
+  const mirrorInvFrozen = Boolean(mirrorInv && invEff && invEff < mirrorInv);
+  const mirrorTrFrozen = Boolean(mirrorTr && trEff && trEff < mirrorTr);
 
-  const useCsvInv = Boolean(csvInv) && (!mirrorInv || csvInv >= mirrorInv || mirrorInvFrozen);
-  const useCsvTr = Boolean(csvTr) && (!mirrorTr || csvTr >= mirrorTr || mirrorTrFrozen);
+  const useCsvInv = Boolean(csvInv) && (!mirrorInv || csvInv >= invEff);
+  const useCsvTr = Boolean(csvTr) && (!mirrorTr || csvTr >= trEff);
 
   return {
     inventory: useCsvInv
@@ -78,7 +93,8 @@ export async function obpSource(hon) {
     intransit: useCsvTr
       ? { source: 'csv', table: CSV_INTRANSIT, latest: csvTr, land: CSV_LAND, etaOk: CSV_ETA_OK, etaCol: 'eta_date' }
       : { source: 'mirror', table: 'obp_intransit', latest: mirrorTr, land: MIRROR_LAND, etaOk: MIRROR_ETA_OK, etaCol: 'eta' },
-    mirror: { inventory: mirrorInv, intransit: mirrorTr, frozen: { inventory: mirrorInvFrozen, intransit: mirrorTrFrozen } },
+    mirror: { inventory: mirrorInv, intransit: mirrorTr, effective: { inventory: invEff, intransit: trEff },
+      frozen: { inventory: mirrorInvFrozen, intransit: mirrorTrFrozen } },
     csv: { inventory: csvInv, intransit: csvTr },
   };
 }

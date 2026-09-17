@@ -407,6 +407,17 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     add('warn', 'anomaly_blocked', `anomaly check threw: ${String(e && e.message || e)}`);
   }
 
+  // ---- 14b. A queue row claimed and never finished. ----
+  // runSendRequests claims a row before sending; if the isolate dies mid-way
+  // the row stays 'claimed' with nothing sent and nothing said.
+  try {
+    const stuck = await many(hon,
+      `SELECT id, ship, kind, done_at FROM weekly_send_request
+        WHERE result = 'claimed' AND done_at < datetime('now', '-30 minutes') ORDER BY id LIMIT 20`);
+    for (const r of stuck) add('critical', 'queue_stuck',
+      `send request #${r.id} (${r.kind || 'weekly'} ${r.ship}) was claimed at ${r.done_at} and never finished - re-queue it or mark it done by hand`);
+  } catch (_) { /* table may not exist yet */ }
+
   // ---- 15. Did the Monday emails actually land? ----
   // cims-mailer records every send and Resend's delivery webhooks update it:
   // delivered, delayed, bounced, complained. Forty-eight emails went out and
@@ -419,7 +430,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       const mails = await many(env.MAIL,
         `SELECT to_json, subject, status, delivery_status, delivery_detail, created_at
            FROM mail_log
-          WHERE app = 'weekly-orders-email' AND template_id = 'orders-due-weekly'
+          WHERE app = 'weekly-orders-email' AND template_id IN ('orders-due-weekly', 'ordering-schedule-chase')
             AND created_at >= datetime(?, '-8 day')
           ORDER BY created_at DESC LIMIT 200`, today);
       for (const m of mails) {
@@ -475,27 +486,47 @@ export const SEEN_TABLE = 'weekly_watchdog_seen';
 export const REMIND_EVERY_DAYS = 7;
 export const findingKey = (f) => `${f.check}|${String(f.detail || '').replace(/\d+/g, '#').slice(0, 300)}`;
 
+// A finding is remembered by check and detail (digits masked), NOT by
+// severity: the same feed finding grows from warn to critical as the days
+// pass, and that growth is news - it is mailed as fresh (review of 17 Sep
+// 2026: it used to be "standing", heard at day 7 at the earliest). Reminders
+// run from the last time the finding was mailed, not from an exact multiple
+// of seven days after first sight, so one missed night cannot skip a week.
 export async function rememberFindings(hon, report, today) {
   const findings = report.findings || [];
   const out = { fresh: [], standing: [], reminders: [] };
   try {
     await hon.prepare(
-      `CREATE TABLE IF NOT EXISTS ${SEEN_TABLE} (key TEXT PRIMARY KEY, check_ TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)`).run();
-    const seen = new Map(((await hon.prepare(`SELECT key, first_seen FROM ${SEEN_TABLE}`).all()).results || [])
-      .map((r) => [r.key, r.first_seen]));
+      `CREATE TABLE IF NOT EXISTS ${SEEN_TABLE} (key TEXT PRIMARY KEY, check_ TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, severity TEXT, last_mailed TEXT)`).run();
+    const cols = ((await hon.prepare(`PRAGMA table_info(${SEEN_TABLE})`).all()).results || []).map((c) => c.name);
+    if (cols.length && !cols.includes('severity')) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN severity TEXT`).run();
+    if (cols.length && !cols.includes('last_mailed')) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN last_mailed TEXT`).run();
+    const seen = new Map(((await hon.prepare(`SELECT key, first_seen, severity, last_mailed FROM ${SEEN_TABLE}`).all()).results || [])
+      .map((r) => [r.key, r]));
+    const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
     for (const f of findings) {
       const key = findingKey(f);
-      const first = seen.get(key);
-      if (!first) {
+      const rec = seen.get(key);
+      let mailed = false;
+      if (!rec) {
         out.fresh.push(f);
+        mailed = true;
+      } else if (f.severity === 'critical' && rec.severity && rec.severity !== 'critical') {
+        out.fresh.push({ ...f, first_seen: rec.first_seen, escalated: true });
+        mailed = true;
       } else {
-        out.standing.push({ ...f, first_seen: first });
-        const days = Math.round((Date.parse(today) - Date.parse(first)) / 86400000);
-        if (f.severity === 'critical' && days > 0 && days % REMIND_EVERY_DAYS === 0) out.reminders.push({ ...f, first_seen: first, days });
+        out.standing.push({ ...f, first_seen: rec.first_seen });
+        const since = rec.last_mailed || rec.first_seen;
+        const days = daysBetween(rec.first_seen, today);
+        if (f.severity === 'critical' && days > 0 && daysBetween(since, today) >= REMIND_EVERY_DAYS) {
+          out.reminders.push({ ...f, first_seen: rec.first_seen, days });
+          mailed = true;
+        }
       }
       await hon.prepare(
-        `INSERT INTO ${SEEN_TABLE} (key, check_, first_seen, last_seen) VALUES (?1, ?2, ?3, ?3)
-         ON CONFLICT(key) DO UPDATE SET last_seen = ?3`).bind(key, f.check, today).run();
+        `INSERT INTO ${SEEN_TABLE} (key, check_, first_seen, last_seen, severity, last_mailed) VALUES (?1, ?2, ?3, ?3, ?4, ?5)
+         ON CONFLICT(key) DO UPDATE SET last_seen = ?3, severity = ?4, last_mailed = COALESCE(?5, last_mailed)`)
+        .bind(key, f.check, today, f.severity || null, mailed ? today : null).run();
     }
     await hon.prepare(`DELETE FROM ${SEEN_TABLE} WHERE last_seen < date(?1, '-30 day')`).bind(today).run();
   } catch (e) {

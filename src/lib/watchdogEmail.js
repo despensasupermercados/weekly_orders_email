@@ -6,9 +6,13 @@
 // Sent only when there is something to say. A nightly mail that always arrives
 // gets filtered too, and then the one that matters is invisible.
 
-const NAVY = '#1B3A5C', DEEP = '#142D48', GREEN = '#5FB946';
-const SLATE = '#6B7280', CLOUD = '#F4F5F7', BORDER = '#E5E7EB', BODY = '#374151';
-const RED = '#8F231A', RED_BG = '#FBE7E4', AMBER = '#8A5B00', AMBER_BG = '#FBF0D8';
+import { mastRows } from '../cims-mast.js';
+
+// Brand tokens per the CIMS email standard (section 3). The digest once
+// carried three drifted values and a hand-typed letterhead; not any more.
+const NAVY = '#1B3A5C';
+const SLATE = '#6B7280', CLOUD = '#F3F4F6', BORDER = '#E5E7EB', BODY = '#374151';
+const RED = '#96281B', RED_BG = '#FBE7E4', AMBER = '#B7791F', AMBER_BG = '#FBF0D8';
 const OK = '#2F6B26', OK_BG = '#E7F4E1';
 const FH = "'Outfit',Helvetica,Arial,sans-serif";
 const FB = "'DM Sans',Helvetica,Arial,sans-serif";
@@ -20,7 +24,10 @@ const CHECK_LABEL = {
   feed: 'OBP feed',
   feed_frozen: 'OBP feed not moving',
   csv_feed: 'OBP CSV copy',
-  delivery: 'Monday email not delivered',
+  on_hand_unread: 'Inventory rows with no reading',
+  mail_route: 'Mail route to this Worker',
+  queue_stuck: 'Send queue row stuck',
+  delivery: 'Crew email not delivered',
   delivery_blocked: 'Delivery check blocked',
   eta_format: 'Export format',
   scope: 'Out-of-scope data',
@@ -82,16 +89,7 @@ export function renderWatchdog(report) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLOUD}"><tr><td align="center" style="padding:26px 10px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="background:#FFFFFF;max-width:620px;">
 
-<tr><td style="padding:0;font-size:0;line-height:0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="60%" height="4" bgcolor="${NAVY}" style="background:${NAVY};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-<td width="40%" height="4" bgcolor="${GREEN}" style="background:${GREEN};font-size:0;line-height:0;height:4px;">&nbsp;</td>
-</tr></table></td></tr>
-
-<tr><td bgcolor="${DEEP}" style="background:${DEEP};padding:22px 26px;">
-<div style="font-family:${FH};font-size:20px;font-weight:700;letter-spacing:5px;color:#FFFFFF;line-height:1;">CIMS</div>
-<div style="width:78px;height:2px;background:${GREEN};font-size:0;line-height:0;margin:8px 0 5px;">&nbsp;</div>
-<div style="font-family:${FH};font-size:7px;font-weight:600;letter-spacing:2.2px;color:#95A0AD;line-height:1;">CRUISE INDUSTRY MANAGED SERVICES</div>
-</td></tr>
+${mastRows()}
 
 <tr><td style="padding:26px 26px 4px;">
 <div style="font-family:${FH};font-size:21px;font-weight:600;color:${NAVY};line-height:1.25;">Night check &mdash; orders watchdog</div>
