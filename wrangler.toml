@@ -33,8 +33,15 @@ compatibility_flags = ["nodejs_compat"]
 #   INSERT INTO weekly_send_request (ship, cc_json, note)
 #   VALUES ('Voyager', '["Miguel.Sanmartin@dg3.com"]', 'test send, 16 Sep');
 # to_json empty = the ship's FLEET_MAP mailbox. Ray (SHIP_CC) is always copied.
+#
+# THE FOURTH, "0 13 2 * *", IS THE MONTHLY SCHEDULE CHASE (MONTHLY_CHASE_CRON
+# in src/index.js). Miguel, 17 Sep 2026: on the 2nd of each month, every ship
+# with no usable Ordering Schedule gets the "send your file" email, one each,
+# Ray in cc, 24-hour deadline. 13:00 UTC so it never shares a minute with a
+# Monday fleet email. It queues a '*' chase row and runs the queue, so the
+# record is the same as a hand-fired chase. Nothing is sent when nobody is missing.
 [triggers]
-crons = ["0 6 * * *", "0 12 * * MON", "*/15 * * * *"]
+crons = ["0 6 * * *", "0 12 * * MON", "*/15 * * * *", "0 13 2 * *"]
 
 [[d1_databases]]
 binding = "HON"

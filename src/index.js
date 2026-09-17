@@ -40,6 +40,15 @@ const WEEKLY_CRON = '0 12 * * MON';
 // and pick one ship for testing." A row in D1 is the trigger. One SELECT per
 // tick; buildWeekly runs only when a row is pending.
 const REQUEST_CRON = '*/15 * * * *';
+// THE MONTHLY CHASE. Miguel, 17 Sep 2026: "schedule this email on the 2nd day
+// of each month and trigger all ships who are not in compliance." On the 2nd
+// at 13:00 UTC (an hour after a Monday fleet email, so the two never land in
+// the same minute) the Worker queues a '*' chase row and runs the queue: one
+// email per ship missing its Ordering Schedule, Ray in cc, 24-hour deadline.
+// It goes through the same queue as a hand-fired chase, so the row's result
+// and the ingest_log line are the record either way. Nothing is sent when no
+// ship is missing.
+const MONTHLY_CHASE_CRON = '0 13 2 * *';
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const json = (o, s = 200) =>
@@ -428,6 +437,15 @@ export default {
 
     if (event.cron === REQUEST_CRON) {
       await runSendRequests(env, today);
+      return;
+    }
+
+    if (event.cron === MONTHLY_CHASE_CRON) {
+      await env.HON.prepare(
+        `INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', ?1)`)
+        .bind(`monthly chase, 2nd of the month, ${today}`).run();
+      const n = await runSendRequests(env, today);
+      await logIngest(env, 'cron', `monthly chase ${today}: ${n} ship(s) mailed`);
       return;
     }
 
