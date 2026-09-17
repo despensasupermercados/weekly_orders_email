@@ -284,7 +284,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   //                                 format does not             (code, or Ray)
   //   an MLS arrived, long ago   -> Ray has stopped sending     (Ray)
   const lastMls = await one(hon,
-    `SELECT MAX(ts) ts FROM ingest_log WHERE note LIKE 'Azamara MLS:%'`);
+    `SELECT MAX(ts) ts FROM ingest_log WHERE note LIKE 'Azamara MLS%' AND note NOT LIKE 'Azamara MLS REFUSED%'`);
   const inbound = await one(hon,
     `SELECT COUNT(*) n, MAX(ts) ts FROM ingest_log
       WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`);

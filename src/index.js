@@ -781,7 +781,7 @@ export default {
           `SELECT COUNT(*) n FROM ingest_log
             WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`)).n,
         last_azamara_mls: (await q(
-          "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS:%'")).d,
+          "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS%' AND note NOT LIKE 'Azamara MLS REFUSED%'")).d,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
         // WHICH COPY OF OBP THE READERS USE. 'mirror' is the emailed workbook
         // via cims-hon; 'csv' is this Worker's own copy of the nightly exports
