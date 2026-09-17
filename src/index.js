@@ -17,6 +17,7 @@ import { fleetRunway } from './lib/runwayDb.js';
 import { inService } from './lib/fleetStatus.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, rememberFindings, INGEST_SOURCE } from './lib/watchdog.js';
+import { renderChase, chaseSubject, CHASE_TEMPLATE } from './lib/chaseEmail.js';
 import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
 import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
 import { obpSource } from './lib/obpSource.js';
@@ -130,14 +131,26 @@ const parseList = (s) => { try { const v = JSON.parse(s || '[]'); return Array.i
 // Queued sends. A row names a ship and, optionally, addresses; with none given
 // the ship's FLEET_MAP mailbox is used, so every address is still one a human
 // typed. SHIP_CC (Ray) is copied as on a Monday, plus whatever cc the row adds.
+//
+// kind = 'weekly' (default) sends the ship its Monday email now.
+// kind = 'chase' sends the "send your Ordering Schedule file" email (Miguel,
+// 17 Sep 2026: one per ship, Ray in cc, always 24 hours). A ship that is not
+// missing its schedule is skipped, not mailed. ship = '*' with kind 'chase'
+// queues every missing ship at once, one email each:
+//   INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', 'Ray asked, 17 Sep');
+export const SEND_KINDS = ['weekly', 'chase'];
+
 async function runSendRequests(env, today) {
   const hon = env.HON;
   await hon.prepare(
     `CREATE TABLE IF NOT EXISTS weekly_send_request (
        id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT NOT NULL, to_json TEXT, cc_json TEXT, note TEXT,
-       requested_at TEXT NOT NULL DEFAULT (datetime('now')), done_at TEXT, result TEXT)`).run();
+       requested_at TEXT NOT NULL DEFAULT (datetime('now')), done_at TEXT, result TEXT, kind TEXT)`).run();
+  // The table predates 'kind' (16 Sep). Add it once; D1 refuses a duplicate.
+  const cols = ((await hon.prepare('PRAGMA table_info(weekly_send_request)').all()).results || []).map((c) => c.name);
+  if (cols.length && !cols.includes('kind')) await hon.prepare('ALTER TABLE weekly_send_request ADD COLUMN kind TEXT').run();
   const pending = (await hon.prepare(
-    `SELECT id, ship, to_json, cc_json, note FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
+    `SELECT id, ship, to_json, cc_json, note, kind FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
   if (!pending.length) return 0;
 
   const { rows, act, gaps, runsOut, deliveries, schedules } = await buildWeekly(env, today);
@@ -145,41 +158,66 @@ async function runSendRequests(env, today) {
   const plan = planFleetSend(act, env.FLEET_MAP, gaps, runsOut, schedules);
   const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
   const replyTo = list(env.REPLY_TO)[0] || null;
+  const { map: fleet } = parseFleetMap(env.FLEET_MAP);
+  const sentAtMs = Date.now();
   let sent = 0;
+
+  // One ship, one email. Returns the mailer result or a {sent:false} reason.
+  async function sendOne(q, ship, kind) {
+    const key = normShip(ship);
+    const mapped = plan.sendable.find((g) => normShip(g.ship) === key);
+    const group = mapped || plan.unmapped.find((g) => normShip(g.ship) === key);
+    let to = parseList(q.to_json);
+    if (!to.length && mapped) to = mapped.to;
+    if (!to.length && fleet.get(key)) to = fleet.get(key).to;
+    if (!to.length) return { sent: false, to, reason: `no address for ${ship}: not in FLEET_MAP and none given` };
+    const cc = [...new Set([...list(env.SHIP_CC), ...parseList(q.cc_json)])];
+    const shipName = group ? group.ship : (fleet.get(key) ? fleet.get(key).ship : ship);
+    if (kind === 'chase') {
+      const missing = ask.find((s) => normShip(s.ship) === key);
+      if (!missing) return { sent: false, to, reason: `${shipName} is not missing its Ordering Schedule, not chased` };
+      const r = await send(env, to, chaseSubject(shipName),
+        renderChase({ ship: shipName, missing: ask, sentAtMs }), CHASE_TEMPLATE, cc, replyTo);
+      return { ...r, to };
+    }
+    const shipRows = group ? group.rows : [];
+    const r = await send(env, to,
+      `${shipName}: ${shipSubject(shipName, { rows: shipRows, runsOut, gaps, ask })}`,
+      renderWeekly(shipRows, rows, today, { audience: 'ship', ship: shipName, gaps, runsOut, deliveries, schedules }),
+      'orders-due-weekly', cc, replyTo);
+    return { ...r, to };
+  }
+
   for (const q of pending) {
+    const kind = SEND_KINDS.includes(q.kind) ? q.kind : 'weekly';
     let result;
-    let to = [];
+    const lines = [];
     try {
-      const key = normShip(q.ship);
-      const mapped = plan.sendable.find((g) => normShip(g.ship) === key);
-      const group = mapped || plan.unmapped.find((g) => normShip(g.ship) === key);
-      to = parseList(q.to_json);
-      if (!to.length && mapped) to = mapped.to;
-      if (!to.length) {
-        const { map } = parseFleetMap(env.FLEET_MAP);
-        const hit = map.get(key);
-        if (hit) to = hit.to;
+      if (!SEND_KINDS.includes(q.kind || 'weekly')) throw new Error(`unknown kind '${q.kind}'`);
+      const targets = q.ship === '*'
+        ? (kind === 'chase' ? ask.map((s) => s.ship) : [])
+        : [q.ship];
+      if (q.ship === '*' && kind !== 'chase') throw new Error("ship '*' is only for kind 'chase'");
+      const results = [];
+      for (const ship of targets) {
+        const r = await sendOne(q, ship, kind);
+        if (r.sent) sent++;
+        results.push({ ship, ...r });
+        lines.push(`${ship} -> ${(r.to || []).join(', ') || '(no address)'}: ${r.sent ? 'sent' : 'NOT SENT ' + (r.reason || r.error || JSON.stringify(r))}`);
       }
-      if (!to.length) {
-        result = { sent: false, reason: `no address for ${q.ship}: not in FLEET_MAP and none given` };
-      } else {
-        const shipName = group ? group.ship : q.ship;
-        const shipRows = group ? group.rows : [];
-        const cc = [...new Set([...list(env.SHIP_CC), ...parseList(q.cc_json)])];
-        result = await send(env, to,
-          `${shipName}: ${shipSubject(shipName, { rows: shipRows, runsOut, gaps, ask })}`,
-          renderWeekly(shipRows, rows, today, { audience: 'ship', ship: shipName, gaps, runsOut, deliveries, schedules }),
-          'orders-due-weekly', cc, replyTo);
-        if (result.sent) sent++;
-      }
+      result = (q.ship !== '*' && targets.length === 1)
+        ? results[0]
+        : { sent: results.some((r) => r.sent), count: results.filter((r) => r.sent).length, of: targets.length, ships: results.map((r) => `${r.ship}:${r.sent ? 'sent' : 'no'}`) };
+      if (!targets.length) result = { sent: false, reason: 'nothing to send: no ship is missing its Ordering Schedule' };
     } catch (e) {
       result = { sent: false, threw: String((e && e.message) || e).slice(0, 300) };
     }
     await hon.prepare(`UPDATE weekly_send_request SET done_at = datetime('now'), result = ?2 WHERE id = ?1`)
       .bind(q.id, JSON.stringify(result).slice(0, 600)).run();
     await logIngest(env, 'cron',
-      `on-demand send #${q.id} ${q.ship} -> ${to.join(', ') || '(no address)'}: ` +
-      (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`) + (q.note ? ` | ${q.note}` : ''));
+      `on-demand ${kind} send #${q.id} ${q.ship}: ` +
+      (lines.length ? lines.join(' | ') : (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`)) +
+      (q.note ? ` | ${q.note}` : ''));
   }
   return sent;
 }

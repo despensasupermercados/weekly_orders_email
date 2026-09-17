@@ -289,3 +289,53 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   assert.ok(crons.includes(/const WEEKLY_CRON = '([^']+)'/.exec(src)[1]), 'WEEKLY_CRON is in wrangler.toml');
   console.log('ok - on-demand queue: a row sends one ship\'s real email and is marked done; other crons never mail the fleet');
 }
+
+// THE SCHEDULE CHASE. Miguel, 17 Sep 2026: "1 per ship and cc Ray. Always
+// give them 24hr turnaround." A row with kind 'chase' and ship '*' sends one
+// chase email to every ship missing its Ordering Schedule; a ship that has
+// one is skipped, not mailed. Explorer has no schedule in the fixture, Anthem
+// does, Quest is Azamara and is never asked.
+{
+  sent.length = 0; waits.length = 0; logged.length = 0;
+  const queue = [
+    { id: 8, ship: '*', to_json: null, cc_json: null, note: 'Ray asked', kind: 'chase' },
+    { id: 9, ship: 'Anthem', to_json: null, cc_json: null, note: null, kind: 'chase' },
+  ];
+  const updates = [];
+  const queued = {
+    prepare(sql) {
+      const inner = fakeDb.prepare(sql);
+      const stmt = {
+        bind: (...a) => { stmt._binds = a; return stmt; },
+        run: async () => {
+          if (/UPDATE weekly_send_request/.test(sql)) { updates.push(stmt._binds); queue.splice(queue.findIndex((q) => q.id === stmt._binds[0]), 1); }
+          return inner.run();
+        },
+        first: inner.first,
+        all: async () => (/FROM weekly_send_request/.test(sql) ? { results: queue.slice() } : inner.all()),
+      };
+      return stmt;
+    },
+  };
+  const live = {
+    ...env, HON: queued,
+    SEND_TO_FLEET: 'true', FLEET_TO: 'onboardsupport@example.com', SHIP_CC: 'ray@example.com', REPLY_TO: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
+  };
+  await worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  assert.equal(sent.length, 1, `one chase per missing ship, got ${sent.map((m) => m.subject)}`);
+  assert.equal(sent[0].subject, 'Explorer: send your Ordering Schedule file within 24 hours');
+  assert.deepEqual(sent[0].to, ['ex_printerspecialist@example.com'], 'the ship\'s FLEET_MAP mailbox');
+  assert.deepEqual(sent[0].cc, ['ray@example.com'], 'Ray in cc');
+  assert.equal(sent[0].replyTo, 'ray@example.com', 'replies go to Ray');
+  assert.equal(sent[0].templateId, 'ordering-schedule-chase');
+  assert.ok(/EXPLORER &middot; WHY WE ARE WRITING/.test(sent[0].html), 'the chase email, not the weekly one');
+  assert.ok(/within <b[^>]*>24 hours<\/b>/.test(sent[0].html), 'always 24 hours');
+  assert.equal(updates.length, 2, 'both rows are marked done');
+  const star = updates.find((u) => u[0] === 8)[1];
+  assert.ok(/"count":1,"of":1/.test(star), `the '*' row records what it sent: ${star}`);
+  const anthem = updates.find((u) => u[0] === 9)[1];
+  assert.ok(/not missing its Ordering Schedule, not chased/.test(anthem), `a ship with a schedule is skipped: ${anthem}`);
+  console.log('ok - schedule chase: ship * mails every missing ship once, cc Ray, 24 hours; a ship with a schedule is skipped');
+}
