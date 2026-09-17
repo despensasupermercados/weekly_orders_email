@@ -42,7 +42,7 @@ header. **There is no `MAILER_URL` and no `MAILER_TOKEN`.** An earlier version o
 told you to create both; the code then invented a URL-and-token interface that does not
 exist, and a Resend key ended up pasted into a plaintext Worker variable. Do not add them back.
 
-The D1 bindings (`HON`, `ORDERS`, and `MAIL` read-only) and both crons are in `wrangler.toml`.
+The D1 bindings (`HON`, `ORDERS`, and `MAIL` read-only) and all four crons are in `wrangler.toml`.
 
 ### The Azamara route exists and works
 
@@ -85,6 +85,18 @@ come from the workbook. A stale month there moves an average by a little; a stal
 figure moves a stockout date by weeks. That is why on-hand and in-transit were done first.
 
 ---
+
+### A zero is a claim, a null is an absence
+
+cims-hon found on 17 Sep 2026, by running both apps' readers over the same export, that this
+parser turned an absent Quantity into 0, and 0 is "stocked out, critical, today" for every item
+with a measured burn. A renamed column would have mailed 48 crews a fleet-wide false alarm with
+no log line. Now: the CSV is refused, naming the column, if `ShipName`, `PartNumber`, `Quantity`
+or `UpdateDate` (in-transit: `ShipProvDate`) is not in the header; an absent value is NULL and
+stays NULL through `runwayDb` (no `COALESCE(...,0)`), and an item with no reading is skipped and
+listed as `unread`, never judged empty; a file with Quantity blank on more than 20% of rows, or
+whose on-hand sums to 0, is refused. The night check reports unread readings (check 1d). The
+export writes real zeros (1,445 of 3,481 rows on 16 Sep), so a missing figure is never a zero.
 
 ## Ships with no Ordering Schedule
 
@@ -200,8 +212,10 @@ INSERT INTO weekly_send_request (ship, kind) VALUES ('Beyond', 'chase');
 ```
 
 **It also runs by itself on the 2nd of each month at 13:00 UTC** (`MONTHLY_CHASE_CRON`,
-Miguel 17 Sep 2026): the Worker queues the `*` row and sends to every ship out of compliance
-that day; nothing goes out when nobody is missing.
+Miguel 17 Sep 2026): the Worker queues the `*` row and the 15-minute runner sends to every
+ship out of compliance that day; nothing goes out when nobody is missing. Every queue row is
+claimed with one atomic UPDATE before it is sent, so two cron ticks in the same minute cannot
+send it twice.
 
 The 15-minute cron picks it up; `result` on the row and the `on-demand chase send` line in
 `ingest_log` say who was mailed. The list comes from the same schedule judgement as the

@@ -112,6 +112,25 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     add('warn', 'csv_feed', `source check threw: ${String(e && e.message || e)}`);
   }
 
+  // ---- 1d. Readings that are absent, not zero. ----
+  // runwayDb skips an item whose on-hand is NULL instead of calling it empty.
+  // That silence has to be visible somewhere, or a broken column would just
+  // make the fleet look calm. Counted from the latest inventory snapshot.
+  try {
+    const src = await obpSource(hon);
+    const t = src.inventory.table;
+    const r = await hon.prepare(
+      `SELECT COUNT(*) n, SUM(CASE WHEN on_hand IS NULL THEN 1 ELSE 0 END) blank
+         FROM ${t} WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ${t})`).first();
+    const n = Number((r && r.n) || 0);
+    const blank = Number((r && r.blank) || 0);
+    if (n && blank) add(blank > n * 0.05 ? 'critical' : 'warn', 'on_hand_unread',
+      `${blank} of ${n} rows in the latest ${src.inventory.source} inventory snapshot carry no on-hand reading - ` +
+      `those items are not judged for stockouts (an unknown shelf is not an empty one). Check the Quantity column of the export`);
+  } catch (e) {
+    add('warn', 'on_hand_unread', `unread check threw: ${String(e && e.message || e)}`);
+  }
+
   // ---- 2. ETA format drift ----
   // obp_intransit.eta is an Excel serial in a TEXT column. If Ray's export ever
   // switches to real dates, every date comparison silently matches nothing and

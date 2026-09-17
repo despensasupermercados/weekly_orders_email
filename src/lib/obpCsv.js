@@ -37,6 +37,25 @@ export const CSV_FILES = {
 export const MIN_INVENTORY_ROWS = 1000;
 export const KEEP_DAYS = 14;
 
+// A ZERO IS A CLAIM, A NULL IS AN ABSENCE. cims-hon found on 17 Sep 2026, by
+// running both apps' readers over the same file, that this parser turned an
+// absent Quantity into 0, and 0 is "stocked out, critical, today" for every
+// item with a measured burn. A renamed column would have mailed 48 crews a
+// fleet-wide false alarm without a single log line. So: the headers the
+// mappers read MUST be present or the file is refused naming the column, an
+// absent value is null and stays null all the way to the reader, and a file
+// whose values are mostly absent - or sum to nothing - is refused too.
+export const REQUIRED_HEADERS = {
+  inventory: ['ShipName', 'PartNumber', 'Quantity', 'UpdateDate'],
+  intransit: ['ShipName', 'PartNumber', 'Quantity', 'ShipProvDate'],
+};
+export const MAX_BLANK_SHARE = 0.2;
+
+export function missingHeaders(rows, kind) {
+  const have = new Set(rows.length ? Object.keys(rows[0]) : []);
+  return (REQUIRED_HEADERS[kind] || []).filter((h) => !have.has(h));
+}
+
 // RFC 4180-ish: quoted fields, doubled quotes, CRLF or LF, a BOM if Excel put
 // one there. Returns objects keyed by the header row, headers trimmed.
 export function parseCsv(text) {
@@ -89,8 +108,14 @@ export function usDate(s) {
   return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-const num = (v) => {
-  const n = Number(String(v == null ? '' : v).replace(/,/g, ''));
+// Absent -> null, never 0. "1,240" -> 1240 (the export writes thousands with a
+// comma; Number('1,240') is NaN). "N/A" -> null. Pinned by cims-hon's
+// obp_contract test and by test/obpCsv.test.mjs so the two readers cannot drift.
+export const num = (v) => {
+  if (v == null || v === '') return null;
+  const t = typeof v === 'string' ? v.replace(/,/g, '').trim() : v;
+  if (t === '') return null;
+  const n = Number(t);
   return Number.isFinite(n) ? n : null;
 };
 
@@ -230,9 +255,19 @@ export async function ingestObpCsv(hon, attachments, today) {
   await ensureTables(hon);
 
   if (inv) {
-    const rows = mapInventory(parseCsv(textOf(inv)), today).map((r) => ({ ...r, source: 'csv' }));
-    if (rows.length < MIN_INVENTORY_ROWS) {
+    const raw = parseCsv(textOf(inv));
+    const rows = mapInventory(raw, today).map((r) => ({ ...r, source: 'csv' }));
+    const miss = missingHeaders(raw, 'inventory');
+    const blank = rows.filter((r) => r.on_hand == null).length;
+    const total = rows.reduce((a, r) => a + (r.on_hand || 0), 0);
+    if (miss.length) {
+      out.refused.push(`${CSV_FILES.inventory}: column(s) ${miss.join(', ')} not in the header - the export format changed, not written`);
+    } else if (rows.length < MIN_INVENTORY_ROWS) {
       out.refused.push(`${CSV_FILES.inventory} parsed to ${rows.length} rows, below ${MIN_INVENTORY_ROWS} - not a fleet-wide export, not written`);
+    } else if (blank > rows.length * MAX_BLANK_SHARE) {
+      out.refused.push(`${CSV_FILES.inventory}: Quantity unreadable on ${blank} of ${rows.length} rows - not written`);
+    } else if (total === 0) {
+      out.refused.push(`${CSV_FILES.inventory}: every Quantity is 0 or blank across ${rows.length} rows - not a real inventory, not written`);
     } else {
       await replaceSnapshot(hon, CSV_INVENTORY, rows, today, INV_COLS);
       out.inventory = rows.length;
@@ -241,9 +276,13 @@ export async function ingestObpCsv(hon, attachments, today) {
     }
   }
   if (tr) {
-    const rows = mapIntransit(parseCsv(textOf(tr)), today).map((r) => ({ ...r, source: 'csv' }));
+    const rawTr = parseCsv(textOf(tr));
+    const rows = mapIntransit(rawTr, today).map((r) => ({ ...r, source: 'csv' }));
     const dated = rows.filter((r) => r.eta_date);
-    if (!rows.length) {
+    const missTr = missingHeaders(rawTr, 'intransit');
+    if (missTr.length) {
+      out.refused.push(`${CSV_FILES.intransit}: column(s) ${missTr.join(', ')} not in the header - the export format changed, not written`);
+    } else if (!rows.length) {
       out.refused.push(`${CSV_FILES.intransit} parsed to 0 rows - not written`);
     } else if (dated.length < rows.length / 2) {
       out.refused.push(`${CSV_FILES.intransit}: only ${dated.length} of ${rows.length} rows carry a readable ShipProvDate - the export format may have changed, not written`);

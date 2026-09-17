@@ -78,6 +78,7 @@ const addDays = (iso, n) => new Date(Date.parse(iso) + n * 86400000).toISOString
 // inside the horizon.
 export function stockoutDate({ onHand, rate, arrivals = [], today, horizonDays = 120 }) {
   if (!rate || rate <= 0) return null;             // no measured burn, no claim
+  if (onHand == null || onHand === '' || !Number.isFinite(Number(onHand))) return null; // no reading, no claim
   const daily = rate / MONTH_DAYS;
   const due = new Map();
   for (const a of arrivals) {

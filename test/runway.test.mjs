@@ -82,3 +82,15 @@ for (const d of ['PAPER FEED DRIVING CLUTCH', 'BALL BEARING', 'FUSING HEATER LAM
 assert.equal(MONTH_DAYS, 30);
 console.log('ok - runway: Ray\'s consumption formula holds on Onward\'s real figures, a typo');
 console.log('     never becomes a negative burn, and a date is reported instead of a quantity');
+
+
+// NO READING, NO CLAIM. An on-hand of null (the export did not say) must never
+// read as an empty shelf: that was a fleet-wide false critical waiting to happen.
+{
+  assert.equal(stockoutDate({ onHand: null, rate: 7, arrivals: [], today: '2026-09-17' }), null);
+  assert.equal(stockoutDate({ onHand: undefined, rate: 7, arrivals: [], today: '2026-09-17' }), null);
+  assert.equal(stockoutDate({ onHand: '', rate: 7, arrivals: [], today: '2026-09-17' }), null);
+  assert.equal(stockoutDate({ onHand: 0, rate: 7, arrivals: [], today: '2026-09-17' }), '2026-09-17', 'a real zero still runs out today');
+  assert.equal(runsOutFirst({ ship: 'Onward', item: 'TN619C CYAN', onHand: null, rate: 7, arrivals: [], today: '2026-09-17', nextLoading: null }), null);
+  console.log('ok - runway: a missing on-hand reading is not a stockout; a real zero is');
+}

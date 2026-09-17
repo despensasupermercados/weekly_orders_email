@@ -103,10 +103,13 @@ export async function fleetRunway(hon, today, opts = {}) {
     )
     SELECT a.ship, substr(p.description, 1, 34) item, p.description description, p.par_qty, p.brand,
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
-           COALESCE((SELECT i.on_hand FROM ${src.inventory.table} i
-                      WHERE i.ship = a.ship AND i.part_number = a.part_number
-                        AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
-                      LIMIT 1), 0) on_hand,
+           -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
+           -- not an empty shelf: the export writes real zeros (1,445 of 3,481
+           -- rows on 16 Sep 2026), so a missing figure is never "0 on board".
+           (SELECT i.on_hand FROM ${src.inventory.table} i
+             WHERE i.ship = a.ship AND i.part_number = a.part_number
+               AND i.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.inventory.table})
+             LIMIT 1) on_hand,
            COALESCE(n.next_eta, '') next_eta,
            -- what lands for this item on THAT day - not the sum of every open
            -- line, which once made most of the fleet read "nothing to add".
@@ -147,12 +150,16 @@ export async function fleetRunway(hon, today, opts = {}) {
   }
 
   const findings = [];
+  // Items with a measured burn but no on-hand reading. Not judged - an unknown
+  // shelf is not an empty one - and named, so the night check can say so.
+  const unread = [];
   for (const r of rows) {
+    if (r.on_hand == null || r.on_hand === '') { unread.push({ ship: r.ship, item: r.item }); continue; }
     const arrivals = r.next_eta ? [{ date: r.next_eta, qty: Number(r.on_next) || 0 }] : [];
     const f = runsOutFirst({
       ship: r.ship,
       item: r.item,
-      onHand: Number(r.on_hand) || 0,
+      onHand: Number(r.on_hand),
       rate: Number(r.rate) || 0,
       arrivals,
       today,
@@ -189,6 +196,7 @@ export async function fleetRunway(hon, today, opts = {}) {
   const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
   return {
     ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut,
+    unread,
     source: { inventory: src.inventory.source, intransit: src.intransit.source },
   };
 }
