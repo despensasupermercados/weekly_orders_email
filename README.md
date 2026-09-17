@@ -199,6 +199,10 @@ INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', 'Ray as
 INSERT INTO weekly_send_request (ship, kind) VALUES ('Beyond', 'chase');
 ```
 
+**It also runs by itself on the 2nd of each month at 13:00 UTC** (`MONTHLY_CHASE_CRON`,
+Miguel 17 Sep 2026): the Worker queues the `*` row and sends to every ship out of compliance
+that day; nothing goes out when nobody is missing.
+
 The 15-minute cron picks it up; `result` on the row and the `on-demand chase send` line in
 `ingest_log` say who was mailed. The list comes from the same schedule judgement as the
 Monday email (`scheduleStatus.js`), so a ship drops off the moment cims-hon reads its file.

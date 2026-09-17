@@ -287,6 +287,8 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   const src = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
   assert.ok(crons.includes(/const REQUEST_CRON = '([^']+)'/.exec(src)[1]), 'REQUEST_CRON is in wrangler.toml');
   assert.ok(crons.includes(/const WEEKLY_CRON = '([^']+)'/.exec(src)[1]), 'WEEKLY_CRON is in wrangler.toml');
+  assert.ok(crons.includes(/const MONTHLY_CHASE_CRON = '([^']+)'/.exec(src)[1]), 'MONTHLY_CHASE_CRON is in wrangler.toml');
+  assert.equal(/const MONTHLY_CHASE_CRON = '([^']+)'/.exec(src)[1].split(' ')[2], '2', 'the monthly chase is the 2nd of the month');
   console.log('ok - on-demand queue: a row sends one ship\'s real email and is marked done; other crons never mail the fleet');
 }
 
@@ -338,4 +340,47 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   const anthem = updates.find((u) => u[0] === 9)[1];
   assert.ok(/not missing its Ordering Schedule, not chased/.test(anthem), `a ship with a schedule is skipped: ${anthem}`);
   console.log('ok - schedule chase: ship * mails every missing ship once, cc Ray, 24 hours; a ship with a schedule is skipped');
+}
+
+// THE MONTHLY CHASE CRON. Miguel, 17 Sep 2026: "schedule this email on the 2nd
+// day of each month and trigger all ships who are not in compliance." The cron
+// queues the '*' chase row itself and runs the queue: Explorer (no schedule)
+// is mailed, Anthem (has one) and Quest (Azamara) are not, and the fleet list
+// is never sent by this cron.
+{
+  sent.length = 0; waits.length = 0; logged.length = 0;
+  const queue = [];
+  const inserts = [];
+  const notes = [];
+  const queued = {
+    prepare(sql) {
+      const inner = fakeDb.prepare(sql);
+      const stmt = {
+        bind: (...a) => { stmt._binds = a; return stmt; },
+        run: async () => {
+          if (/INSERT INTO ingest_log/.test(sql)) notes.push(String(stmt._binds[2]));
+          if (/INSERT INTO weekly_send_request/.test(sql)) { inserts.push(stmt._binds); queue.push({ id: 10, ship: '*', kind: 'chase', to_json: null, cc_json: null, note: stmt._binds[0] }); }
+          if (/UPDATE weekly_send_request/.test(sql)) queue.length = 0;
+          return inner.run();
+        },
+        first: inner.first,
+        all: async () => (/FROM weekly_send_request/.test(sql) ? { results: queue.slice() } : inner.all()),
+      };
+      return stmt;
+    },
+  };
+  const live = {
+    ...env, HON: queued,
+    SEND_TO_FLEET: 'true', FLEET_TO: 'onboardsupport@example.com', SHIP_CC: 'ray@example.com', REPLY_TO: 'ray@example.com',
+    FLEET_MAP: 'Quest = qs_pm@example.com\nExplorer = ex_printerspecialist@example.com\nAnthem = an_printerspecialist@example.com',
+  };
+  await worker.scheduled({ cron: '0 13 2 * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
+  await Promise.all(waits);
+  assert.equal(inserts.length, 1, 'the cron queues one * chase row');
+  assert.equal(sent.length, 1, `one chase per missing ship, got ${sent.map((m) => m.subject)}`);
+  assert.equal(sent[0].subject, 'Explorer: send your Ordering Schedule file within 24 hours');
+  assert.deepEqual(sent[0].cc, ['ray@example.com'], 'Ray in cc');
+  assert.ok(!sent.some((m) => /^Orders due this week/.test(m.subject)), 'the fleet list is NOT sent by the monthly chase');
+  assert.ok(notes.some((n) => /^monthly chase .*1 ship\(s\) mailed/.test(n)), `and the run is logged: ${notes.join(' || ')}`);
+  console.log('ok - monthly chase: the 2nd-of-month cron mails every ship out of compliance, one each, cc Ray, and nobody else');
 }
