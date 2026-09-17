@@ -103,3 +103,17 @@ assert.equal(nav.add_qty, 17);
 
 console.log('ok - runwayDb: the quantity is aimed at the order still open (due date ahead),');
 console.log('     never at a container whose order already closed; no schedule -> no due date');
+
+
+// A NEWER SNAPSHOT WITH NO READING. Navigator's row says nothing about the
+// shelf (NULL) and Quest has no row at all in that snapshot: neither is an
+// empty shelf. Both are reported as unread and neither is a finding.
+{
+  ins('INSERT INTO obp_inventory VALUES (?,?,?,?)', [['Navigator', 'TN619M', null, '2026-09-16']]);
+  const r2 = await fleetRunway(d1(db), today);
+  assert.ok(r2.ran, r2.reason);
+  const names = r2.unread.map((u) => u.ship).sort();
+  assert.deepEqual(names, ['Navigator', 'Quest'], `unread items are named: ${JSON.stringify(r2.unread)}`);
+  assert.equal(r2.findings.filter((f) => /TN619M/.test(f.item)).length, 0, 'and none of them is called a stockout');
+  console.log('ok - runwayDb: NULL on-hand carries through as unread, never as 0');
+}

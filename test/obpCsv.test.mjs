@@ -10,7 +10,7 @@
 process.emitWarning = () => {};
 const { DatabaseSync } = await import('node:sqlite');
 const assert = (await import('node:assert')).default;
-const { parseCsv, usDate, mapInventory, mapIntransit, isObpCsvMail, ingestObpCsv, MIN_INVENTORY_ROWS, CSV_FILES } =
+const { parseCsv, usDate, mapInventory, mapIntransit, isObpCsvMail, ingestObpCsv, MIN_INVENTORY_ROWS, CSV_FILES, num, missingHeaders, MAX_BLANK_SHARE } =
   await import('../src/lib/obpCsv.js');
 const { obpSource, CSV_INVENTORY, CSV_INTRANSIT } = await import('../src/lib/obpSource.js');
 const { fleetRunway } = await import('../src/lib/runwayDb.js');
@@ -209,4 +209,54 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.equal(s.inventory.source, 'mirror', 'a mirror whose content changed is fresher and wins');
   assert.equal(s.intransit.source, 'mirror');
   console.log('ok - obp source: a re-stamped, unchanged mirror never outranks a CSV copy; a real refresh does');
+}
+
+
+// A ZERO IS A CLAIM, A NULL IS AN ABSENCE. cims-hon, 17 Sep 2026, by executing
+// both readers over the same file: num(undefined) was 0, so a renamed Quantity
+// column would have written ~3,500 zeros and mailed 48 crews a fleet-wide
+// stockout. The contract below mirrors cims-hon/test/obp_contract.test.js.
+{
+  assert.equal(num(undefined), null); assert.equal(num(null), null); assert.equal(num(''), null); assert.equal(num('  '), null);
+  assert.equal(num('0'), 0, 'a genuine zero is a zero'); assert.equal(num(0), 0);
+  assert.equal(num('7'), 7); assert.equal(num('1,240'), 1240, 'thousands comma'); assert.equal(num('N/A'), null);
+  const [m] = mapInventory([{ ShipName: 'Beyond', PartNumber: 'P1', Quantity: '' , UpdateDate: '09/15/26' }], '2026-09-17');
+  assert.equal(m.on_hand, null, 'an absent Quantity is null in the row, not 0');
+  assert.deepEqual(missingHeaders([{ ShipName: 'x', PartNumber: 'y', UpdateDate: 'z', OnHand: '1' }], 'inventory'), ['Quantity']);
+  assert.deepEqual(missingHeaders([], 'inventory'), ['ShipName', 'PartNumber', 'Quantity', 'UpdateDate']);
+
+  // Quantity column RENAMED: refused, naming the column, nothing written.
+  const renamed = [INV_HEAD.replace('Quantity', 'OnHand')];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) renamed.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', 3));
+  const r1 = await ingestObpCsv(hon, [{ filename: CSV_FILES.inventory, content: renamed.join('\r\n') }], '2026-09-17');
+  assert.ok(!r1.inventory, 'nothing written');
+  assert.ok(/column\(s\) Quantity not in the header/.test(r1.refused[0] || ''), `refusal names the column: ${r1.refused[0]}`);
+
+  // Quantity present but blank on most rows: refused.
+  const blank = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) blank.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', i % 2 ? '' : 3));
+  const r2 = await ingestObpCsv(hon, [{ filename: CSV_FILES.inventory, content: blank.join('\r\n') }], '2026-09-17');
+  assert.ok(!r2.inventory);
+  assert.ok(/Quantity unreadable on \d+ of \d+ rows/.test(r2.refused[0] || ''), r2.refused[0]);
+
+  // Every Quantity zero: refused.
+  const zeros = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) zeros.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', 0));
+  const r3 = await ingestObpCsv(hon, [{ filename: CSV_FILES.inventory, content: zeros.join('\r\n') }], '2026-09-17');
+  assert.ok(!r3.inventory);
+  assert.ok(/every Quantity is 0 or blank/.test(r3.refused[0] || ''), r3.refused[0]);
+
+  // A few blanks inside the tolerance are written as NULL, not 0.
+  const few = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) few.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', i < 10 ? '' : 3));
+  const r4 = await ingestObpCsv(hon, [{ filename: CSV_FILES.inventory, content: few.join('\r\n') }], '2026-09-17');
+  assert.equal(r4.refused.length, 0, r4.refused.join('; '));
+  assert.equal(r4.inventory, MIN_INVENTORY_ROWS + 5);
+  assert.ok(MAX_BLANK_SHARE <= 0.2);
+
+  // In-transit with ShipProvDate renamed: refused naming it.
+  const trRenamed = [TR_HEAD.replace('ShipProvDate', 'LandingDate'), trLine('Allure', 'P1', 'TONER', 6, '10/20/2026')];
+  const r5 = await ingestObpCsv(hon, [{ filename: CSV_FILES.intransit, content: trRenamed.join('\r\n') }], '2026-09-17');
+  assert.ok(/column\(s\) ShipProvDate not in the header/.test(r5.refused[0] || ''), r5.refused[0]);
+  console.log('ok - obp csv: absent is null not zero; a renamed, blank or all-zero Quantity column is refused by name');
 }

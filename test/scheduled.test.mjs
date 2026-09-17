@@ -242,6 +242,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
       const stmt = {
         bind: (...a) => { stmt._binds = a; return stmt; },
         run: async () => {
+          if (/result = 'claimed'/.test(sql)) { const row = queue.find((q) => q.id === stmt._binds[0]); const ok = Boolean(row && !row.claimed); if (ok) row.claimed = true; return { success: true, meta: { changes: ok ? 1 : 0 } }; }
           if (/UPDATE weekly_send_request/.test(sql)) { updates.push(stmt._binds); queue.length = 0; }
           return inner.run();
         },
@@ -310,6 +311,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
       const stmt = {
         bind: (...a) => { stmt._binds = a; return stmt; },
         run: async () => {
+          if (/result = 'claimed'/.test(sql)) { const row = queue.find((q) => q.id === stmt._binds[0]); const ok = Boolean(row && !row.claimed); if (ok) row.claimed = true; return { success: true, meta: { changes: ok ? 1 : 0 } }; }
           if (/UPDATE weekly_send_request/.test(sql)) { updates.push(stmt._binds); queue.splice(queue.findIndex((q) => q.id === stmt._binds[0]), 1); }
           return inner.run();
         },
@@ -360,6 +362,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
         run: async () => {
           if (/INSERT INTO ingest_log/.test(sql)) notes.push(String(stmt._binds[2]));
           if (/INSERT INTO weekly_send_request/.test(sql)) { inserts.push(stmt._binds); queue.push({ id: 10, ship: '*', kind: 'chase', to_json: null, cc_json: null, note: stmt._binds[0] }); }
+          if (/result = 'claimed'/.test(sql)) { const row = queue.find((q) => q.id === stmt._binds[0]); const ok = Boolean(row && !row.claimed); if (ok) row.claimed = true; return { success: true, meta: { changes: ok ? 1 : 0 } }; }
           if (/UPDATE weekly_send_request/.test(sql)) queue.length = 0;
           return inner.run();
         },
@@ -377,10 +380,18 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   await worker.scheduled({ cron: '0 13 2 * *', scheduledTime: Date.parse(TODAY) }, live, ctx);
   await Promise.all(waits);
   assert.equal(inserts.length, 1, 'the cron queues one * chase row');
-  assert.equal(sent.length, 1, `one chase per missing ship, got ${sent.map((m) => m.subject)}`);
+  assert.equal(sent.length, 0, 'and sends nothing itself: the 15-minute runner does, so two ticks in one minute cannot double-send');
+  assert.ok(notes.some((n) => /^monthly chase .*queued row/.test(n)), `the queueing is logged: ${notes.join(' || ')}`);
+  // TWO 15-MINUTE TICKS IN THE SAME MINUTE (the production shape at 13:00 on
+  // the 2nd): the atomic claim lets exactly one of them send.
+  await Promise.all([
+    worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, live, ctx),
+    worker.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.parse(TODAY) }, live, ctx),
+  ]);
+  await Promise.all(waits);
+  assert.equal(sent.length, 1, `one chase per missing ship even with two concurrent ticks, got ${sent.map((m) => m.subject)}`);
   assert.equal(sent[0].subject, 'Explorer: send your Ordering Schedule file within 24 hours');
   assert.deepEqual(sent[0].cc, ['ray@example.com'], 'Ray in cc');
   assert.ok(!sent.some((m) => /^Orders due this week/.test(m.subject)), 'the fleet list is NOT sent by the monthly chase');
-  assert.ok(notes.some((n) => /^monthly chase .*1 ship\(s\) mailed/.test(n)), `and the run is logged: ${notes.join(' || ')}`);
   console.log('ok - monthly chase: the 2nd-of-month cron mails every ship out of compliance, one each, cc Ray, and nobody else');
 }

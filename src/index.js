@@ -149,8 +149,7 @@ const parseList = (s) => { try { const v = JSON.parse(s || '[]'); return Array.i
 //   INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', 'Ray asked, 17 Sep');
 export const SEND_KINDS = ['weekly', 'chase'];
 
-async function runSendRequests(env, today) {
-  const hon = env.HON;
+async function ensureSendRequestTable(hon) {
   await hon.prepare(
     `CREATE TABLE IF NOT EXISTS weekly_send_request (
        id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT NOT NULL, to_json TEXT, cc_json TEXT, note TEXT,
@@ -158,6 +157,11 @@ async function runSendRequests(env, today) {
   // The table predates 'kind' (16 Sep). Add it once; D1 refuses a duplicate.
   const cols = ((await hon.prepare('PRAGMA table_info(weekly_send_request)').all()).results || []).map((c) => c.name);
   if (cols.length && !cols.includes('kind')) await hon.prepare('ALTER TABLE weekly_send_request ADD COLUMN kind TEXT').run();
+}
+
+async function runSendRequests(env, today) {
+  const hon = env.HON;
+  await ensureSendRequestTable(hon);
   const pending = (await hon.prepare(
     `SELECT id, ship, to_json, cc_json, note, kind FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
   if (!pending.length) return 0;
@@ -198,6 +202,14 @@ async function runSendRequests(env, today) {
   }
 
   for (const q of pending) {
+    // CLAIM THE ROW FIRST. Two cron invocations can share a minute (the review
+    // of PR #18 found the monthly chase doing exactly that), and a row that is
+    // only marked done after its sends would be sent by both. One UPDATE on
+    // "done_at IS NULL" is atomic in D1: whoever changes zero rows moves on.
+    const claim = await hon.prepare(
+      `UPDATE weekly_send_request SET done_at = datetime('now'), result = 'claimed' WHERE id = ?1 AND done_at IS NULL`)
+      .bind(q.id).run();
+    if (claim && claim.meta && Number(claim.meta.changes) === 0) continue;
     const kind = SEND_KINDS.includes(q.kind) ? q.kind : 'weekly';
     let result;
     const lines = [];
@@ -441,11 +453,18 @@ export default {
     }
 
     if (event.cron === MONTHLY_CHASE_CRON) {
-      await env.HON.prepare(
-        `INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', ?1)`)
-        .bind(`monthly chase, 2nd of the month, ${today}`).run();
-      const n = await runSendRequests(env, today);
-      await logIngest(env, 'cron', `monthly chase ${today}: ${n} ship(s) mailed`);
+      // QUEUE ONLY. The 15-minute runner sends it, so this branch never races
+      // that runner (they can share a minute) and the record is the queue row.
+      try {
+        await ensureSendRequestTable(env.HON);
+        const r = await env.HON.prepare(
+          `INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', ?1)`)
+          .bind(`monthly chase, 2nd of the month, ${today}`).run();
+        const id = r && r.meta && r.meta.last_row_id;
+        await logIngest(env, 'cron', `monthly chase ${today}: queued row #${id || '?'} for every ship missing its Ordering Schedule; the 15-minute runner sends it`);
+      } catch (e) {
+        await logIngest(env, 'cron', `monthly chase ${today} threw: ${String((e && e.message) || e)}`);
+      }
       return;
     }
 
