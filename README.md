@@ -181,6 +181,28 @@ nothing.
 
 ---
 
+## Chasing the ships that have no Ordering Schedule
+
+Miguel, 17 Sep 2026: one email per ship, Ray in cc, always a 24-hour turnaround. The
+email (`src/lib/chaseEmail.js`, template `ordering-schedule-chase`) is written for a crew
+that does not read: one headline, the deadline 24 hours after the send in UTC, three
+numbered steps, `obp@cims.work` in large type, a red box saying why *this* ship is getting
+it, and the table of every ship still missing with the reader's row highlighted. Ray signs
+it and replies go to him.
+
+Queue it on the same table as the on-demand send, with `kind = 'chase'`. `ship = '*'` mails
+every ship that is missing its schedule right now, one email each; a named ship that has a
+schedule is skipped and the row says so:
+
+```sql
+INSERT INTO weekly_send_request (ship, kind, note) VALUES ('*', 'chase', 'Ray asked, 17 Sep');
+INSERT INTO weekly_send_request (ship, kind) VALUES ('Beyond', 'chase');
+```
+
+The 15-minute cron picks it up; `result` on the row and the `on-demand chase send` line in
+`ingest_log` say who was mailed. The list comes from the same schedule judgement as the
+Monday email (`scheduleStatus.js`), so a ship drops off the moment cims-hon reads its file.
+
 ## Check it works
 
 | | |
