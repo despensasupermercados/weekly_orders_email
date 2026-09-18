@@ -50,7 +50,7 @@ assert.equal(by.Ascent.status, STATUS.IMAGE, 'a screenshot is not the file (send
 assert.equal(by.Xcel.status, STATUS.UNMATCHED, 'a file that named no ship');
 assert.equal(by.Beyond.status, STATUS.NEVER, 'nothing loaded, nothing on record');
 assert.ok(!by.Quest, 'Azamara ships are never asked for an ordering schedule - theirs is Ray\'s MLS');
-assert.ok(!by.Legend, 'a hull not in service has no crew to ask');
+assert.equal(by.Legend && by.Legend.status, STATUS.OK, 'Legend is in service and has a schedule: judged, and fine');
 
 const ask = needsSchedule(out).map((s) => s.ship).sort();
 assert.deepEqual(ask, ['Allure', 'Ascent', 'Beyond', 'Millennium', 'Xcel']);
