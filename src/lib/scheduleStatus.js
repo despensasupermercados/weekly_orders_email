@@ -139,7 +139,7 @@ export async function scheduleStatuses(hon, fleetMapText, today) {
     // "schedule" at all, so it is selected by its own prefix.
     const attempts = (await hon.prepare(
       `SELECT sender, ts, note FROM ingest_log
-        WHERE source = 'email'
+        WHERE source IN ('email', 'reingest')
           AND (lower(note) LIKE '%schedule%' OR note LIKE 'no spreadsheet attachment%')
           AND note NOT LIKE 'not an Azamara MLS%'
           AND ts >= date(?1, '-120 day')

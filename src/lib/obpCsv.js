@@ -230,7 +230,6 @@ export async function fillFromMirror(hon, snapshotDate, wrote = { inventory: tru
        FROM obp_inventory m
       WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_inventory)
         AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INVENTORY} WHERE snapshot_date = ?1)`).bind(snapshotDate).run();
-  const coverage = wrote.inventory ? CSV_INVENTORY : CSV_INTRANSIT;
   const tr = !wrote.intransit ? null : await hon.prepare(
     `INSERT INTO ${CSV_INTRANSIT} (ship, part_number, description, qty, po_number, vendor_invoice, voyage, port, eta_date, order_date, snapshot_date, source)
      SELECT m.ship, m.part_number, ${col(tc, 'description')}, m.qty, ${col(tc, 'po_number')}, ${col(tc, 'vendor_invoice')}, NULL, NULL,
@@ -238,7 +237,11 @@ export async function fillFromMirror(hon, snapshotDate, wrote = { inventory: tru
             NULL, ?1, 'mirror-fill'
        FROM obp_intransit m
       WHERE m.snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)
-        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${coverage} WHERE snapshot_date = ?1 AND source = 'csv')`).bind(snapshotDate).run();
+        -- covered by the export in EITHER file: keyed on the inventory file
+        -- alone, a ship present only in the in-transit file got the mirror's
+        -- lines ADDED to its real ones (review, 18 Sep 2026)
+        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INVENTORY} WHERE snapshot_date = ?1 AND source = 'csv')
+        AND m.ship NOT IN (SELECT DISTINCT ship FROM ${CSV_INTRANSIT} WHERE snapshot_date = ?1 AND source = 'csv')`).bind(snapshotDate).run();
   const n = (r) => (r && r.meta && typeof r.meta.changes === 'number') ? r.meta.changes : (r && typeof r.changes === 'number' ? r.changes : null);
   return { inventory: n(inv), intransit: n(tr) };
 }

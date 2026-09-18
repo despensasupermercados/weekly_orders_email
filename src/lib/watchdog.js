@@ -412,10 +412,13 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // the row stays 'claimed' with nothing sent and nothing said.
   try {
     const stuck = await many(hon,
-      `SELECT id, ship, kind, done_at FROM weekly_send_request
-        WHERE result = 'claimed' AND done_at < datetime('now', '-30 minutes') ORDER BY id LIMIT 20`);
-    for (const r of stuck) add('critical', 'queue_stuck',
-      `send request #${r.id} (${r.kind || 'weekly'} ${r.ship}) was claimed at ${r.done_at} and never finished - re-queue it or mark it done by hand`);
+      `SELECT id, ship, kind, done_at, requested_at, result FROM weekly_send_request
+        WHERE (result = 'claimed' AND done_at < datetime('now', '-30 minutes'))
+           OR (result LIKE 'waiting:%' AND done_at IS NULL AND requested_at < datetime('now', '-2 hours'))
+        ORDER BY id LIMIT 20`);
+    for (const r of stuck) add('critical', 'queue_stuck', r.result === 'claimed'
+      ? `send request #${r.id} (${r.kind || 'weekly'} ${r.ship}) was claimed at ${r.done_at} and never finished - re-queue it or mark it done by hand`
+      : `send request #${r.id} (${r.kind || 'weekly'} ${r.ship}) has been ${String(r.result).slice(0, 160)} since ${r.requested_at}; it is retried every 15 minutes and nothing has gone out`);
   } catch (_) { /* table may not exist yet */ }
 
   // ---- 15. Did the Monday emails actually land? ----
@@ -492,41 +495,45 @@ export const findingKey = (f) => `${f.check}|${String(f.detail || '').replace(/\
 // 2026: it used to be "standing", heard at day 7 at the earliest). Reminders
 // run from the last time the finding was mailed, not from an exact multiple
 // of seven days after first sight, so one missed night cannot skip a week.
+//
+// "MAILED" MEANS THE DIGEST WENT OUT. This function only decides; the caller
+// stamps last_mailed with markMailed() after the send succeeded (review of
+// 18 Sep 2026: stamping here claimed a mail that a failed send never made,
+// and the finding was then silent for a week). A finding that has never been
+// mailed is fresh however many nights it has been seen. An escalation is
+// measured against the severity it was LAST MAILED at, so a severity that
+// flaps between warn and critical is not "new" every other night.
 export async function rememberFindings(hon, report, today) {
   const findings = report.findings || [];
   const out = { fresh: [], standing: [], reminders: [] };
   try {
     await hon.prepare(
-      `CREATE TABLE IF NOT EXISTS ${SEEN_TABLE} (key TEXT PRIMARY KEY, check_ TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, severity TEXT, last_mailed TEXT)`).run();
+      `CREATE TABLE IF NOT EXISTS ${SEEN_TABLE} (key TEXT PRIMARY KEY, check_ TEXT, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, severity TEXT, last_mailed TEXT, mailed_severity TEXT)`).run();
     const cols = ((await hon.prepare(`PRAGMA table_info(${SEEN_TABLE})`).all()).results || []).map((c) => c.name);
-    if (cols.length && !cols.includes('severity')) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN severity TEXT`).run();
-    if (cols.length && !cols.includes('last_mailed')) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN last_mailed TEXT`).run();
-    const seen = new Map(((await hon.prepare(`SELECT key, first_seen, severity, last_mailed FROM ${SEEN_TABLE}`).all()).results || [])
+    for (const col of ['severity', 'last_mailed', 'mailed_severity']) {
+      if (cols.length && !cols.includes(col)) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN ${col} TEXT`).run();
+    }
+    const seen = new Map(((await hon.prepare(`SELECT key, first_seen, severity, last_mailed, mailed_severity FROM ${SEEN_TABLE}`).all()).results || [])
       .map((r) => [r.key, r]));
     const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
     for (const f of findings) {
       const key = findingKey(f);
       const rec = seen.get(key);
-      let mailed = false;
-      if (!rec) {
-        out.fresh.push(f);
-        mailed = true;
-      } else if (f.severity === 'critical' && rec.severity && rec.severity !== 'critical') {
+      if (!rec || !rec.last_mailed) {
+        out.fresh.push(rec ? { ...f, first_seen: rec.first_seen } : f);
+      } else if (f.severity === 'critical' && rec.mailed_severity !== 'critical') {
         out.fresh.push({ ...f, first_seen: rec.first_seen, escalated: true });
-        mailed = true;
       } else {
         out.standing.push({ ...f, first_seen: rec.first_seen });
-        const since = rec.last_mailed || rec.first_seen;
         const days = daysBetween(rec.first_seen, today);
-        if (f.severity === 'critical' && days > 0 && daysBetween(since, today) >= REMIND_EVERY_DAYS) {
+        if (f.severity === 'critical' && days > 0 && daysBetween(rec.last_mailed, today) >= REMIND_EVERY_DAYS) {
           out.reminders.push({ ...f, first_seen: rec.first_seen, days });
-          mailed = true;
         }
       }
       await hon.prepare(
-        `INSERT INTO ${SEEN_TABLE} (key, check_, first_seen, last_seen, severity, last_mailed) VALUES (?1, ?2, ?3, ?3, ?4, ?5)
-         ON CONFLICT(key) DO UPDATE SET last_seen = ?3, severity = ?4, last_mailed = COALESCE(?5, last_mailed)`)
-        .bind(key, f.check, today, f.severity || null, mailed ? today : null).run();
+        `INSERT INTO ${SEEN_TABLE} (key, check_, first_seen, last_seen, severity) VALUES (?1, ?2, ?3, ?3, ?4)
+         ON CONFLICT(key) DO UPDATE SET last_seen = ?3, severity = ?4`)
+        .bind(key, f.check, today, f.severity || null).run();
     }
     await hon.prepare(`DELETE FROM ${SEEN_TABLE} WHERE last_seen < date(?1, '-30 day')`).bind(today).run();
   } catch (e) {
@@ -536,4 +543,15 @@ export async function rememberFindings(hon, report, today) {
     out.error = String((e && e.message) || e);
   }
   return out;
+}
+
+// The digest carrying these findings went out today: remember it, with the
+// severity each was mailed at. Never called on a failed send.
+export async function markMailed(hon, findings, today) {
+  for (const f of findings || []) {
+    try {
+      await hon.prepare(`UPDATE ${SEEN_TABLE} SET last_mailed = ?2, mailed_severity = ?3 WHERE key = ?1`)
+        .bind(findingKey(f), today, f.severity || null).run();
+    } catch (_) { /* a missed stamp costs one repeated line tomorrow, never a lost one */ }
+  }
 }

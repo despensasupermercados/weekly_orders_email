@@ -16,7 +16,7 @@ import { unscheduledGaps } from './lib/fallback.js';
 import { fleetRunway } from './lib/runwayDb.js';
 import { inService } from './lib/fleetStatus.js';
 import { renderWeekly } from './lib/email.js';
-import { runWatchdog, rememberFindings, INGEST_SOURCE } from './lib/watchdog.js';
+import { runWatchdog, rememberFindings, markMailed, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderChase, chaseSubject, CHASE_TEMPLATE } from './lib/chaseEmail.js';
 import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
 import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
@@ -108,9 +108,13 @@ async function send(env, to, subject, html, templateId = 'orders-due-weekly', cc
     }),
   });
   const body = await res.text().catch(() => '');
+  // cims-mailer answers a repeated idempotency key with {ok:true, dedup:true}
+  // and sends nothing: still "sent" (it went out once), but say so.
+  let dedup = false;
+  try { dedup = Boolean(JSON.parse(body).dedup); } catch (_) { /* not JSON */ }
   // Never swallow this. A silent send failure is the same class of bug as a
   // silent parse failure: the system looks healthy and nobody is warned.
-  return { sent: res.ok, status: res.status, body: body.slice(0, 300) };
+  return { sent: res.ok, dedup, status: res.status, body: body.slice(0, 300) };
 }
 
 // Length-independent compare. The value it guards is a read-only list of
@@ -168,7 +172,7 @@ async function runSendRequests(env, today) {
   const hon = env.HON;
   await ensureSendRequestTable(hon);
   const pending = (await hon.prepare(
-    `SELECT id, ship, to_json, cc_json, note, kind FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
+    `SELECT id, ship, to_json, cc_json, note, kind, result FROM weekly_send_request WHERE done_at IS NULL ORDER BY id LIMIT 5`).all()).results || [];
   if (!pending.length) return 0;
 
   const { rows, act, gaps, runsOut, deliveries, schedules, schedulesRan, schedulesReason } = await buildWeekly(env, today);
@@ -225,9 +229,12 @@ async function runSendRequests(env, today) {
       // "nobody is missing" is not known, it is unknown: give the row back to
       // the queue (un-claim it) and say why, instead of consuming it as done.
       if (kind === 'chase' && !schedulesRan) {
+        const already = String(q.result || '').startsWith('waiting:');
         await hon.prepare(`UPDATE weekly_send_request SET done_at = NULL, result = ?2 WHERE id = ?1`)
           .bind(q.id, `waiting: schedule status check did not run (${String(schedulesReason || 'unknown').slice(0, 200)})`).run();
-        await logIngest(env, 'cron', `on-demand chase #${q.id} ${q.ship}: schedule status check did not run (${schedulesReason}); row left pending`);
+        // Said once, not every 15 minutes: the night check (queue_stuck) is
+        // the alarm if it stays this way for hours.
+        if (!already) await logIngest(env, 'cron', `on-demand chase #${q.id} ${q.ship}: schedule status check did not run (${schedulesReason}); row left pending and retried every 15 minutes`);
         continue;
       }
       const targets = q.ship === '*'
@@ -550,6 +557,9 @@ export default {
             renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night',
             [], null, `night:${today}`);
           if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
+          // Only a digest that went out counts as "said": a finding whose
+          // mail failed is offered again tomorrow (review, 18 Sep 2026).
+          else await markMailed(env.HON, [...memory.fresh, ...memory.reminders], today);
         } catch (e) {
           await logIngest(env, 'watchdog', `digest send THREW: ${String((e && e.message) || e)}`);
         }
@@ -645,9 +655,12 @@ export default {
     // ones most likely to miss a container.
     // ONCE PER MONDAY. A re-delivered or re-fired cron must not mail 48 ships
     // twice; the "weekly fleet send" line is written only after a live run.
+    // A run that mailed NOBODY (mailer down) does not count, so the same-day
+    // retry can go out; the idempotency keys keep the partial case safe.
     try {
       const done = await env.HON.prepare(
-        `SELECT 1 x FROM ingest_log WHERE source = ?1 AND sender = 'cron' AND note LIKE 'weekly fleet send:%' AND ts >= ?2 LIMIT 1`)
+        `SELECT 1 x FROM ingest_log WHERE source = ?1 AND sender = 'cron' AND note LIKE 'weekly fleet send:%'
+            AND note NOT LIKE 'weekly fleet send: 0 of %' AND ts >= ?2 LIMIT 1`)
         .bind(INGEST_SOURCE, today).first();
       if (done && done.x) {
         await logIngest(env, 'cron', `weekly fleet send already done today (${today}); this invocation sends nothing`);
@@ -663,6 +676,7 @@ export default {
     }
     ctx.waitUntil((async () => {
       let sent = 0;
+      let deduped = 0;
       const failed = [];
       // EVERY SEND IS ISOLATED. send() awaits a fetch on the MAILER binding, and
       // a fetch REJECTS on a transport error rather than returning a status. One
@@ -686,7 +700,7 @@ export default {
             replyTo,
             `weekly:${today}:${normShip(group.ship)}`
           );
-          if (r.sent) sent++;
+          if (r.sent) { sent++; if (r.dedup) deduped++; }
           else failed.push(`${group.ship} -> ${group.to.join(',')}: ${JSON.stringify(r)}`);
         } catch (e) {
           failed.push(`${group.ship} -> ${group.to.join(',')}: threw ${String((e && e.message) || e)}`);
@@ -695,6 +709,7 @@ export default {
       // One line per run, not one per ship: the log is evidence, not a feed.
       await logIngest(env, 'cron',
         `weekly fleet send: ${sent} of ${plan.sendable.length} ships mailed` +
+        (deduped ? ` (${deduped} already sent today by an earlier run, not re-sent)` : '') +
         (plan.unmapped.length ? `, ${plan.unmapped.length} unaddressable` : '') +
         (plan.malformed.length ? `, ${plan.malformed.length} malformed FLEET_MAP entries` : ''));
       for (const f of failed) await logIngest(env, 'cron', `weekly send FAILED: ${f}`);

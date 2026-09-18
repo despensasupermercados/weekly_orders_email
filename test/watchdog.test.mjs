@@ -215,7 +215,7 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
 {
   process.emitWarning = () => {};
   const { DatabaseSync } = await import('node:sqlite');
-  const { rememberFindings, findingKey } = await import('../src/lib/watchdog.js');
+  const { rememberFindings, markMailed, findingKey } = await import('../src/lib/watchdog.js');
   const db = new DatabaseSync(':memory:');
   const hon = {
     prepare(sql) {
@@ -235,6 +235,7 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
 
   const n1 = await rememberFindings(hon, { findings: [frozen(5), cover] }, '2026-09-11');
   assert.equal(n1.fresh.length, 2, 'night one: everything is new');
+  await markMailed(hon, n1.fresh, '2026-09-11'); // the digest went out
   const n2 = await rememberFindings(hon, { findings: [frozen(6), cover] }, '2026-09-12');
   assert.equal(n2.fresh.length, 0, 'night two: nothing new, nothing to mail');
   assert.equal(n2.standing.length, 2);
@@ -243,6 +244,7 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   assert.equal(n8.fresh.length, 0);
   assert.equal(n8.reminders.length, 1, 'a critical still standing after seven days is mentioned again');
   assert.equal(n8.reminders[0].check, 'feed_frozen', 'the warn is not');
+  await markMailed(hon, n8.reminders, '2026-09-18');
   const n9 = await rememberFindings(hon, { findings: [frozen(13), cover, { severity: 'critical', check: 'delivery', detail: 'Apex: 1 order due -> ax@x: bounced' }] }, '2026-09-19');
   assert.equal(n9.fresh.length, 1, 'a genuinely new finding is new');
   assert.equal(n9.fresh[0].check, 'delivery');
@@ -254,7 +256,7 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
 // cannot skip a week.
 {
   const { DatabaseSync } = await import('node:sqlite');
-  const { rememberFindings } = await import('../src/lib/watchdog.js');
+  const { rememberFindings, markMailed } = await import('../src/lib/watchdog.js');
   const db = new DatabaseSync(':memory:');
   const hon = {
     prepare(sql) {
@@ -271,20 +273,38 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   const feed = (sev, days) => ({ severity: sev, check: 'feed', detail: `obp_inventory last snapshot 2026-09-19, ${days} days old` });
   const d1 = await rememberFindings(hon, { findings: [feed('warn', 2)] }, '2026-09-21');
   assert.equal(d1.fresh.length, 1);
+  await markMailed(hon, d1.fresh, '2026-09-21');
   const d2 = await rememberFindings(hon, { findings: [feed('warn', 3)] }, '2026-09-22');
   assert.equal(d2.fresh.length, 0, 'same warning, same finding');
   const d3 = await rememberFindings(hon, { findings: [feed('critical', 4)] }, '2026-09-23');
   assert.equal(d3.fresh.length, 1, 'warn -> critical is mailed as new');
   assert.ok(d3.fresh[0].escalated, 'and marked as an escalation');
+  await markMailed(hon, d3.fresh, '2026-09-23');
   const d4 = await rememberFindings(hon, { findings: [feed('critical', 5)] }, '2026-09-24');
   assert.equal(d4.fresh.length, 0);
   assert.equal(d4.reminders.length, 0);
   // Night 7 after the escalation mail (09-30) is missed entirely; night 8 must still remind.
   const d8 = await rememberFindings(hon, { findings: [feed('critical', 12)] }, '2026-10-01');
   assert.equal(d8.reminders.length, 1, 'eight days after the last mail: reminded, not skipped to day 14');
+  await markMailed(hon, d8.reminders, '2026-10-01');
   const d9 = await rememberFindings(hon, { findings: [feed('critical', 13)] }, '2026-10-02');
   assert.equal(d9.reminders.length, 0, 'and not again the next night');
-  console.log('ok - watchdog memory: an escalation is news; reminders count from the last mail');
+  // FLAPPING (review, 18 Sep): warn -> critical was mailed at critical; a dip
+  // to warn and back to critical is not news again.
+  await rememberFindings(hon, { findings: [feed('warn', 14)] }, '2026-10-03');
+  const flap = await rememberFindings(hon, { findings: [feed('critical', 15)] }, '2026-10-04');
+  assert.equal(flap.fresh.length, 0, 'already mailed at critical: not an escalation');
+  // A FAILED SEND (review, 18 Sep): nothing stamped, so the finding is offered again.
+  const nu = { severity: 'critical', check: 'delivery', detail: 'Apex: bounced' };
+  const e1 = await rememberFindings(hon, { findings: [nu] }, '2026-10-05');
+  assert.equal(e1.fresh.length, 1);
+  // (the caller's send fails: markMailed is never called)
+  const e2 = await rememberFindings(hon, { findings: [nu] }, '2026-10-06');
+  assert.equal(e2.fresh.length, 1, 'never mailed = still new the next night');
+  await markMailed(hon, e2.fresh, '2026-10-06');
+  const e3 = await rememberFindings(hon, { findings: [nu] }, '2026-10-07');
+  assert.equal(e3.fresh.length, 0, 'mailed once: quiet');
+  console.log('ok - watchdog memory: an escalation is news once; reminders count from the last mail; a failed send is offered again');
 }
 
 // ---- Delivery: Monday's emails are checked against cims-mail's log ----
@@ -305,4 +325,17 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   const none = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });
   assert.equal(none.counts.delivery, 'no MAIL binding', 'without the binding the check says it cannot run');
   console.log('ok - watchdog delivery: a bounced Monday email is critical, a delay is a warning, delivered is silent');
+}
+
+
+// REVIEW OF 18 Sep 2026: a chase row given back to the queue because the
+// schedule judgement did not run is retried every 15 minutes; after two hours
+// of that the night check must say so.
+{
+  const stuckRows = [{ id: 9, ship: '*', kind: 'chase', done_at: null, requested_at: '2026-09-09 13:00:00', result: 'waiting: schedule status check did not run (D1_ERROR)' }];
+  const r = await runWatchdog({ HON: fakeDb([...base, ["result LIKE 'waiting:%'", stuckRows]]) }, TODAY, { repair: false });
+  const q = r.findings.filter((f) => f.check === 'queue_stuck');
+  assert.equal(q.length, 1, JSON.stringify(q));
+  assert.ok(q[0].severity === 'critical' && /#9/.test(q[0].detail) && /retried every 15 minutes/.test(q[0].detail), q[0].detail);
+  console.log('ok - watchdog: a chase row waiting on a failed judgement for hours is a critical');
 }

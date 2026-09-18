@@ -53,3 +53,27 @@ assert.equal(viaMime.length, 3);
 assert.equal(viaMime.find((r) => r.ship === 'Pursuit').due_date, '2026-11-02');
 
 console.log('ok - Azamara MLS workbook: an attached xlsx parses to dated rows through the MIME path');
+
+
+// REVIEW OF 18 Sep 2026: a Date cell with Excel's DEFAULT Short Date format
+// renders as 'm/d/yy' in SheetJS and the strict parser of 17 Sep dropped it,
+// so an attached MLS would have been refused with 0 rows. The typed Date wins.
+{
+  const { toIso } = await import('../src/lib/azamaraMls.js');
+  assert.equal(toIso('10/2/26'), '2026-10-02', "Excel's default m/d/yy");
+  assert.equal(toIso('02-Oct-26'), '2026-10-02');
+  assert.equal(toIso('2-Oct-2026'), '2026-10-02');
+  assert.equal(toIso('2-Oct'), null, 'no year, no date');
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Ship', 'Port', 'Country', 'Ship Load Date', 'Delivery Date to BWS', '', 'Month', 'PO Number'],
+    ['Quest', 'Auckland', 'New Zealand', new Date(Date.UTC(2026, 9, 12)), new Date(Date.UTC(2026, 9, 2)), '', 'Oct', ''],
+  ], { cellDates: true });
+  const wb2 = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb2, ws, 'MLS');
+  const buf = new Uint8Array(XLSX.write(wb2, { type: 'array', bookType: 'xlsx' }));
+  const rows = parseAzamaraRows(rowsFromWorkbook(XLSX.read, XLSX.utils, buf));
+  assert.equal(rows.length, 1, `a default-format date cell still yields a dated row: ${JSON.stringify(rows)}`);
+  assert.equal(rows[0].due_date, '2026-10-02');
+  assert.equal(rows[0].loading_delivery_date, '2026-10-12');
+  console.log('ok - azamara workbook: Excel default date cells parse by their typed value');
+}
