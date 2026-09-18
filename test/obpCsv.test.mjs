@@ -279,3 +279,24 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.notEqual(trLatest && trLatest.d, '2026-09-18', 'yesterday\'s in-transit copy stays the latest');
   console.log('ok - obp csv: strict file-name identity; an inventory-only mail leaves the in-transit copy alone');
 }
+
+
+// REVIEW OF 18 Sep 2026: a ship in the in-transit file but not in a partial
+// inventory file must not get the mirror's in-transit lines added to its own.
+{
+  const inv = [INV_HEAD];
+  for (let i = 0; i < MIN_INVENTORY_ROWS + 5; i++) inv.push(invLine('Adventure', `P${i}`, 'FILLER', 3));
+  const tr = [TR_HEAD,
+    trLine('Adventure', 'A3VX330 / 99PRD67087', 'TN619M MAGENTA TONER', 4, '09/25/2026 12:00:00 AM'),
+    trLine('Allure', 'A3VX330 / 99PRD67087', 'TN619M MAGENTA TONER', 4, '09/25/2026 12:00:00 AM'),
+  ];
+  const r = await ingestObpCsv(hon, [
+    { filename: CSV_FILES.inventory, content: inv.join('\r\n') },
+    { filename: CSV_FILES.intransit, content: tr.join('\r\n') },
+  ], '2026-09-19');
+  assert.equal(r.refused.length, 0, r.refused.join('; '));
+  const both = (await hon.prepare(
+    `SELECT ship, COUNT(DISTINCT source) n FROM weekly_obp_intransit WHERE snapshot_date = '2026-09-19' GROUP BY ship HAVING n > 1`).all()).results || [];
+  assert.deepEqual(both, [], `no ship carries both csv and mirror-fill in-transit rows: ${JSON.stringify(both)}`);
+  console.log('ok - obp csv: the mirror fills only ships the export did not mention in either file');
+}

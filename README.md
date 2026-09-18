@@ -218,7 +218,10 @@ claimed with one atomic UPDATE before it is sent, so two cron ticks in the same 
 send it twice.
 
 The 15-minute cron picks it up; `result` on the row and the `on-demand chase send` line in
-`ingest_log` say who was mailed. The list comes from the same schedule judgement as the
+`ingest_log` say who was mailed. If the schedule judgement itself failed (a D1 error), the row is
+given back to the queue with `result = 'waiting: ...'` and retried every 15 minutes; after
+two hours of that the night check raises `queue_stuck`. Every email carries an idempotency
+key, so a retried row cannot mail a ship twice. The list comes from the same schedule judgement as the
 Monday email (`scheduleStatus.js`), so a ship drops off the moment cims-hon reads its file.
 
 ## Check it works

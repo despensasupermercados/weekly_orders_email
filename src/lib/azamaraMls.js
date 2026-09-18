@@ -24,12 +24,26 @@ export function isAzamaraMls(filename, subject, bodyText) {
   return /DELIVERY\s*DATE\s*TO\s*BWS/i.test(bodyText || '');
 }
 
+const MONTH_NUM = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
 export function toIso(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
   const s = norm(v);
+  const pad = (x) => String(x).padStart(2, '0');
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // 10/2/2026 (US order)
-  if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+  if (m) return `${m[3]}-${pad(m[1])}-${pad(m[2])}`;
+  // 10/2/26: Excel's DEFAULT Short Date (numFmtId 14) as SheetJS renders it.
+  // The strict parser of 17 Sep dropped this form and an attached MLS
+  // workbook would have parsed to 0 rows and been refused (review, 18 Sep).
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (m2) return `20${m2[3]}-${pad(m2[1])}-${pad(m2[2])}`;
+  // 2-Oct-2026, 02-Oct-26: a year is present, so it is a date, not a guess.
+  const m3 = s.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{2}|\d{4})$/);
+  if (m3 && MONTH_NUM[m3[2].toLowerCase()]) {
+    const y = m3[3].length === 2 ? 2000 + Number(m3[3]) : Number(m3[3]);
+    return `${y}-${pad(MONTH_NUM[m3[2].toLowerCase()])}-${pad(m3[1])}`;
+  }
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const n = Number(s); // Excel serial
   if (isFinite(n) && n > 20000 && n < 80000) {
@@ -85,6 +99,9 @@ export function rowsFromWorkbook(readSync, utils, buf) {
         const font = c && c.s && c.s.color && c.s.color.rgb ? String(c.s.color.rgb) : '';
         cells.push({
           text: c ? norm(c.w != null ? c.w : c.v) : '',
+          // The typed value of a date cell. cellDates gives a Date whatever
+          // the display format; the formatted text can be 'm/d/yy' or worse.
+          date: c && c.v instanceof Date && !isNaN(c.v) ? c.v : null,
           green: GREEN.test(fill),
           red: /^ff(0000|c000|e000)/i.test(font) || /^(ff0000|c00000)/i.test(font),
         });
@@ -134,7 +151,7 @@ export function parseAzamaraRows(rows) {
     if (!AZ_SHIPS.some((s) => s.toLowerCase() === ship.toLowerCase())) continue;
 
     const bws = at('bws');
-    const dueDate = toIso(bws && bws.text);
+    const dueDate = toIso(bws && (bws.date || bws.text));
     if (!dueDate) continue; // placeholder row for a loading not yet scheduled
 
     const load = at('load');
@@ -158,7 +175,7 @@ export function parseAzamaraRows(rows) {
       po_number: poNum || null,
       po_state: !poNum ? 'none' : (po && po.green ? 'confirmed' : 'raised'),
       due_date: dueDate,
-      loading_delivery_date: toIso(load && load.text),
+      loading_delivery_date: toIso(load && (load.date || load.text)),
       loading_port: port || null,
       dest_country: country || null,
       month_label: norm(monthCell && monthCell.text) || null,
