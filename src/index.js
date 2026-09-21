@@ -22,6 +22,7 @@ import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
 import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
 import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
+import { fleetCoverage } from './lib/coverage.js';
 
 // MUST match the nightly entry in wrangler.toml exactly. It is the only thing
 // telling the watchdog run apart from the Monday fleet run inside one
@@ -281,11 +282,19 @@ async function buildWeekly(env, today) {
   // were already isolated; this one was not, so one D1 error on the schedule
   // query meant no email, no 'weekly run' log line, and the watchdog only
   // noticing eight days later. A partial email beats none.
+  // EVERY DATA SOURCE THIS RUN DEPENDS ON, AND WHETHER IT ANSWERED. A check
+  // that did not run used to leave an empty findings array, which reads exactly
+  // like a healthy fleet - see coverage.js. Nothing is inferred from silence
+  // any more: each check says so itself.
+  const checks = [];
   let rows = [];
   try {
     rows = await voyageStates(env.HON, today);
+    checks.push({ name: 'voyage', ran: true });
   } catch (e) {
-    await logIngest(env, 'cron', `schedule check threw: ${String(e && e.message || e)}`);
+    const reason = String(e && e.message || e);
+    checks.push({ name: 'voyage', ran: false, reason });
+    await logIngest(env, 'cron', `schedule check threw: ${reason}`);
   }
   // A hull with no crew aboard cannot act on a voyage row either. The runway
   // and gap checks already filter on inService; the schedule path did not.
@@ -306,21 +315,32 @@ async function buildWeekly(env, today) {
   let deliveries = [];
   try {
     const g = await unscheduledGaps(env.HON, today);
+    checks.push({ name: 'delivery gap', ran: Boolean(g.ran), reason: g.reason });
     if (g.ran) { gaps = g.findings; deliveries = g.deliveries || []; for (const sh of g.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
   } catch (e) {
-    await logIngest(env, 'cron', `schedule-free check threw: ${String(e && e.message || e)}`);
+    const reason = String(e && e.message || e);
+    checks.push({ name: 'delivery gap', ran: false, reason });
+    await logIngest(env, 'cron', `schedule-free check threw: ${reason}`);
   }
 
   // WILL THEY RUN OUT BEFORE THE NEXT CONTAINER. The item-level half of the
   // objective's "this ship, this voyage, these exact items, this date".
   let runsOut = [];
+  // `unread` WAS BUILT AND THEN DROPPED. fleetRunway has always returned the
+  // items whose on_hand it could not read; this line took `findings` and
+  // `shipNames` and left the rest on the floor, so an item we could not measure
+  // produced no finding and its ship read CLEAR on it. It goes to coverage now.
+  let unread = [];
   try {
     const r = await fleetRunway(env.HON, today);
-    if (r.ran) { runsOut = r.findings; for (const sh of r.shipNames || []) checked.add(sh); }
+    checks.push({ name: 'runway', ran: Boolean(r.ran), reason: r.reason });
+    if (r.ran) { runsOut = r.findings; unread = r.unread || []; for (const sh of r.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `runway check did not run: ${r.reason}`);
   } catch (e) {
-    await logIngest(env, 'cron', `runway check threw: ${String(e && e.message || e)}`);
+    const reason = String(e && e.message || e);
+    checks.push({ name: 'runway', ran: false, reason });
+    await logIngest(env, 'cron', `runway check threw: ${reason}`);
   }
 
   // WHICH SHIPS HAVE NO ORDERING SCHEDULE WE CAN USE, AND WHY. Miguel, 16 Sep
@@ -334,16 +354,21 @@ async function buildWeekly(env, today) {
     const s = await scheduleStatuses(env.HON, env.FLEET_MAP, today);
     schedulesRan = Boolean(s.ran);
     schedulesReason = s.reason || null;
-    if (s.ran) schedules = s.statuses;
+    checks.push({ name: 'ordering schedule', ran: schedulesRan, reason: schedulesReason });
+    if (s.ran) { schedules = s.statuses; for (const st of s.statuses || []) if (st && st.ship) checked.add(st.ship); }
     else await logIngest(env, 'cron', `schedule status check did not run: ${s.reason}`);
   } catch (e) {
-    await logIngest(env, 'cron', `schedule status check threw: ${String(e && e.message || e)}`);
+    const reason = String(e && e.message || e);
+    checks.push({ name: 'ordering schedule', ran: false, reason });
+    await logIngest(env, 'cron', `schedule status check threw: ${reason}`);
   }
 
   const checkedShips = [...checked];
+  // WHAT THIS RUN COULD NOT DO. Never rendered to a crew - see coverage.js.
+  const coverage = fleetCoverage({ fleetMap: env.FLEET_MAP, checked: checkedShips, checks, unread, today });
   return {
-    rows, act, gaps, runsOut, deliveries, schedules, schedulesRan, schedulesReason, checked: checkedShips,
-    html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, schedules, checked: checkedShips }),
+    rows, act, gaps, runsOut, deliveries, schedules, schedulesRan, schedulesReason, checked: checkedShips, coverage,
+    html: renderWeekly(act, rows, today, { gaps, runsOut, deliveries, schedules, checked: checkedShips, coverage }),
   };
 }
 
@@ -581,7 +606,7 @@ export default {
     // a single address was resolved, and the failure looked exactly like the
     // cron not firing. Caught only by running the scheduled handler itself,
     // which is why test/scheduled.test.mjs now does.
-    const { rows, act, gaps, runsOut, deliveries, schedules, html } = await buildWeekly(env, today);
+    const { rows, act, gaps, runsOut, deliveries, schedules, html, coverage } = await buildWeekly(env, today);
     // Ships that must be asked for their Ordering Schedule. A finding in its
     // own right: a ship we cannot check is a ship that can miss a container.
     const ask = needsSchedule(schedules);
@@ -598,7 +623,13 @@ export default {
       (stale.length ? `, ${stale.length} past the cut-off by more than ${MISSED_CREW_DAYS} days (escalation, not the crew's)` : '') +
       (gaps.length ? `, ${gaps.length} delivery gaps on ships with no schedule` : '') +
       (ask.length ? `, ${ask.length} ships asked for their ordering schedule` : '') +
-      (faults.length ? `, ${faults.length} unusable rows (engineering)` : ''));
+      (faults.length ? `, ${faults.length} unusable rows (engineering)` : '') +
+      // WHAT THE RUN COULD NOT DO GOES IN THE SAME LINE the watchdog already
+      // reads. A run that examined 45 of 48 ships must not log like a run that
+      // examined all 48 and found them well.
+      (coverage && coverage.ok
+        ? `, all ${coverage.addressed} addressed ships examined`
+        : `, COULD NOT CHECK: ${(coverage && coverage.note) || 'coverage unknown'}`));
 
     // NOTHING DUE **AND** NO GAPS. I broke this an hour after building the
     // fallback: the early return tested act.length alone, so on a week like
@@ -606,7 +637,14 @@ export default {
     // schedule - the run ended here and not one of those ships heard anything.
     // The schedule-free check was dead on arrival, restoring the exact silence
     // it was written to remove.
-    if (!act.length && !gaps.length && !runsOut.length && !ask.length) return; // genuinely nothing to say
+    // NOTHING FOUND IS ONLY GOOD NEWS IF EVERYTHING WAS LOOKED AT. When a check
+    // dies, its findings array is empty, and every test above passes - so the
+    // worst run this Worker can have (nothing examined, nothing known) used to
+    // take the same quiet exit as its best. Coverage decides now: a degraded
+    // run always reaches onboardsupport, even with zero findings.
+    if (!act.length && !gaps.length && !runsOut.length && !ask.length && (!coverage || coverage.ok)) {
+      return; // genuinely nothing to say, and we looked at everything
+    }
 
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
     const supervisors = list(env.DRY_RUN_TO);

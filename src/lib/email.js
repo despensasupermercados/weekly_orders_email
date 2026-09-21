@@ -555,6 +555,34 @@ function scheduleHtml(schedules, forShip, shipName) {
 }
 
 // find it quickly, and stops opening the email.
+// WHAT THIS RUN COULD NOT DO — OPS ONLY, NEVER A CREW.
+//
+// A Printer Specialist cannot fix an OBP export, a dead D1 query or a ship
+// missing from the snapshot, and due.js:226 already settled that a warning
+// nobody can act on is worse than silence. So this block renders on the fleet
+// email to onboardsupport and on nothing else: `forShip` returns empty, and
+// there is no per-ship variant to get wrong.
+//
+// It exists because the alternative is the run LOOKING healthy while it is
+// blind. Amber, not red: nothing here is known to be wrong, which is the whole
+// problem — it is the part of the fleet we cannot make a statement about.
+function couldNotCheckHtml(coverage, forShip) {
+  if (forShip || !coverage || coverage.ok || !(coverage.lines || []).length) return '';
+  const items = coverage.lines.map((l) =>
+    `<li style="margin:0 0 6px;">${esc(l)}</li>`).join('');
+  return `
+<tr><td style="padding:22px 22px 0;">
+ <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+  <td width="6" bgcolor="${AMBER}" style="background:${AMBER};width:6px;font-size:0;">&nbsp;</td>
+  <td bgcolor="${AMBER_BG}" style="background:${AMBER_BG};padding:13px 15px;">
+   <div style="font-family:${FB};font-size:11px;font-weight:700;letter-spacing:1.2px;color:${AMBER};">COULD NOT CHECK &middot; ${coverage.examined} OF ${coverage.addressed} SHIPS EXAMINED</div>
+   <ul style="margin:8px 0 0;padding-left:18px;font-family:${FB};font-size:13px;line-height:1.5;color:${BODY};">${items}</ul>
+   <div style="font-family:${FB};font-size:12px;color:${SLATE};padding-top:8px;">These ships were not told. Nothing above means they have a problem &mdash; it means this run could not say either way.</div>
+  </td>
+ </tr></table>
+</td></tr>`;
+}
+
 export function renderWeekly(act, all, today, opts = {}) {
   const forShip = opts.audience === 'ship';
   const shipName = opts.ship || '';
@@ -619,7 +647,12 @@ export function renderWeekly(act, all, today, opts = {}) {
   ].filter(Boolean);
   const counts = forShip
     ? (bits.join(' &middot; ') || 'Nothing to do this week')
-    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${checked.size} ships ok`;
+    // THE DENOMINATOR IS THE FLEET WE ADDRESS. It used to be the ships this run
+    // happened to examine, so a ship that vanished from the data shrank the
+    // total instead of raising a problem: "35 of 45 ships ok" reads perfectly
+    // well while three ships are missing. coverage.addressed only moves when a
+    // human edits FLEET_MAP.
+    : `${bits.join(' &middot; ') || 'Nothing due'} &middot; ${clean} of ${(opts.coverage && opts.coverage.addressed) || checked.size} ships ok`;
   const strap = `${window} &middot; ${counts}`;
   // THE PREHEADER IS THE FIRST AND OFTEN THE ONLY LINE READ. On a phone it sits
   // next to the subject in the inbox list, before anyone opens anything. It was
@@ -667,9 +700,10 @@ ${runsOutHtml(opts.runsOut, forShip, shipName, today)}
 ${gapsHtml(opts.gaps, forShip, shipName)}
 ${forShip ? '' : scheduleHtml(opts.schedules, forShip, shipName)}
 ${coverageHtml(all, today, forShip, shipName, opts.gaps, opts.deliveries)}
+${couldNotCheckHtml(opts.coverage, forShip)}
 
 <tr><td style="padding:22px 26px 0;font-family:${FB};font-size:14px;line-height:1.65;color:${BODY};">
-<p style="margin:0 0 14px;">${forShip ? 'That is all for this week.' : 'Ships not listed have nothing due this week.'} Next email: <strong>Monday 08:00 Miami time</strong>.</p>
+<p style="margin:0 0 14px;">${forShip ? 'That is all for this week.' : (opts.coverage && !opts.coverage.ok ? 'Ships not listed have nothing due this week &mdash; except those named above, which could not be checked.' : 'Ships not listed have nothing due this week.')} Next email: <strong>Monday 08:00 Miami time</strong>.</p>
 <p style="margin:0;">Thank you, and take care,<br><strong>Ray Guerra</strong><br><span style="color:${SLATE};">Supply Chain Manager &middot; DG3 Diversified Global Graphics Group</span></p>
 </td></tr>
 
