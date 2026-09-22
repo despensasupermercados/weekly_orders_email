@@ -23,6 +23,7 @@ import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
 import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 import { fleetCoverage } from './lib/coverage.js';
+import { onDemandOutcome, sendFailure, sendThrew } from './lib/sendNote.js';
 
 // MUST match the nightly entry in wrangler.toml exactly. It is the only thing
 // telling the watchdog run apart from the Monday fleet run inside one
@@ -223,6 +224,7 @@ async function runSendRequests(env, today) {
     const kind = SEND_KINDS.includes(q.kind) ? q.kind : 'weekly';
     let result;
     const lines = [];
+    let aside = '';
     try {
       if (!SEND_KINDS.includes(q.kind || 'weekly')) throw new Error(`unknown kind '${q.kind}'`);
       if (q.ship === '*' && kind !== 'chase') throw new Error("ship '*' is only for kind 'chase'");
@@ -266,11 +268,15 @@ async function runSendRequests(env, today) {
       await hon.prepare(`UPDATE weekly_send_request SET done_at = datetime('now'), result = ?2 WHERE id = ?1`)
         .bind(q.id, JSON.stringify(result).slice(0, 600)).run();
     } catch (e) {
-      lines.push(`(result could not be recorded: ${String((e && e.message) || e).slice(0, 120)})`);
+      // NOT into `lines`. `lines` means "one entry per ship attempted", and
+      // onDemandOutcome reads it to decide whether any ship was tried at all.
+      // Pushing a D1 error in here made an empty `lines` non-empty, so a
+      // genuine throw before the loop lost its failure mark and went unseen.
+      aside = ` | (result could not be recorded: ${String((e && e.message) || e).slice(0, 120)})`;
     }
     await logIngest(env, 'cron',
       `on-demand ${kind} send #${q.id} ${q.ship}: ` +
-      (lines.length ? lines.join(' | ') : (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`)) +
+      onDemandOutcome({ lines, result }) + aside +
       (result.threw ? ` | THREW ${result.threw}` : '') +
       (q.note ? ` | ${q.note}` : ''));
   }
@@ -581,12 +587,12 @@ export default {
           const r = await send(env, to, subject,
             renderWatchdog({ ...report, fresh: memory.fresh, reminders: memory.reminders }), 'orders-watchdog-night',
             [], null, `night:${today}`);
-          if (!r.sent) await logIngest(env, 'watchdog', `digest send FAILED: ${JSON.stringify(r)}`);
+          if (!r.sent) await logIngest(env, 'watchdog', sendFailure('digest', r));
           // Only a digest that went out counts as "said": a finding whose
           // mail failed is offered again tomorrow (review, 18 Sep 2026).
           else await markMailed(env.HON, [...memory.fresh, ...memory.reminders], today);
         } catch (e) {
-          await logIngest(env, 'watchdog', `digest send THREW: ${String((e && e.message) || e)}`);
+          await logIngest(env, 'watchdog', sendThrew('digest', e));
         }
       })());
       return;
@@ -672,9 +678,9 @@ export default {
         // and 3 gaps - the email arguing against itself in the inbox list.
         try {
           const r = await send(env, supervisors, `Orders due this week - ${todo} to fix`, html, 'orders-due-weekly', [], replyTo, `weekly:${today}:dryrun`);
-          if (!r.sent) await logIngest(env, 'cron', `weekly send FAILED: ${JSON.stringify(r)}`);
+          if (!r.sent) await logIngest(env, 'cron', sendFailure('weekly', r));
         } catch (e) {
-          await logIngest(env, 'cron', `weekly send THREW: ${String((e && e.message) || e)}`);
+          await logIngest(env, 'cron', sendThrew('weekly', e));
         }
       })());
       return;
@@ -750,7 +756,7 @@ export default {
         (deduped ? ` (${deduped} already sent today by an earlier run, not re-sent)` : '') +
         (plan.unmapped.length ? `, ${plan.unmapped.length} unaddressable` : '') +
         (plan.malformed.length ? `, ${plan.malformed.length} malformed FLEET_MAP entries` : ''));
-      for (const f of failed) await logIngest(env, 'cron', `weekly send FAILED: ${f}`);
+      for (const f of failed) await logIngest(env, 'cron', sendFailure('weekly', f));
 
       // The whole-fleet list, live: to FLEET_TO (onboardsupport). If that is
       // empty it falls back to the dry-run supervisors rather than to nobody,
@@ -766,9 +772,9 @@ export default {
             `Orders due this week - ${todo} to fix, ${sent} of ${plan.sendable.length} ships mailed` +
             (unreachable.length ? `, ${plan.unmapped.length} unaddressable` : ''),
             html, 'orders-due-weekly', [], replyTo, `weekly:${today}:fleet`);
-          if (!r.sent) await logIngest(env, 'cron', `weekly supervisor send FAILED: ${JSON.stringify(r)}`);
+          if (!r.sent) await logIngest(env, 'cron', sendFailure('weekly supervisor', r));
         } catch (e) {
-          await logIngest(env, 'cron', `weekly supervisor send THREW: ${String((e && e.message) || e)}`);
+          await logIngest(env, 'cron', sendThrew('weekly supervisor', e));
         }
         if (unreachable.length) {
           await logIngest(env, 'cron',
@@ -833,8 +839,14 @@ export default {
         mail_received: (await q(
           `SELECT COUNT(*) n FROM ingest_log
             WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`)).n,
+        // SCOPED, LIKE ITS TWIN IN watchdog.js. This was the one ingest_log
+        // read left unscoped when PR #26 fixed the other six, so /health and
+        // the night check could disagree about the last MLS the moment another
+        // app on this shared table logged a matching note.
         last_azamara_mls: (await q(
-          "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'")).d,
+          `SELECT MAX(ts) d FROM ingest_log
+            WHERE source = '${INGEST_SOURCE}'
+              AND note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'`)).d,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
         // WHICH COPY OF OBP THE READERS USE. 'mirror' is the emailed workbook
         // via cims-hon; 'csv' is this Worker's own copy of the nightly exports

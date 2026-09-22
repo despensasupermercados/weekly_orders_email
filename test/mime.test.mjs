@@ -4,7 +4,7 @@
 // lost entirely and the surviving row was written with null loading date,
 // month and country. Base64 parsed zero rows and logged nothing.
 
-import { htmlPartOf } from '../src/lib/mime.js';
+import { htmlPartOf, attachmentsOf } from '../src/lib/mime.js';
 import { rowsFromHtml, parseAzamaraRows } from '../src/lib/azamaraMls.js';
 import assert from 'node:assert';
 
@@ -66,3 +66,48 @@ for (const [name, raw] of [
 // The plain-text part must not be mistaken for the table.
 assert.ok(/<table/i.test(htmlPartOf(mime('quoted-printable', qp))), 'picked the wrong MIME part');
 console.log('ok - html part selected over text/plain');
+
+// ---------------------------------------------------------------------------
+// THE CLOSING DELIMITER NEED NOT END WITH A NEWLINE.
+//
+// Found 22 Sep 2026. RFC 2046 lets the final `--boundary--` be the last thing
+// in the message, and real senders do that. The split required a newline AFTER
+// the delimiter, so the closing marker never split and stayed glued to the last
+// part's body. It did NOT throw — base64Bytes strips non-base64 characters, so
+// `--X_BOUND_1--` became `XBOUND1`, was appended to the payload and decoded
+// into four junk bytes and an `=` on the end of the file. A corrupt final row
+// in an Ordering Schedule, or a corrupt zip inside an .xlsx, out of a message
+// that is perfectly legal, with nothing anywhere saying so.
+//
+// Both htmlPartOf and attachmentsOf carried their own copy of the line and so
+// their own copy of the bug; they share mimeParts now.
+{
+  const B = 'X_BOUND_1';
+  const payload = 'ship,qty\nAllure,4\n';
+  const b64 = Buffer.from(payload).toString('base64');
+  const msg = (tail) =>
+    `Content-Type: multipart/mixed; boundary="${B}"\r\n\r\n` +
+    `--${B}\r\nContent-Type: text/html\r\n\r\n<table><tr><td>MLS</td></tr></table>\r\n` +
+    `--${B}\r\nContent-Type: application/octet-stream\r\n` +
+    `Content-Disposition: attachment; filename="sched.csv"\r\n` +
+    `Content-Transfer-Encoding: base64\r\n\r\n${b64}\r\n--${B}--${tail}`;
+
+  for (const [label, tail] of [
+    ['closing CRLF', '\r\n'],
+    ['NO closing newline', ''],      // the bug
+    ['LF only', '\n'],
+    ['with an epilogue', '\r\nthanks\r\n'],
+  ]) {
+    const att = attachmentsOf(msg(tail));
+    assert.equal(att.length, 1, `${label}: one attachment`);
+    assert.equal(att[0].filename, 'sched.csv', `${label}: filename`);
+    assert.equal(Buffer.from(att[0].content).toString('utf8'), payload,
+      `${label}: the attachment must decode byte for byte, not with the boundary glued on`);
+
+    const html = htmlPartOf(msg(tail));
+    assert.ok(html.includes('</table>'), `${label}: the html part survives`);
+    assert.ok(!html.includes(B), `${label}: the boundary must not leak into the html body`);
+  }
+}
+
+console.log('ok - mime: a closing boundary with no trailing newline no longer corrupts the attachment or the html part');

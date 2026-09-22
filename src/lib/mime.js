@@ -61,6 +61,32 @@ function decodeBody(head, body) {
 // Walks a MIME message, including a multipart/alternative nested inside a
 // multipart/mixed, and returns the DECODED text/html part. Falls back to
 // text/plain, then to the whole decoded body.
+// SPLIT A MULTIPART BODY INTO ITS PARTS. ONE DEFINITION, TWO CALLERS.
+//
+// htmlPartOf and attachmentsOf each carried their own copy of this line, and
+// each copy carried the same bug — which is the argument for it living here.
+//
+// THE BUG: RFC 2046 lets the final `--boundary--` be the last thing in the
+// message, with no trailing CRLF, and real senders do exactly that. The old
+// pattern required a newline AFTER the delimiter, so that closing marker never
+// split. It stayed glued to the end of the last part's body.
+//
+// It did not throw, which would have been the kind outcome. base64Bytes strips
+// every character outside the base64 alphabet, so a trailing `--X_BOUND_1--`
+// quietly became `XBOUND1`, was appended to the payload, and decoded into FIVE
+// EXTRA BYTES on the end of the attachment. Measured 22 Sep 2026: a CSV of
+// "ship,qty / Allure,4" came back with four junk bytes and an `=` glued on.
+// A corrupt final row in an Ordering Schedule, or a corrupt zip inside an
+// .xlsx, out of a message that is perfectly legal — and nothing anywhere
+// would have said so. In htmlPartOf the same fault corrupts the tail of the
+// HTML, which is where the Azamara MLS table is read from.
+//
+// End of input terminates a part too. The empty tail that produces is dropped.
+export function mimeParts(body, boundary) {
+  const esc = String(boundary).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(body).split(new RegExp(`--${esc}(?:--)?(?:\\r?\\n|$)`)).filter(Boolean);
+}
+
 export function htmlPartOf(raw) {
   const [head, body] = splitHeadBody(raw);
   const ctype = headerValue(head, 'Content-Type');
@@ -71,8 +97,7 @@ export function htmlPartOf(raw) {
     return /text\/plain/i.test(ctype) && !/<t[dr][\s>]/i.test(decoded) ? '' : decoded;
   }
 
-  const esc = boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const parts = body.split(new RegExp(`--${esc}(?:--)?\\r?\\n`)).filter(Boolean);
+  const parts = mimeParts(body, boundary);
   let html = '';
   let plain = '';
   for (const part of parts) {
@@ -108,8 +133,7 @@ export function attachmentsOf(raw) {
   const boundary = (ctype.match(/boundary\s*=\s*"?([^";\r\n]+)"?/i) || [])[1];
   if (!boundary) return [];
 
-  const esc = boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const parts = body.split(new RegExp(`--${esc}(?:--)?\\r?\\n`)).filter(Boolean);
+  const parts = mimeParts(body, boundary);
   const out = [];
   for (const part of parts) {
     if (!part || !part.trim()) continue;

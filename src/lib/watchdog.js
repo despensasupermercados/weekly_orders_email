@@ -41,6 +41,7 @@ export const AZAMARA_MAX_SILENCE_DAYS = 40;
 import { voyageStates, dataFaults, escalations, MISSED_CREW_DAYS } from './due.js';
 import { quantityFindings, rulesFrom } from './quantity.js';
 import { anomalyFindings } from './anomaly.js';
+import { SEND_FAILED_MARK } from './sendNote.js';
 import { normShip } from './fleet.js';
 import { obpSource } from './obpSource.js';
 
@@ -269,13 +270,18 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // always our side of the bargain. The wording is the second: every failure
   // this project writes is "<something> send FAILED: ...", which cannot match
   // "0 failed", so match that and nothing else.
+  //
+  // The sender list is ('cron','watchdog'), not 'cron' alone: the night
+  // check's OWN digest failure is written by 'watchdog' (index.js), and
+  // 'cron' alone had never caught it. An alarm system that cannot report
+  // its own failure to deliver is the one blind spot worth the most.
   const lastSend = await one(hon,
     `SELECT MAX(ts) ts FROM ingest_log
       WHERE source = '${INGEST_SOURCE}' AND sender = 'cron' AND note LIKE '%send%'`);
   const fails = await many(hon,
     `SELECT ts, note FROM ingest_log
-      WHERE source = '${INGEST_SOURCE}' AND sender = 'cron'
-        AND note LIKE '%send FAILED:%' AND ts >= datetime(?, '-8 day')
+      WHERE source = '${INGEST_SOURCE}' AND sender IN ('cron', 'watchdog')
+        AND note LIKE '%${SEND_FAILED_MARK}%' AND ts >= datetime(?, '-8 day')
       ORDER BY ts DESC LIMIT 5`, today);
   for (const f of fails) add('critical', 'send_failed', `${f.ts}: ${f.note}`);
 
