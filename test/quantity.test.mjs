@@ -64,13 +64,17 @@ assert.ok(at(unreadable, 'TONER_UNREADABLE'), 'an unparseable toner line must be
 assert.ok(!at(unreadable, 'MISSING_COLOUR'),
   'yellow must NOT be called missing while a toner line is still unread');
 
-// An order with no toner is a question, not a fault: a paper-only top-up is a
-// real thing.
+// A PAPER-ONLY ORDER IS SILENT NOW. Measured 21 Sep 2026: this fired 15 times
+// a night, on every paper-only top-up, and the only way to know whether it
+// mattered was to ask whether the ship's toner lasts until the next container
+// - which runwayDb already computes and already tells the ship. A question
+// nobody can act on, asked nightly, is what buried three real criticals under
+// 158 warnings.
 const paperOnly = analyseOrder({
   ship: 'Journey', loading_delivery_date: '2026-10-07',
   lines: [{ description: 'PAPER A4 80GSM', qty: 80 }],
 });
-assert.equal(at(paperOnly, 'NO_TONER').severity, 'warn');
+assert.ok(!at(paperOnly, 'NO_TONER'), 'a paper-only order is not a finding');
 
 // THE WASTE-BOX RULE IS OFF, AND NOT BECAUSE THE NUMBER IS UNSOURCED.
 // An earlier version of this file said it was. That was wrong: Ray confirmed 12
@@ -105,16 +109,18 @@ console.log('     and a waste box no longer masks the colour it was hiding');
   ];
   const withStock = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines,
     on_hand: { black: 14, cyan: 12, magenta: 13, yellow: 13 } });
-  assert.equal(withStock.length, 1);
-  assert.equal(withStock[0].severity, 'warn');
-  assert.match(withStock[0].detail, /black 14/);
+  // A COLOUR THE SHIP ALREADY HOLDS IS NOT AN INCOMPLETE ORDER. This was 47
+  // warnings a night - the largest single source of noise in the digest - and
+  // eight of eight spot-checks were false. Nobody reorders what they have, and
+  // whether that stock lasts is runwayDb's question, not this rule's.
+  assert.equal(withStock.length, 0, 'a colour held aboard raises nothing here');
   const bare = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines,
     on_hand: { black: 0, cyan: 12, magenta: 13, yellow: 13 } });
   assert.equal(bare[0].severity, 'critical');
   assert.match(bare[0].detail, /none on board/);
   const unknown = analyseOrder({ ship: 'Explorer', loading_delivery_date: '2026-10-10', lines });
   assert.equal(unknown[0].severity, 'critical');
-  console.log('ok - colour completeness reads on-hand: stocked colour is a warn with the figure, none aboard is critical');
+  console.log('ok - colour completeness: a colour held aboard is silent, none aboard is critical, unread is critical');
 }
 
 
