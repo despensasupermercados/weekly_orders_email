@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { INGEST_SOURCE } from '../src/lib/watchdog.js';
-import { SEND_FAILED_MARK, onDemandOutcome } from '../src/lib/sendNote.js';
+import { SEND_FAILED_MARK, onDemandOutcome, sendFailure, sendThrew } from '../src/lib/sendNote.js';
 
 const read = (f) => fs.readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
 const FILES = ['lib/watchdog.js', 'index.js'];
@@ -27,11 +27,19 @@ for (const f of FILES) {
   // Pull whole string literals (backtick or double-quoted) and keep the ones
   // that read the table. If these two counts disagree, a read exists that this
   // guard could not see — which is the failure mode that let /health through.
-  const literals = (src.match(/`[^`]*`|"[^"\n]*"/g) || []).filter((l) => /FROM ingest_log/.test(l));
-  const seen = literals.reduce((n, l) => n + (l.match(/FROM ingest_log/g) || []).length, 0);
+  // Scan with positions, not indexOf. The first version looked each literal up
+  // with `src.indexOf(l)`, which returns the FIRST occurrence — so two
+  // identical queries would both be checked against the first one's .bind(),
+  // a guard pointing at the wrong text, which is the very fault this file
+  // exists to catch.
+  const literals = [];
+  for (const m of src.matchAll(/`[^`]*`|"[^"\n]*"/g)) {
+    if (/FROM ingest_log/.test(m[0])) literals.push({ text: m[0], end: m.index + m[0].length });
+  }
+  const seen = literals.reduce((n, l) => n + (l.text.match(/FROM ingest_log/g) || []).length, 0);
   assert.equal(seen, occurrences,
     `${f}: found ${occurrences} reads of ingest_log but could only inspect ${seen} — the guard is blind to one`);
-  for (const l of literals) {
+  for (const { text: l, end } of literals) {
     // Two legitimate spellings, and the guard must know both. Interpolated
     // (`source = '${INGEST_SOURCE}'`) is the common one; the once-per-Monday
     // guard binds it as a parameter instead. A bare `source = ?1` proves
@@ -40,7 +48,7 @@ for (const f of FILES) {
     // any value at all and still pass.
     const interpolated = /source\s*=\s*'\$\{INGEST_SOURCE\}'/.test(l);
     const bound = /source\s*=\s*\?\d*/.test(l)
-      && /\.bind\(\s*INGEST_SOURCE\b/.test(src.slice(src.indexOf(l) + l.length, src.indexOf(l) + l.length + 200));
+      && /\.bind\(\s*INGEST_SOURCE\b/.test(src.slice(end, end + 200));
     assert.ok(interpolated || bound,
       `${f}: every ingest_log read must filter on source — this one does not:\n${l}`);
   }
@@ -68,6 +76,32 @@ assert.ok(!ok.includes(SEND_FAILED_MARK) && ok === 'sent');
 assert.match(perShip, /Journey/);
 assert.ok(mystery.includes(SEND_FAILED_MARK), 'a non-send we cannot explain is treated as a failure, not as quiet');
 
+// ---- EVERY way this project can fail to send carries the mark -------------
+// Measured 22 Sep: the night check could see FOUR of EIGHT failure shapes.
+// The three `send THREW:` sites — which is how a transport exception actually
+// surfaces — and the per-ship `NOT SENT` line were all invisible to it.
+const everyFailure = [
+  ['digest returned not-sent', sendFailure('digest', { status: 500 })],
+  ['digest threw', sendThrew('digest', new Error('fetch failed'))],
+  ['weekly returned not-sent', sendFailure('weekly', { status: 500 })],
+  ['weekly threw', sendThrew('weekly', new Error('binding unavailable'))],
+  ['weekly per-ship failure', sendFailure('weekly', 'Journey -> jr@x.com')],
+  ['supervisor returned not-sent', sendFailure('weekly supervisor', { status: 500 })],
+  ['supervisor threw', sendThrew('weekly supervisor', new Error('timeout'))],
+  ['on-demand per-ship NOT SENT', onDemandOutcome({
+    lines: ['Journey -> jr@x.com: NOT SENT {"status":500}'], result: { sent: false } })],
+  ['on-demand throw before the loop', thrown],
+];
+for (const [label, note] of everyFailure) {
+  assert.ok(note.includes(SEND_FAILED_MARK), `${label} must carry the failure mark: ${note}`);
+}
+// And no source file writes a failure note by hand any more.
+for (const f of ['index.js']) {
+  const src2 = read(f);
+  assert.ok(!/send THREW:/.test(src2), `${f}: "send THREW:" must go through sendThrew(), not a literal`);
+  assert.ok(!/`[^`]*send FAILED:/.test(src2), `${f}: a hand-written "send FAILED:" can drift from the reader`);
+}
+
 // ---- and the query actually catches them ----------------------------------
 const db = new DatabaseSync(':memory:');
 db.exec('CREATE TABLE ingest_log (ts TEXT, source TEXT, sender TEXT, note TEXT)');
@@ -79,7 +113,8 @@ row('inbox', 'cron', 'swept 3: 2 done, 1 failed');                     // theirs
 row(INGEST_SOURCE, 'cron', 'weekly fleet send: 13 of 13 ships mailed');// ours, healthy
 row(INGEST_SOURCE, 'cron', `on-demand weekly send #12 Journey: ${thrown}`); // ours, the one that was silenced
 row(INGEST_SOURCE, 'cron', `on-demand chase send #13 *: ${quiet}`);    // ours, healthy
-row(INGEST_SOURCE, 'watchdog', `digest ${SEND_FAILED_MARK} {"status":500}`); // ours, never caught before
+row(INGEST_SOURCE, 'watchdog', sendThrew('digest', new Error('fetch failed'))); // ours, never caught before
+row(INGEST_SOURCE, 'cron', `on-demand weekly send #14 Star: ${onDemandOutcome({ lines: ['Star -> st@x.com: NOT SENT {"status":500}'], result: { sent: false } })}`);
 
 const m = read('lib/watchdog.js').match(/`SELECT ts, note FROM ingest_log\s*\n\s*WHERE source[\s\S]*?ORDER BY ts DESC LIMIT 5`/);
 assert.ok(m, 'could not locate the send-failure query in watchdog.js');
@@ -88,9 +123,10 @@ const sql = m[0].slice(1, -1)
   .replaceAll('${SEND_FAILED_MARK}', SEND_FAILED_MARK);
 const got = db.prepare(sql).all('2026-09-23').map((r) => r.note);
 
-assert.equal(got.length, 2, `expected our two real failures, got ${JSON.stringify(got)}`);
+assert.equal(got.length, 3, `expected our three real failures, got ${JSON.stringify(got)}`);
 assert.ok(got.some((n) => /on-demand weekly send #12/.test(n)), 'the on-demand throw must be caught');
 assert.ok(got.some((n) => /^digest/.test(n)), "the night check's own digest failure must be caught");
+assert.ok(got.some((n) => /#14 Star/.test(n)), 'a per-ship transport failure on an on-demand send must be caught');
 assert.ok(!got.some((n) => /swept/.test(n)), "another app's sweeper is never our send failure");
 assert.ok(!got.some((n) => /nothing to do/.test(n)), 'a quiet chase is never a send failure');
 
