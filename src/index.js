@@ -23,6 +23,7 @@ import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
 import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 import { fleetCoverage } from './lib/coverage.js';
+import { onDemandOutcome } from './lib/sendNote.js';
 
 // MUST match the nightly entry in wrangler.toml exactly. It is the only thing
 // telling the watchdog run apart from the Monday fleet run inside one
@@ -270,7 +271,7 @@ async function runSendRequests(env, today) {
     }
     await logIngest(env, 'cron',
       `on-demand ${kind} send #${q.id} ${q.ship}: ` +
-      (lines.length ? lines.join(' | ') : (result.sent ? 'sent' : `FAILED ${JSON.stringify(result)}`)) +
+      onDemandOutcome({ lines, result }) +
       (result.threw ? ` | THREW ${result.threw}` : '') +
       (q.note ? ` | ${q.note}` : ''));
   }
@@ -833,8 +834,14 @@ export default {
         mail_received: (await q(
           `SELECT COUNT(*) n FROM ingest_log
             WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`)).n,
+        // SCOPED, LIKE ITS TWIN IN watchdog.js. This was the one ingest_log
+        // read left unscoped when PR #26 fixed the other six, so /health and
+        // the night check could disagree about the last MLS the moment another
+        // app on this shared table logged a matching note.
         last_azamara_mls: (await q(
-          "SELECT MAX(ts) d FROM ingest_log WHERE note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'")).d,
+          `SELECT MAX(ts) d FROM ingest_log
+            WHERE source = '${INGEST_SOURCE}'
+              AND note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'`)).d,
         intransit_snapshot: (await q('SELECT MAX(snapshot_date) d FROM obp_intransit')).d,
         // WHICH COPY OF OBP THE READERS USE. 'mirror' is the emailed workbook
         // via cims-hon; 'csv' is this Worker's own copy of the nightly exports
