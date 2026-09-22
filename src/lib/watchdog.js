@@ -250,11 +250,32 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   }
 
   // ---- 7. Did the weekly email actually send? ----
+  //
+  // EVERY QUERY IN THIS FILE READS OUR OWN ROWS ONLY. `ingest_log` is SHARED
+  // with cims-hon, and index.js already learned this once: "rows that look
+  // exactly like ours once source said 'email' for both". Five of the six reads
+  // here still scanned the whole table by note text.
+  //
+  // It went off on 22 Sep 2026, the morning after cims-hon deployed the
+  // store-then-process inbox sweeper we specified for it. The sweeper writes
+  // sender='cron', note "swept 1: 1 done, 0 failed" - and `note LIKE '%FAILED%'`
+  // is case-insensitive in SQLite, so a row reporting ZERO failures raised a
+  // CRITICAL "send_failed" against a send that never happened and never failed.
+  //
+  // Two faults, so two fixes. The scope is the real one: a check that reads
+  // another app's rows will break every time that app ships anything, and the
+  // contract we handed cims-hon only protected OUR reads of THEIR existing
+  // rows - it could not protect us from a NEW row type, because scoping was
+  // always our side of the bargain. The wording is the second: every failure
+  // this project writes is "<something> send FAILED: ...", which cannot match
+  // "0 failed", so match that and nothing else.
   const lastSend = await one(hon,
-    `SELECT MAX(ts) ts FROM ingest_log WHERE sender = 'cron' AND note LIKE '%send%'`);
+    `SELECT MAX(ts) ts FROM ingest_log
+      WHERE source = '${INGEST_SOURCE}' AND sender = 'cron' AND note LIKE '%send%'`);
   const fails = await many(hon,
     `SELECT ts, note FROM ingest_log
-      WHERE sender = 'cron' AND note LIKE '%FAILED%' AND ts >= datetime(?, '-8 day')
+      WHERE source = '${INGEST_SOURCE}' AND sender = 'cron'
+        AND note LIKE '%send FAILED:%' AND ts >= datetime(?, '-8 day')
       ORDER BY ts DESC LIMIT 5`, today);
   for (const f of fails) add('critical', 'send_failed', `${f.ts}: ${f.note}`);
 
@@ -263,7 +284,8 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // A refusal is correct behaviour AND a thing a human must look at.
   const refused = await many(hon,
     `SELECT ts, note FROM ingest_log
-      WHERE note LIKE 'Azamara MLS REFUSED%' AND ts >= datetime(?, '-8 day')
+      WHERE source = '${INGEST_SOURCE}'
+        AND note LIKE 'Azamara MLS REFUSED%' AND ts >= datetime(?, '-8 day')
       ORDER BY ts DESC LIMIT 5`, today);
   for (const r of refused) add('critical', 'ingest_refused', `${r.ts}: ${r.note}`);
 
@@ -284,7 +306,9 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   //                                 format does not             (code, or Ray)
   //   an MLS arrived, long ago   -> Ray has stopped sending     (Ray)
   const lastMls = await one(hon,
-    `SELECT MAX(ts) ts FROM ingest_log WHERE note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'`);
+    `SELECT MAX(ts) ts FROM ingest_log
+      WHERE source = '${INGEST_SOURCE}'
+        AND note LIKE 'Azamara MLS%' AND note NOT LIKE '% REFUSED:%'`);
   const inbound = await one(hon,
     `SELECT COUNT(*) n, MAX(ts) ts FROM ingest_log
       WHERE source = '${INGEST_SOURCE}' AND sender NOT IN ('cron', 'watchdog')`);
@@ -339,7 +363,8 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // and once running the wrong code path entirely. index.js now logs every
   // weekly run including the quiet ones, so an absence here is real.
   const lastWeekly = await one(hon,
-    `SELECT MAX(ts) ts FROM ingest_log WHERE sender = 'cron' AND note LIKE 'weekly run%'`);
+    `SELECT MAX(ts) ts FROM ingest_log
+      WHERE source = '${INGEST_SOURCE}' AND sender = 'cron' AND note LIKE 'weekly run%'`);
   const weeklyAge = lastWeekly.ts
     ? Math.round((Date.parse(today) - Date.parse(String(lastWeekly.ts).slice(0, 10))) / 86400000)
     : null;
