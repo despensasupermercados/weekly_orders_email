@@ -66,3 +66,46 @@ assert.equal(roll.no_baseline, 1, 'Onward is unjudged, and that is reported as u
 
 console.log('ok - anomalies: a slipped digit is caught against the ship\'s own median,');
 console.log('     ordinary movement stays silent, and thin history is never called clean');
+
+// ---------------------------------------------------------------------------
+// MEASURED AGAINST THE LIVE FLEET, 21 Sep 2026. The night check was raising 71
+// anomalies; 64 were `digit_slip` and 61 of those were an item reaching ZERO,
+// 58 of them having moved by fewer than five units. Miguel: "I hate that
+// email." The two rules below took the same 1,200 live series from 71 to 5.
+{
+  // ZERO IS A STOCKOUT, NOT A TYPO. ratio = 0/base = 0, and 0 is always
+  // <= 1/8, so every shelf that ran to nothing was called a mistyped digit.
+  const toZero = judgeSeries(series(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0));
+  assert.equal(toZero.verdict, 'normal', 'an item running down to zero is not a typo');
+
+  const toZeroBigger = judgeSeries(series(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 0));
+  assert.equal(toZeroBigger.verdict, 'normal', 'nor is a four-unit shelf reaching zero');
+
+  // THE FLOOR NOW APPLIES HERE TOO. A one-unit move cannot be a slipped digit.
+  assert.equal(judgeSeries(series(1, 1, 1, 1, 1, 1, 1, 9)).verdict, 'digit_slip',
+    'a real proportional jump with units behind it still fires');
+}
+
+{
+  // A HISTORY OF ZEROS IS NOT A BASELINE. Legend, six months out of service,
+  // raised four of these a night from the day it came back.
+  const returning = judgeSeries(series(0, 0, 0, 0, 0, 0, 20, 19, 12, 38, 35));
+  assert.equal(returning.verdict, 'no_baseline',
+    'a ship returning to service has no usable baseline, and we say so');
+
+  // An item that has genuinely always been empty is untouched: max is 0, so
+  // the zero-baseline rule does not fire and a real first delivery still shows.
+  const firstEver = judgeSeries(series(0, 0, 0, 0, 0, 0, 0, 0, 0, 30));
+  assert.notEqual(firstEver.verdict, 'normal', 'a first delivery onto an empty shelf is still news');
+}
+
+{
+  // THE FOUNDING CASE MUST SURVIVE ALL OF IT. One keystroke, 12 -> 120.
+  const pursuit = judgeSeries(series(12, 11, 12, 13, 12, 11, 12, 120));
+  assert.equal(pursuit.verdict, 'digit_slip', 'the Pursuit keystroke is still caught');
+  // And the same error downward.
+  const down = judgeSeries(series(120, 119, 121, 118, 122, 120, 119, 12));
+  assert.equal(down.verdict, 'digit_slip', 'a digit slipped the other way is still caught');
+}
+
+console.log('ok - anomaly: a shelf reaching zero is a stockout not a typo, a ship out of service has no baseline, and the Pursuit keystroke still fires');

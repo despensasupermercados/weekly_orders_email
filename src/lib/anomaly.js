@@ -66,6 +66,25 @@ export function judgeSeries(series, opts = DEFAULTS) {
   const latest = pts[pts.length - 1];
   const history = pts.slice(0, -1).map((p) => p.value);
   const base = median(history);
+
+  // A HISTORY OF ZEROS IS NOT A BASELINE.
+  //
+  // Legend spent six months out of service, so its trailing history reads
+  // [0,0,0,0,0,0,20,19,12,38] and its median is 0. MAD is 0 too, `scale` falls
+  // back to `floor` (2), and every real figure on a hull that normally carries
+  // twenty-odd units becomes a seventeen-sigma event. Legend raised four such
+  // warnings a night from the moment it came back into service on 18 Sep, and
+  // they would have kept coming for six months, until the zeros aged out of
+  // the window.
+  //
+  // The zeros are not this ship's normal stock level; they are a period when
+  // there was no ship to stock. We cannot say what is normal for an item from
+  // a baseline like that, so say exactly that instead of inventing a verdict.
+  // An item that has genuinely always been zero still has max 0 and is left
+  // alone by the `> o.floor` test, so a real first delivery is not silenced.
+  if (base === 0 && Math.max(...history) > o.floor) {
+    return { verdict: 'no_baseline', points: pts.length, needed: o.min_history + 1, reason: 'history is mostly zeros - out of service or not yet stocked' };
+  }
   const scale = Math.max((mad(history) || 0) * MAD_TO_SIGMA, o.floor);
   const sigmas = Math.abs(latest.value - base) / scale;
   const ratio = base > 0 ? latest.value / base : null;
@@ -81,7 +100,31 @@ export function judgeSeries(series, opts = DEFAULTS) {
     };
   }
 
-  const digitSlip = ratio !== null && (ratio >= o.digit_ratio || ratio <= 1 / o.digit_ratio);
+  // ZERO IS A STOCKOUT, NOT A TYPO — AND `floor` WAS NEVER WIRED IN HERE.
+  //
+  // Measured 21 Sep 2026 against the live fleet: of 71 anomalies raised, 64
+  // were `digit_slip`, and 61 of those were an item reaching ZERO. 58 had moved
+  // by fewer than five units — [1,1,1,1,1,1,1,1,1,1,1,1,1,0] on Onward,
+  // [4,4,4,4,4,4,4,4,4,4,4,4,4,0] on Onward again, over and over.
+  //
+  // The arithmetic did it: ratio = latest / base, so a latest of 0 gives a
+  // ratio of 0, and 0 is ALWAYS <= 1/8. Every item that ran down to nothing was
+  // therefore reported as "the shape of a mistyped digit", every night, for
+  // days. `floor` — "absolute units below which nothing is worth waking anyone
+  // for" — was only ever applied as the minimum SCALE in the sigma path below,
+  // so a one-unit move sailed straight past it here.
+  //
+  // A shelf that reaches zero is a ship using its last unit. It is not a
+  // keystroke, and it is NOT lost by ignoring it here: runwayDb reports the
+  // same item as running out, to the ship, which is the check that owns it and
+  // the crew who can act. Reporting it twice, under the wrong name, is what
+  // taught everyone to skim the digest — the exact failure the header of this
+  // file warns about.
+  const move = Math.abs(latest.value - base);
+  const digitSlip = ratio !== null
+    && (ratio >= o.digit_ratio || ratio <= 1 / o.digit_ratio)
+    && latest.value > 0
+    && move >= o.floor;
   if (!digitSlip && sigmas < o.sigma) {
     return { verdict: 'normal', latest, base, sigmas: round(sigmas) };
   }

@@ -140,8 +140,21 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
     if (!toner.length) {
       // Not automatically wrong - a paper-only top-up is a real order - so this
       // is a question, not an accusation.
-      say('NO_TONER', 'warn',
-        `order has ${lines.length} line${lines.length === 1 ? '' : 's'} and no toner at all`);
+      // SILENT ON PURPOSE, AND THIS COMMENT IS THE RECORD OF WHY.
+      //
+      // This fired on every paper-only order: 15 a night on 21 Sep 2026. The
+      // rule's own note above concedes "a paper-only top-up is a real order -
+      // so this is a question, not an accusation". It was a question nobody
+      // could answer and it arrived every night regardless.
+      //
+      // Work out what it would take to answer it: you would have to know
+      // whether the ship's toner lasts until the next container. That is not a
+      // guess this rule can make - it is exactly what runwayDb computes, from
+      // consumption rate and the next arrival, and what the ship is already
+      // told about. So the question belongs there and is already answered
+      // there. Asking it again here, nightly, with no way to act on it, is how
+      // 158 warnings buried three real criticals.
+      void lines;
     } else {
       const present = new Set(toner.map((l) => colourOf(l.description)).filter(Boolean));
       const unknown = toner.filter((l) => !colourOf(l.description));
@@ -170,11 +183,22 @@ export function analyseOrder(order, rules = DEFAULT_RULES) {
             `toner ordered for ${[...present].sort().join(', ')} but not ${unread.join(', ')} - ` +
             `on-hand not read for ${unread.join(', ')} - the press stops when the first of those runs out`);
         }
-        if (stocked.length) {
-          say('MISSING_COLOUR', 'warn',
-            `toner ordered for ${[...present].sort().join(', ')} but not ${stocked.join(', ')} - ` +
-            `on board: ${stocked.map((c) => `${c} ${held(c)}`).join(', ')}`);
-        }
+        // A COLOUR THE SHIP ALREADY HOLDS IS NOT AN INCOMPLETE ORDER.
+        //
+        // 47 of these a night on 21 Sep 2026 - the single largest source of
+        // noise in the whole digest. The rule was rebuilt to READ on_hand and
+        // then still warned whatever it read: holding one unit and holding
+        // fifty produced the same line, because the only test was `> 0`. Eight
+        // of eight spot-checks were false. Nobody reorders a colour they have.
+        //
+        // The two branches above are the real finding and they stay CRITICAL:
+        // a colour not ordered with NONE on board stops the press, and one we
+        // could not read is not one we may call clean. What is left here is
+        // "you did not reorder something you have", and whether that stock
+        // actually lasts until the next container is runwayDb's question, with
+        // the consumption rate and the arrival date to answer it properly. It
+        // already reports those ships, to the ships, every Monday.
+        void stocked;
       }
     }
   }
