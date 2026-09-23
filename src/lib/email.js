@@ -388,8 +388,24 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // open (Ray Q21) - never a container whose due date has passed.
 function addLine(f, fg) {
   const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
-  const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${f.cover_to ? ` &middot; enough until ${fmtDowFull(f.cover_to)}` : ''}</div>` : '';
   const dry = dryUntil(f);
+  // NEVER SAY "ENOUGH UNTIL" AND "YOU WILL HAVE NONE" IN THE SAME BOX.
+  //
+  // Ray, reviewing the 21 Sep test send: "We either tell the user they have
+  // enough until X date - this causes confusion." He flagged two emails, and
+  // both carried the same pair. Star: "you will have none for 2 days" sitting
+  // directly above "a pallet is already on that order - enough until Sun 1 Nov".
+  // Infinity: "none for 28 days" above "enough until Sat 2 Jan".
+  //
+  // Both halves were true and they are about DIFFERENT THINGS. `cover_to` is
+  // the end of the cycle AFTER the order lands - "once this order arrives you
+  // are covered to here" - while the dry gap is about right now, before it
+  // arrives. A Printer Specialist reading a phone at the start of a shift has
+  // no way to see that distinction, and reads a flat contradiction.
+  //
+  // When there is a gap, the gap is the message. The reassurance waits.
+  const coverTo = f.cover_to && !dry ? ` &middot; enough until ${fmtDowFull(f.cover_to)}` : '';
+  const why = f.add_basis ? `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${esc(f.add_basis)}${coverTo}</div>` : '';
   if (!f.order_due) {
     // Ray, 1 Sep 2026 Q22: a missed order goes through the inventory manager on
     // board as a manual order. That is who to ask; this is what to ask for.
