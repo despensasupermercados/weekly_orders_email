@@ -275,3 +275,41 @@ console.log('     its own six months full width with the meaning stated in words
   assert.ok(/2 with no schedule/.test(fleet2) && /1 of 3 ships ok/.test(fleet2), `the strap counts them: ${fleet2.match(/[^>]*ships ok/)?.[0]}`);
   console.log('ok - email: a ship with no usable schedule is told what to send, why the last try failed, and where');
 }
+
+// ---------------------------------------------------------------------------
+// RAY, REVIEWING THE 21 Sep 2026 TEST SEND: "We either tell the user they have
+// enough until X date - this causes confusion."
+//
+// He flagged two emails and both carried the same pair of lines:
+//   Star     "you will have none for 2 days"  +  "enough until Sun 1 Nov"
+//   Infinity "none for 28 days"               +  "enough until Sat 2 Jan"
+//
+// Both halves were true and about DIFFERENT THINGS: `cover_to` is the end of
+// the cycle AFTER the order lands, the dry gap is about now, before it lands.
+// On a phone at the start of a shift that reads as a flat contradiction.
+{
+  const base = {
+    ship: 'Star', item: '20 LBS 8.5 x 11 DG3 PAPER', description: '20 LBS 8.5 x 11 DG3 PAPER',
+    on_hand: 23, rate: 63, stockout: '2026-10-02',
+    order_due: '2026-09-27', order_lands: '2026-10-18', next_loading: '2026-10-04',
+    add_qty: 0, add_basis: 'a pallet is already on that order', cover_to: '2026-11-01',
+    severity: 'critical',
+  };
+  const opts = { gaps: [], deliveries: [], schedules: [], checked: ['Star'], audience: 'ship', ship: 'Star' };
+
+  // A ship that WILL go dry is told about the gap and nothing else.
+  const withGap = renderWeekly([], [], '2026-09-21', { ...opts, runsOut: [base] });
+  assert.ok(/none for/.test(withGap), 'the gap is still reported');
+  assert.ok(!/enough until/.test(withGap),
+    'never promise "enough until" in the same box as "you will have none" — Ray, 21 Sep');
+
+  // With no gap, the reassurance is exactly what the reader needs and stays.
+  const noGap = renderWeekly([], [], '2026-09-21', {
+    ...opts,
+    runsOut: [{ ...base, next_loading: '2026-10-01', order_lands: '2026-10-01' }],
+  });
+  assert.ok(!/none for/.test(noGap), 'no gap to report when the order lands first');
+  assert.ok(/enough until/.test(noGap), 'and then "enough until" is the useful line');
+}
+
+console.log('ok - ship email: "enough until" never appears beside "you will have none" (Ray, 21 Sep test send)');
