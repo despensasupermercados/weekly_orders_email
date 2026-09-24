@@ -313,3 +313,46 @@ console.log('     its own six months full width with the meaning stated in words
 }
 
 console.log('ok - ship email: "enough until" never appears beside "you will have none" (Ray, 21 Sep test send)');
+
+// ---------------------------------------------------------------------------
+// RAY, 23 Sep 2026, choosing between leaving the forecast alone, switching to
+// the 3-month average, and showing both: "Show both."
+//
+// He had read Infinity's notice as too pessimistic - it said 11 a month where
+// he remembered 6 - and the 11 was correct. It is his own SOP, the greater of
+// last month or the trailing average, and August really was 11. The 6 was
+// June. The email gave one number and no way to check it, so a correct
+// forecast cost a round trip to defend.
+{
+  const mk = (o) => ({
+    ship: 'Infinity', item: 'RADIANT WHITE 28# 11x17', description: 'RADIANT WHITE 28# 11x17',
+    on_hand: 18, rate: 11, stockout: '2026-11-10', order_due: '2026-09-24',
+    order_lands: '2026-12-20', next_loading: '2026-12-08', add_qty: 10,
+    add_basis: '5 used in 13 days, minimum 10 cases', severity: 'critical', ...o,
+  });
+  const opts = { gaps: [], deliveries: [], schedules: [], checked: ['Infinity'], audience: 'ship', ship: 'Infinity' };
+  const render = (f) => renderWeekly([], [], '2026-09-21', { ...opts, runsOut: [f] })
+    .replace(/<[^>]+>/g, ' ').replace(/&middot;/g, '·').replace(/\s+/g, ' ');
+
+  // Infinity's real figures, measured against consumption_snapshot on 24 Sep.
+  const real = render(mk({ rate_last: 11, rate_avg: 7.5, rate_avg_months: 2 }));
+  assert.ok(/11 last month/.test(real), 'the month that drove the forecast is named');
+  assert.ok(/8 average of 2 months/.test(real), 'and the average it beat, with its real sample size');
+  assert.ok(/we plan on the higher one/.test(real), 'and which of the two the forecast used');
+
+  // NEVER CLAIM A SAMPLE WE DO NOT HAVE. `avg3` is only three months when
+  // three are measurable: a month needs the month before it inside the window
+  // to have a previous on-hand to subtract. Infinity's is TWO.
+  assert.ok(!/3 months/.test(real), 'must not say three months when only two were measured');
+  assert.ok(/3 months/.test(render(mk({ rate_last: 11, rate_avg: 7, rate_avg_months: 3 }))), 'says three when it is three');
+  assert.ok(!/average of 1 month/.test(render(mk({ rate_last: 11, rate_avg: 7, rate_avg_months: 1 }))), 'one month needs no "of N"');
+
+  // The pair exists to show the GAP. When there is none it is noise on a line
+  // the crew reads at the start of a shift.
+  assert.ok(!/last month/.test(render(mk({ rate_last: 11, rate_avg: 11, rate_avg_months: 3 }))),
+    'identical figures are not printed twice');
+  assert.ok(!/last month/.test(render(mk({ rate_last: null, rate_avg: null, rate_avg_months: null }))),
+    'no history, no claim');
+}
+
+console.log('ok - ship email: the rate shows both halves of Ray\'s rule when they differ, with the real number of months behind the average');
