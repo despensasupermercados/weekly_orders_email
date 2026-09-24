@@ -75,7 +75,19 @@ export async function fleetRunway(hon, today, opts = {}) {
         FROM cons
        WHERE prev IS NOT NULL AND (prev + receipts - on_hand) >= 0
     ), agg AS (
-      SELECT ship, part_number, AVG(u) avg3,
+      -- HOW MANY MONTHS THE AVERAGE IS ACTUALLY MADE OF.
+      --
+      -- avg3 is not always three. A month is only measurable when the month
+      -- BEFORE it is inside the window too, because usage needs a previous
+      -- on-hand to subtract from (the LAG above). So the oldest month in the
+      -- window never counts, and any month whose predecessor is missing drops
+      -- out as well. Measured 24 Sep 2026: Infinity's RADIANT WHITE average is
+      -- 7.5 over TWO months, not three.
+      --
+      -- Printing "average over 3 months" beside it would claim a sample we do
+      -- not have, on the very line added to make the figure auditable. Carry
+      -- the count and say the true one.
+      SELECT ship, part_number, AVG(u) avg3, COUNT(u) avg_months,
              MAX(CASE WHEN month = ?3 THEN u END) lastm
         FROM used GROUP BY ship, part_number
     )
@@ -102,7 +114,15 @@ export async function fleetRunway(hon, today, opts = {}) {
          AND s.loading_delivery_date IS NOT NULL AND s.loading_delivery_date != ''
     )
     SELECT a.ship, substr(p.description, 1, 34) item, p.description description, p.par_qty, p.brand,
+           -- BOTH HALVES OF THE RULE, NOT JUST ITS ANSWER. Ray, 23 Sep 2026,
+           -- chose "show both" after reading a forecast he thought was too
+           -- pessimistic: the email said 11 a month for Infinity when he
+           -- remembered 6. The 11 was correct and it was his own SOP — last
+           -- month 11 against a 3-month average of 7 — but the email showed
+           -- only the answer, so there was nothing to check it against and the
+           -- disagreement cost a round trip. Carry the inputs.
            MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
+           a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
            -- not an empty shelf: the export writes real zeros (1,445 of 3,481
            -- rows on 16 Sep 2026), so a missing figure is never "0 on board".
@@ -167,7 +187,17 @@ export async function fleetRunway(hon, today, opts = {}) {
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
     if (f) findings.push({
-      ...withQuantity({ ...f, description: r.description }, {
+      ...withQuantity({
+        ...f,
+        description: r.description,
+        // The two inputs behind `rate`, so the email can show the rule working
+        // rather than just its output. Null when the month has no reading —
+        // absent is not zero, and the renderer drops the pair rather than
+        // print a figure nobody measured.
+        rate_last: r.rate_last == null ? null : Number(r.rate_last),
+        rate_avg: r.rate_avg == null ? null : Number(r.rate_avg),
+        rate_avg_months: r.rate_avg_months == null ? null : Number(r.rate_avg_months),
+      }, {
         brand: r.brand,
         parQty: r.par_qty == null ? null : Number(r.par_qty),
         due: r.order_due || null,

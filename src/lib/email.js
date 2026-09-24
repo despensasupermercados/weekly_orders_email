@@ -386,6 +386,38 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // branch sourced to Ray's written answers; the basis is printed small so the
 // crew can see why, and Ray can see it is his rule. The order is the one still
 // open (Ray Q21) - never a container whose due date has passed.
+// SHOW THE RULE WORKING, NOT JUST ITS ANSWER.
+//
+// Ray, 23 Sep 2026, choosing between leaving the forecast alone, switching to
+// the 3-month average, and showing both: "Show both." He had read Infinity's
+// notice as too pessimistic — it said 11 a month where he remembered 6 — and
+// the 11 was correct: it is his own SOP, the greater of last month or the
+// trailing 3-month average, and August really was 11 against an average of 7.
+// The 6 was June.
+//
+// The email gave him one number and no way to check it, so a correct forecast
+// cost a round trip to defend. Printing both inputs makes the rule auditable
+// at a glance: anyone who thinks the figure is wrong can see which half drove
+// it and which month to go and look at.
+//
+// AND NEVER CLAIM A SAMPLE WE DO NOT HAVE. The average is over however many
+// months are actually measurable, which is rarely three — Infinity's is 7.5
+// over TWO. runwayDb counts them; this prints that count and nothing else.
+//
+// ONLY WHEN THEY DISAGREE. When last month and the average are the same
+// number, printing it twice is noise on a line the crew has to read at the
+// start of a shift, and the pair carries no information the headline does not.
+// The whole point of the pair is the gap between them.
+function rateBasis(f) {
+  const last = f.rate_last == null ? null : Math.round(f.rate_last);
+  const avg = f.rate_avg == null ? null : Math.round(f.rate_avg);
+  if (last == null || avg == null || last === avg) return '';
+  const n = Number(f.rate_avg_months) || 0;
+  const over = n > 1 ? ` of ${n} months` : '';
+  return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
+    + `${last} last month &middot; ${avg} average${over} &middot; we plan on the higher one</div>`;
+}
+
 function addLine(f, fg) {
   const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
   const dry = dryUntil(f);
@@ -475,6 +507,7 @@ ${tiles}
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
   <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; you use <strong>${Math.round(f.rate)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
+  ${rateBasis(f)}
   ${addLine(f, fg)}
 </td></tr></table>
 </td></tr>`;
