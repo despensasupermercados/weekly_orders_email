@@ -3,7 +3,7 @@
 //   1. eligibility is HOTEL BIWEEKLY HOTEL, not HOTEL MONTHLY
 //   2. eligibility is not obligation - ships use every other biweekly loading
 //   3. no PO = no order, and a source disagreement goes to Ray, not the ship
-import { classifyAll, MAX_GAP_DAYS } from '../src/lib/due.js';
+import { classifyAll, dataFaults, MAX_GAP_DAYS, MISSED_CREW_DAYS } from '../src/lib/due.js';
 import assert from 'node:assert';
 
 const T = '2026-09-09';
@@ -44,3 +44,37 @@ assert.equal(az.find((r) => r.ship === 'Journey').state, 'PO_NOT_RECORDED',
 assert.equal(az.find((r) => r.ship === 'Pursuit').state, 'ORDERED');
 
 console.log('ok - cadence, gap detection, and no-PO-no-order all hold');
+
+// ---------------------------------------------------------------------------
+// HISTORY WITH A FIELD MISSING IS NOT A LIVE FAULT.
+//
+// Millennium's 17 Sep 2026 bulk load carried 24 HOTEL BIWEEKLY HOTEL rows dated
+// May-Dec 2021 with no loading date. The `past` test keys on the loading date,
+// so a row with none could never reach it: it hit NO_LOADING_DATE first, and
+// the night check called "24 eligible voyages are UNUSABLE" a CRITICAL every
+// night for a week. The Brain had noted on 18 Sep that they were 2021 history.
+{
+  const noLoad = (ship, due) => mk(ship, due, null, { voyage: null });
+  const rows = classifyAll([
+    noLoad('Millennium', '2021-05-03'),                    // 2021: history
+    noLoad('Millennium', '2021-12-07'),                    // 2021: history
+    noLoad('Anthem', '2026-09-30'),                        // due in 3 weeks, no loading date: a real fault
+    noLoad('Vision', '2026-09-04'),                        // 5 days past due, no loading date: still live enough to be a fault
+    mk('Ghost', '2026-08-01', '2026-11-05'),               // real MISSED: due passed, loading still ahead - must stay MISSED
+  ], T);
+  const st = (ship, due) => rows.find((r) => r.ship === ship && r.due_date === due).state;
+
+  assert.equal(st('Millennium', '2021-05-03'), 'past', '2021 with no loading date is history, not a fault');
+  assert.equal(st('Millennium', '2021-12-07'), 'past');
+  assert.equal(st('Anthem', '2026-09-30'), 'NO_LOADING_DATE', 'a live voyage with no loading date is still a real fault');
+  assert.equal(st('Vision', '2026-09-04'), 'NO_LOADING_DATE',
+    `inside MISSED_CREW_DAYS (${MISSED_CREW_DAYS}) it could still be a live voyage with a bad field - keep it a fault`);
+  assert.equal(st('Ghost', '2026-08-01'), 'MISSED', 'a genuine miss with a loading date is untouched');
+
+  // And the night check only sees the live ones.
+  const faults = dataFaults(rows).map((r) => r.ship);
+  assert.deepEqual(faults.sort(), ['Anthem', 'Vision'], `dataFaults must exclude 2021 history, got ${faults}`);
+}
+
+console.log('ok - a voyage older than any crew can act on is history, not an ingest fault; live faults still report');
+

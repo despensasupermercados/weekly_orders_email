@@ -129,6 +129,24 @@ export function classifyAll(rows, today) {
       } else if (azamara && r.order_lines > 0) {
         state = 'PO_NOT_RECORDED'; // Ray's problem, not the ship's
         lastCovered = r.loading_delivery_date;
+      } else if (!r.loading_delivery_date && r.days_to_due != null && r.days_to_due < -MISSED_CREW_DAYS) {
+        // HISTORY WITH A FIELD MISSING IS NOT A LIVE FAULT.
+        //
+        // The `past` test below keys on the loading date, so a row with NO
+        // loading date could never reach it: it fell into NO_LOADING_DATE
+        // first, however old it was. Millennium's 17 Sep bulk load carried 24
+        // HOTEL BIWEEKLY HOTEL rows dated May-Dec 2021 with no loading date,
+        // and the night check called them a CRITICAL ingest fault every night
+        // from 18 Sep - "24 eligible voyages are UNUSABLE" - for a week. The
+        // Brain had noted on 18 Sep that they were 2021 history. Nobody acted,
+        // because a critical that is always red is a critical nobody reads.
+        //
+        // A due date further past than any crew can act on (the same
+        // MISSED_CREW_DAYS that keeps stale misses out of the crew email) is
+        // not a voyage anyone can be told about, so a missing loading date on
+        // it is not a fault worth waking anyone for. A LIVE voyage with no
+        // loading date still lands in NO_LOADING_DATE below, exactly as before.
+        state = 'past';
       } else if (!r.loading_delivery_date || !ISO_DATE.test(String(r.loading_delivery_date))) {
         // NO LOADING DATE = THE ORDERED TEST CANNOT RUN.
         // order_lines joins obp_intransit.eta to this column, so a NULL here
