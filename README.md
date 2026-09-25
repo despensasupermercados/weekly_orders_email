@@ -15,14 +15,15 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 ## What Miguel has to do
 
-One thing left, and two done on 16 Sep 2026:
+Nothing, as of 25 Sep 2026. All three are done. Decisions, lessons and the backlog that was
+left unbuilt on purpose are in [`docs/DECISIONS.md`](docs/DECISIONS.md); the two documents
+handed to the `cims-hon` session (the store-then-process spec for `obp@cims.work`, and the
+SL/AT sender-code and frozen-workbook handoff) are beside it.
 
-1. **Set `ADMIN_KEY` as a Worker secret.** Until it is set every endpoint except `/health`
-   returns 503, so nobody can see `/fleet` (who will be mailed) or `/preview-ship` before a
-   Monday. Unset on 16 Sep at 20:00Z (`/fleet` answered `ADMIN_KEY is not set`); Miguel
-   believes he set it since. Verify without asking: every 06:00Z night-check line in
-   `ingest_log` ends `| ADMIN_KEY set` or `| ADMIN_KEY unset` (presence only, never the
-   value). From a browser: `/fleet` answers 401 when it is set, 503 when it is not.
+1. ~~Set `ADMIN_KEY` as a Worker secret~~ **Done, verified 17 Sep**: every 06:00Z night-check
+   line in `ingest_log` ends `| ADMIN_KEY set` (presence only, never the value). Until it is
+   set every endpoint except `/health` returns 503. From a browser: `/fleet` answers 401 when
+   it is set, 503 when it is not.
 2. ~~Route `obp-csv@cims.work` to this Worker~~ **Done 16 Sep**: Cloudflare Email Routing,
    zone `cims.work`, `obp-csv@cims.work` → Worker `weekly-orders-email`, Active.
    `obp@cims.work` still belongs to `cims-hon` and was not touched.
@@ -346,12 +347,20 @@ figure has been standing, which was the number that actually mattered on Pursuit
   miss from the row itself. It does **not** write to `cims-order`: that ledger belongs to
   `cims-order`, and the standing guardrail is that each app manages its own rows. Loading
   these values needs an explicit decision, not a side effect of a night run.
-- **13 of 48 ships have no usable ordering schedule** (16 Sep 2026). The crew email now asks
-  each of them for the file and says what went wrong last time; until they send it, their dates
-  come from open orders. `/health` and the night check report the real coverage.
-- **Ray's manual-order lead time is unknown.** For a ship with no schedule the email can only
-  say "ask your Inventory Manager to check the next due date"; with a number from Ray it could
-  say a date. Asked, 16 Sep 2026.
+- **1 of 48 ships has no usable ordering schedule** (25 Sep 2026): Solstice. It sent its file
+  on 16 Sep; `cims-hon` does not know the sender code SL and dropped it, and Ray's resend died
+  on a 421 with no attachment. The fix is on `cims-hon` (add SL/SI/AT, re-feed the parked
+  files; see `docs/cims-hon-handoff-2026-09-21.md`). The crew email asks a ship with no
+  schedule for the file and says what went wrong last time; until then its dates come from open
+  orders. `/health` and the night check report the real coverage. (13 of 48 on 16 Sep; the
+  chase worked.)
+- **Ray's manual-order lead time: there is none.** Ray, 16 Sep 2026: "we cannot guess; push the
+  employee to gather the details." So for a ship with no schedule the email says "ask your
+  Inventory Manager to check the next due date" and never invents a date.
+- **Azamara keeps stock low on purpose and Ray tops up as needed; toner tolerance is zero
+  days.** Ray, 24–25 Sep 2026. The red "it will arrive N days after you run out" line is
+  therefore correct for Azamara and stays; it is the crew's signal to Ray. Paper tolerance was
+  not answered. See `docs/DECISIONS.md`.
 - **Consumption rates still come through the workbook.** See *The OBP feed*.
 - The Azamara HOPO numbers (`PRHOPO08668`) are not the same identifier as the `JR0036` /
   `ON0037` / `ONMANUAL` voyage values in OBP. That mapping is still open with Ray, so Azamara
