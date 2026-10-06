@@ -516,6 +516,18 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
 //
 // weekly_watchdog_seen is this Worker's own table. Rows older than 30 days
 // are dropped; a finding that comes back after a month is new again.
+//
+// A FINDING THAT CLEARED AND CAME BACK IS NEWS, NOT "STILL STANDING".
+// Production, 6 Oct 2026: feed_frozen stood 17-30 Sep, the mirror refreshed
+// on 30 Sep, the finding was ABSENT on five consecutive nights, and when it
+// returned the digest read "STILL STANDING 19 DAYS" - a weekly reminder for a
+// condition that had cleared. The row never forgot, because a row only ages
+// out after 30 UNSEEN days, and the reminder clock ran from first_seen.
+// So: a finding whose last_seen is older than the last night the check RAN
+// has genuinely cleared in between; its return is mailed as fresh, tagged
+// `returned`, and its clock restarts. The last run night is read from this
+// Worker's own "night check" lines in ingest_log, so a night the cron did not
+// fire at all is not mistaken for a night the finding was absent.
 export const SEEN_TABLE = 'weekly_watchdog_seen';
 export const REMIND_EVERY_DAYS = 7;
 export const findingKey = (f) => `${f.check}|${String(f.detail || '').replace(/\d+/g, '#').slice(0, 300)}`;
@@ -544,12 +556,33 @@ export async function rememberFindings(hon, report, today) {
     for (const col of ['severity', 'last_mailed', 'mailed_severity']) {
       if (cols.length && !cols.includes(col)) await hon.prepare(`ALTER TABLE ${SEEN_TABLE} ADD COLUMN ${col} TEXT`).run();
     }
-    const seen = new Map(((await hon.prepare(`SELECT key, first_seen, severity, last_mailed, mailed_severity FROM ${SEEN_TABLE}`).all()).results || [])
+    const seen = new Map(((await hon.prepare(`SELECT key, first_seen, last_seen, severity, last_mailed, mailed_severity FROM ${SEEN_TABLE}`).all()).results || [])
       .map((r) => [r.key, r]));
+    // The last night this check ran before tonight. index.js writes the
+    // "night check" line before calling here, so tonight's own line is
+    // excluded by date. Our own rows only: ingest_log is shared with cims-hon.
+    let lastRun = null;
+    try {
+      const r = await hon.prepare(
+        `SELECT MAX(date(ts)) d FROM ingest_log
+          WHERE source = '${INGEST_SOURCE}' AND sender = 'watchdog'
+            AND note LIKE 'night check%' AND date(ts) < ?1`).bind(today).first();
+      lastRun = (r && r.d) || null;
+    } catch (_) { /* no log to read: no return can be proven, treat as standing */ }
     const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
     for (const f of findings) {
       const key = findingKey(f);
       const rec = seen.get(key);
+      // Seen before, but not on the last night the check ran: it cleared and
+      // is back. Fresh, tagged, clock restarted, owed a mail again.
+      const returned = Boolean(rec && lastRun && rec.last_seen && rec.last_seen < lastRun);
+      if (returned) {
+        out.fresh.push({ ...f, first_seen: today, returned: true, absent_since: rec.last_seen });
+        await hon.prepare(
+          `UPDATE ${SEEN_TABLE} SET first_seen = ?2, last_seen = ?2, severity = ?3, last_mailed = NULL, mailed_severity = NULL WHERE key = ?1`)
+          .bind(key, today, f.severity || null).run();
+        continue;
+      }
       if (!rec || !rec.last_mailed) {
         out.fresh.push(rec ? { ...f, first_seen: rec.first_seen } : f);
       } else if (f.severity === 'critical' && rec.mailed_severity !== 'critical') {

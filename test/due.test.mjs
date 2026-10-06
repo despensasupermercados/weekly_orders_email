@@ -78,3 +78,19 @@ console.log('ok - cadence, gap detection, and no-PO-no-order all hold');
 
 console.log('ok - a voyage older than any crew can act on is history, not an ingest fault; live faults still report');
 
+
+// REVIEW OF 6 Oct 2026: the same history rule must hold when the loading
+// date is PRESENT BUT NOT A DATE ('5/3/2021'). The `past` branch keyed on the
+// field being empty, so a 2021 row with a US-formatted loading date fell
+// through to NO_LOADING_DATE and would have been the next always-red critical.
+{
+  const rows = classifyAll([
+    mk('Millennium', '2021-05-03', '5/3/2021', { voyage: null }),   // 2021, malformed loading date: history
+    mk('Anthem', '2026-09-30', '9/30/2026', { voyage: null }),      // live, malformed loading date: a real fault
+  ], T);
+  const st = (ship) => rows.find((r) => r.ship === ship).state;
+  assert.equal(st('Millennium'), 'past', `2021 with a malformed loading date is history, got ${st('Millennium')}`);
+  assert.equal(st('Anthem'), 'NO_LOADING_DATE', 'a live voyage with a malformed loading date is still a fault');
+  assert.deepEqual(dataFaults(rows).map((r) => r.ship), ['Anthem']);
+}
+console.log('ok - a malformed loading date on a 2021 row is history too');

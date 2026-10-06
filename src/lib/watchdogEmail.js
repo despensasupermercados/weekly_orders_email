@@ -64,9 +64,13 @@ export function renderWatchdog(report) {
   // NEW is the word the reader scans for: everything else in the digest was
   // already said on an earlier night. A reminder names how long it has stood.
   const freshSet = new Set((report.fresh || []).map((f) => `${f.check}|${f.detail}`));
+  // A finding that cleared and came back is not NEW and not STILL STANDING:
+  // it is BACK, and the reader wants to know how long it was gone.
+  const backSince = new Map((report.fresh || []).filter((f) => f.returned).map((f) => [`${f.check}|${f.detail}`, f.absent_since]));
   const remind = new Map((report.reminders || []).map((f) => [`${f.check}|${f.detail}`, f.days]));
   const tag = (f) => {
     const k = `${f.check}|${f.detail}`;
+    if (backSince.has(k)) return `<span style="color:${RED};font-weight:700;letter-spacing:.6px;">BACK</span>${backSince.get(k) ? ` <span style="color:${SLATE};">(last seen ${esc(backSince.get(k))})</span>` : ''} &middot; `;
     if (freshSet.has(k)) return `<span style="color:${RED};font-weight:700;letter-spacing:.6px;">NEW</span> &middot; `;
     if (remind.has(k)) return `<span style="color:${AMBER};font-weight:700;">STILL STANDING ${remind.get(k)} DAYS</span> &middot; `;
     return '';

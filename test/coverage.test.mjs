@@ -79,3 +79,29 @@ const base = { gaps: [], runsOut: [], deliveries: [], schedules: [] };
 }
 
 console.log('ok - coverage: unread quantities, broken checks and unexamined ships are all named, to ops only');
+
+// REVIEW OF 6 Oct 2026: "N OF 48 SHIPS OK" MUST COUNT ADDRESSED SHIPS ONLY.
+// `checked` is every name any check examined. The OBP export carries "DIS WHS"
+// and "MIAMI WHS" (warehouses) and "Hero" (a 2027 hull), and the gap check
+// hands back whatever ship names it saw; none of them is a ship we address, so
+// none of them can be "ok". And a troubled ship spelt one way in its finding
+// and another in the checked list ("Vision of the Seas" / "Vision") counted
+// as both troubled AND clean. Today the data happens to line up (48 par ships,
+// 48 addressed, one spelling); the header must not depend on that luck.
+{
+  const c = fleetCoverage({
+    fleetMap: MAP, checked: ['Vision', 'Jewel', 'Star', 'DIS WHS', 'MIAMI WHS', 'Hero'],
+    checks: [{ name: 'runway', ran: true }], unread: [], today,
+  });
+  assert.equal(c.ok, true, 'extra names examined are not a coverage problem');
+  assert.equal(c.addressed, 3);
+  assert.equal(c.examined, 3, 'examined counts addressed ships, never warehouses');
+  assert.deepEqual([...c.examinedShips].sort(), ['Jewel', 'Star', 'Vision'], 'and names them for the header');
+  const html = renderWeekly([], [], today, {
+    ...base, checked: ['Vision', 'Jewel', 'Star', 'DIS WHS', 'MIAMI WHS', 'Hero'], coverage: c,
+    runsOut: [{ ship: 'Vision of the Seas', item: 'TN619K', stockout: '2026-09-30', on_hand: 1, rate: 3, order_due: '2026-09-25' }],
+  });
+  const strap = html.match(/[\d]+ of [\d]+ ships ok/)?.[0];
+  assert.equal(strap, '2 of 3 ships ok', `warehouses are not ships and a troubled ship is not clean under another spelling: ${strap}`);
+}
+console.log('ok - coverage: the "ships ok" count is over addressed ships only, matched by normalised name');
