@@ -99,6 +99,42 @@ connector. Newest at the top of each list. Dates are 2026.
 10. **An emailed correction that has not landed after two tries is not fixed
     by a third email.** Put the number where the reader already looks.
 
+## Review of 6 Oct 2026 — four bugs in my own work, each proven by a failing test first
+
+Eleven days of production evidence first (two Monday sends, 9 of 9 and 12 of
+12 delivered; the monthly chase reached Solstice; no send failures), then the
+code of PRs #24 to #30 re-read by execution. Fixes on the branch, not merged:
+Miguel asked for corrections, not a deploy.
+
+1. **Night-check memory called a returned finding "still standing".** The
+   feed_frozen criticals stood 17–30 Sep, the mirror refreshed on 30 Sep, the
+   finding was absent 1–5 Oct, and the 6 Oct digest said "STILL STANDING 19
+   DAYS". The row never forgot (it ages out only after 30 unseen days) and the
+   reminder clock ran from first_seen. Now a finding whose last_seen is older
+   than the last night the check RAN is a return: mailed as fresh, tagged
+   BACK with the date it was last seen, clock restarted. The last run night is
+   read from our own "night check" log lines, so a night the cron did not fire
+   is not mistaken for a clearance.
+2. **A hand-queued chase for a compliant ship was logged as a failed send.**
+   The per-ship line read "NOT SENT … not chased", onDemandOutcome marks every
+   NOT SENT line, and the night check raises a critical on the mark. The skip
+   is now its own word, SKIPPED, and carries no mark.
+3. **"N of 48 ships ok" counted every name any check saw.** The OBP export
+   carries warehouses ("DIS WHS", "MIAMI WHS") and a hull not in service
+   ("Hero"), and a troubled ship spelt differently in its finding and in the
+   checked list counted as both troubled and clean. Today the data lines up
+   (48 par ships, 48 addressed, one spelling), so the live number was right by
+   luck. The count is now over the addressed ships coverage examined, matched
+   by normalised name.
+4. **The 2021-history rule keyed on an EMPTY loading date only.** A 2021 row
+   with a malformed loading date ('5/3/2021') still landed as a NO_LOADING_DATE
+   critical. The rule now treats any unusable loading date on a voyage older
+   than any crew can act on as history.
+
+Lesson for the list above: **production answered back on bug 1 within eleven
+days; bugs 2 to 4 were latent and only a re-read by execution found them.**
+Read the live log before the code, then the code with a fault injected.
+
 ## Backlog — not built, on purpose
 
 - Fleet-wide toner wording. "If you cannot wait" is softer than Ray's

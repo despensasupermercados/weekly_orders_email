@@ -339,3 +339,75 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   assert.ok(q[0].severity === 'critical' && /#9/.test(q[0].detail) && /retried every 15 minutes/.test(q[0].detail), q[0].detail);
   console.log('ok - watchdog: a chase row waiting on a failed judgement for hours is a critical');
 }
+
+// REVIEW OF 6 Oct 2026: A FINDING THAT CLEARED AND CAME BACK IS NEWS, NOT
+// "STILL STANDING". Production: feed_frozen stood 17-30 Sep, the mirror
+// refreshed on 30 Sep, the finding was ABSENT 1-5 Oct, and when it returned on
+// 6 Oct the digest said "STILL STANDING 19 DAYS" - a week-reminder for a
+// condition that had cleared for five nights. The row never forgot, because a
+// row only ages out after 30 unseen days. A return must be mailed as fresh,
+// tagged as a return, with its clock restarted; a night the check did not run
+// at all must NOT count as the finding having cleared.
+{
+  const { DatabaseSync } = await import('node:sqlite');
+  const { rememberFindings, markMailed, INGEST_SOURCE, SEEN_TABLE } = await import('../src/lib/watchdog.js');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE ingest_log (ts TEXT, source TEXT, sender TEXT, note TEXT)');
+  const hon = {
+    prepare(sql) {
+      const binds = [];
+      const stmt = {
+        bind(...a) { binds.push(...a); return stmt; },
+        async all() { return { results: db.prepare(sql).all(...binds) }; },
+        async first() { return db.prepare(sql).get(...binds) ?? null; },
+        async run() { return db.prepare(sql).run(...binds); },
+      };
+      return stmt;
+    },
+  };
+  // index.js writes the "night check: ..." line BEFORE it calls rememberFindings.
+  const ran = (day) => db.prepare('INSERT INTO ingest_log VALUES (?,?,?,?)').run(`${day} 06:00:30`, INGEST_SOURCE, 'watchdog', 'night check: 2 critical, 9 warn, 0 repaired | ADMIN_KEY set');
+  const frozen = { severity: 'critical', check: 'feed_frozen', detail: 'obp_inventory content identical for 5 consecutive snapshots (3482 rows, total 13990)' };
+  const cover = { severity: 'warn', check: 'coverage', detail: '47 of 48 ships have an ordering schedule loaded' };
+
+  ran('2026-09-17');
+  const a = await rememberFindings(hon, { findings: [frozen, cover] }, '2026-09-17');
+  assert.equal(a.fresh.length, 2);
+  await markMailed(hon, a.fresh, '2026-09-17');
+  for (const d of ['2026-09-18', '2026-09-19', '2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25']) {
+    ran(d); await rememberFindings(hon, { findings: [frozen, cover] }, d);
+  }
+  ran('2026-09-26');
+  const r = await rememberFindings(hon, { findings: [frozen, cover] }, '2026-09-26');
+  assert.equal(r.reminders.length, 1, 'nine days standing: the weekly reminder fires');
+  await markMailed(hon, r.reminders, '2026-09-26');
+  // The mirror refreshes: five nights with the finding ABSENT, the check running.
+  for (const d of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05']) {
+    ran(d); await rememberFindings(hon, { findings: [cover] }, d);
+  }
+  ran('2026-10-06');
+  const back = await rememberFindings(hon, { findings: [frozen, cover] }, '2026-10-06');
+  assert.equal(back.reminders.length, 0, 'a condition that cleared for five nights is NOT "still standing"');
+  assert.equal(back.fresh.length, 1, `the return is mailed as news: ${JSON.stringify(back)}`);
+  assert.equal(back.fresh[0].check, 'feed_frozen');
+  assert.ok(back.fresh[0].returned, 'and tagged as a return, not as a first sighting');
+  const row = db.prepare(`SELECT first_seen, last_mailed FROM ${SEEN_TABLE} WHERE check_ = 'feed_frozen'`).get();
+  assert.equal(row.first_seen, '2026-10-06', 'its clock restarts at the return');
+  assert.equal(row.last_mailed, null, 'and it is owed a mail again');
+  await markMailed(hon, back.fresh, '2026-10-06');
+  // A NIGHT THE CHECK DID NOT RUN is not a night the finding was absent.
+  // (no ran('2026-10-07'))
+  ran('2026-10-08');
+  const gap = await rememberFindings(hon, { findings: [frozen, cover] }, '2026-10-08');
+  assert.equal(gap.fresh.length, 0, 'a missed night must not read as "cleared and back"');
+  assert.equal(gap.standing.length, 2);
+  // And the digest says BACK, not NEW and not STILL STANDING, for the return.
+  const { renderWatchdog } = await import('../src/lib/watchdogEmail.js');
+  const html = renderWatchdog({ today: '2026-10-06', findings: [frozen, cover], repairs: [], counts: { critical: 1, warn: 1, ships_covered: 47, fleet: 48 }, fresh: back.fresh, reminders: back.reminders });
+  const frozenLine = html.split('\n').find((l) => /OBP feed not moving/.test(l)) || '';
+  assert.match(frozenLine, /BACK/, `the returned finding is tagged BACK: ${frozenLine.slice(0, 200)}`);
+  assert.match(frozenLine, /last seen 2026-09-26/, 'and says when it was last seen (the fixture last saw it on the 26th)');
+  assert.ok(!/STILL STANDING/.test(html), 'no week-reminder for a condition that cleared');
+  assert.ok(!/>NEW</.test(frozenLine), 'and not NEW: Miguel has seen this one before');
+  console.log('ok - watchdog memory: a finding that clears and returns is news tagged BACK; a missed night is not a clearance');
+}

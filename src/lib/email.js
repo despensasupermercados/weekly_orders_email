@@ -658,7 +658,16 @@ export function renderWeekly(act, all, today, opts = {}) {
     ...all.map((r) => r.ship),
     ...(opts.checked || []),
   ]);
-  const clean = [...checked].filter((sh) => !troubled.has(sh)).length;
+  // AND ONLY ADDRESSED SHIPS, MATCHED BY NORMALISED NAME. `checked` is every
+  // name any check saw, warehouses and unbuilt hulls included, and a troubled
+  // ship spelt "Vision of the Seas" in its finding and "Vision" in the checked
+  // list counted as both troubled and clean (review, 6 Oct 2026). When
+  // coverage names the addressed ships it examined, count over those.
+  const troubledKeys = new Set([...troubled].map(normShip));
+  const examined = opts.coverage && Array.isArray(opts.coverage.examinedShips)
+    ? opts.coverage.examinedShips
+    : [...checked];
+  const clean = examined.filter((sh) => !troubledKeys.has(normShip(sh))).length;
   // WRITTEN FOR THE PERSON WHO READS IT. The crew are Filipino printer
   // specialists reading English as a second language, often on a phone, at the
   // start of a shift. The old version opened with two dense paragraphs of

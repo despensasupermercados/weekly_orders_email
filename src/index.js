@@ -199,7 +199,12 @@ async function runSendRequests(env, today) {
     const shipName = group ? group.ship : (fleet.get(key) ? fleet.get(key).ship : ship);
     if (kind === 'chase') {
       const missing = ask.find((s) => normShip(s.ship) === key);
-      if (!missing) return { sent: false, to, reason: `${shipName} is not missing its Ordering Schedule, not chased` };
+      // SKIPPED, NOT FAILED. A ship that already sent its schedule is the
+      // healthiest outcome a chase has. This used to come back as a plain
+      // non-send, the per-ship line then read "NOT SENT ...", onDemandOutcome
+      // marks every NOT SENT line as a send failure, and the night check
+      // raised a CRITICAL on it (review of 6 Oct 2026).
+      if (!missing) return { sent: false, skipped: true, to, reason: `${shipName} is not missing its Ordering Schedule, not chased` };
       const r = await send(env, to, chaseSubject(shipName),
         renderChase({ ship: shipName, missing: ask, sentAtMs }), CHASE_TEMPLATE, cc, replyTo, `chase:${q.id}:${key}`);
       return { ...r, to };
@@ -252,7 +257,10 @@ async function runSendRequests(env, today) {
         catch (e) { r = { sent: false, to: [], threw: String((e && e.message) || e).slice(0, 200) }; }
         if (r.sent) sent++;
         results.push({ ship, ...r });
-        lines.push(`${ship} -> ${(r.to || []).join(', ') || '(no address)'}: ${r.sent ? 'sent' : 'NOT SENT ' + (r.reason || r.threw || r.error || JSON.stringify(r))}`);
+        // Three words, three meanings: sent; SKIPPED (nothing to do for this
+        // ship, by rule); NOT SENT (a send that should have happened did not,
+        // which onDemandOutcome turns into the failure mark the night check reads).
+        lines.push(`${ship} -> ${(r.to || []).join(', ') || '(no address)'}: ${r.sent ? 'sent' : r.skipped ? 'SKIPPED ' + r.reason : 'NOT SENT ' + (r.reason || r.threw || r.error || JSON.stringify(r))}`);
       }
       result = (q.ship !== '*' && targets.length === 1)
         ? results[0]
@@ -580,8 +588,14 @@ export default {
       }
       ctx.waitUntil((async () => {
         const newCrit = memory.fresh.filter((f) => f.severity === 'critical').length;
+        // A finding that cleared and returned is "back", not "new": the
+        // subject is the only line most people read, and "2 new" for a
+        // feed freeze Miguel has seen twice already is the wrong word.
+        const back = memory.fresh.filter((f) => f.returned).length;
+        const brandNew = memory.fresh.length - back;
+        const what = [brandNew ? `${brandNew} new` : null, back ? `${back} back` : null].filter(Boolean).join(', ');
         const subject = memory.fresh.length
-          ? `Night check - ${memory.fresh.length} new${newCrit ? `, ${newCrit} need${newCrit === 1 ? 's' : ''} a human` : ''}`
+          ? `Night check - ${what}${newCrit ? `, ${newCrit} need${newCrit === 1 ? 's' : ''} a human` : ''}`
           : `Night check - ${memory.reminders.length} still standing after a week`;
         try {
           const r = await send(env, to, subject,

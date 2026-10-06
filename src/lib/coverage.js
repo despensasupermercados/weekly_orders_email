@@ -52,6 +52,12 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
 
   const seen = new Set((checked || []).map(normShip));
   const unexamined = addressed.filter((s) => !seen.has(s.key)).map((s) => s.name).sort();
+  // THE ADDRESSED SHIPS THAT WERE EXAMINED, BY NAME. The header's "N of M
+  // ships ok" counts over this list, not over `checked`: `checked` is every
+  // name any check saw, and the OBP export carries warehouses ("DIS WHS",
+  // "MIAMI WHS") and hulls not yet in service ("Hero"). None of those is a
+  // ship we address, so none of them can be "ok" (review, 6 Oct 2026).
+  const examinedShips = addressed.filter((s) => seen.has(s.key)).map((s) => s.name).sort();
   const broken = (checks || []).filter((c) => c && c.ran === false)
     .map((c) => ({ name: c.name, reason: c.reason || 'no reason given' }));
 
@@ -85,6 +91,7 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
   return {
     addressed: addressed.length,
     examined: addressed.length - unexamined.length,
+    examinedShips,
     unexamined,
     broken,
     unreadByShip,
