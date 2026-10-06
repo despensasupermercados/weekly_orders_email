@@ -71,6 +71,14 @@ connector. Newest at the top of each list. Dates are 2026.
 - READ THE ENTITY'S `corrections` FIELD in the Brain before writing any rule
   about a ship, quantity or date into code (missed on 10, 16 and 18 Sep;
   Legend of the Seas was dropped from a week of emails because of it).
+- A PUSH TO THE BRANCH IS A PREVIEW. Production changes only from `main`
+  (README, verified 10 Sep). The Cloudflare `workers_get_worker_code` tool
+  returns the LATEST UPLOADED VERSION, preview included, so it cannot prove
+  what is live: on 6 Oct it showed the unmerged PR #32 code while production
+  still ran the pre-PR build. The handoff's "workers_get_worker_code proves
+  what is deployed" was wrong. Proof of a deploy is the Worker's Deployments
+  tab, or behaviour observed in D1 (a night-check line, a log wording that
+  only the new code writes).
 
 ## Lessons paid for, 20–25 Sep
 
