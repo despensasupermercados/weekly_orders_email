@@ -159,3 +159,68 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.equal(withLate.length, 0, `a delivery one day late is still coming; nothing to add: ${JSON.stringify(withLate.map((f) => [f.stockout, f.add_qty]))}`);
   console.log('ok - runwayDb: a late delivery still in transit counts as arriving today (Oasis, Ray 12 Oct)');
 }
+
+// RAY, 12 Oct 2026: "the usage used was from last month". The rate was the
+// higher of last month and the average; Ray struck two rows of the 12 Oct
+// email that only the higher figure produced. Freedom's yellow toner, its real
+// history: used 6, 5, 3 (last month 3, average 4.7). At 4.7 a month its 14
+// run out on 11 Jan, three days before the 14 Jan delivery, and the email
+// asked for 6. At last month's 3 they last into February. Ray: 0, "current
+// consumption and orders in line".
+{
+  const rdb = new DatabaseSync(':memory:');
+  rdb.exec(`
+    CREATE TABLE consumption_snapshot (ship TEXT, part_number TEXT, month TEXT, on_hand INTEGER, receipts INTEGER);
+    CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+    CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);
+    CREATE TABLE par (scope TEXT, ship TEXT, brand TEXT, part_number TEXT, description TEXT, category TEXT, model TEXT, par_qty INTEGER, sku TEXT, source TEXT);
+    CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT, cadence TEXT,
+      loading_port TEXT, loading_delivery_date TEXT, total_lead_days INTEGER, due_date TEXT, must_be_in_ct_by TEXT,
+      status TEXT, source TEXT, po_number TEXT, po_state TEXT, date_changed INTEGER);`);
+  const put = (sql, rows) => { const st = rdb.prepare(sql); for (const r of rows) st.run(...r); };
+  const T = '2026-10-12';
+  put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
+    // Freedom TN619Y, real: 9, 8 (+5), 10 (+7), 13 (+6) -> used 6, 5, 3.
+    ['Freedom', 'TN619Y', '2026-06', 9, 3], ['Freedom', 'TN619Y', '2026-07', 8, 5],
+    ['Freedom', 'TN619Y', '2026-08', 10, 7], ['Freedom', 'TN619Y', '2026-09', 13, 6],
+    // Quest WX-103, real: 3, 1, 1 (+2), 1 -> used 2, 2, 0. Zero aboard today.
+    ['Quest', 'WX103', '2026-06', 3, 0], ['Quest', 'WX103', '2026-07', 1, 0],
+    ['Quest', 'WX103', '2026-08', 1, 2], ['Quest', 'WX103', '2026-09', 1, 0],
+    // Star TN619C: used 9, 9, 3 -> plans on 3, not 7.
+    ['Star', 'TN619C', '2026-06', 20, 0], ['Star', 'TN619C', '2026-07', 11, 0],
+    ['Star', 'TN619C', '2026-08', 11, 9], ['Star', 'TN619C', '2026-09', 8, 0],
+    // Utopia TN619C: no September reading, so no last month -> the average.
+    ['Utopia', 'TN619C', '2026-06', 20, 0], ['Utopia', 'TN619C', '2026-07', 14, 0],
+    ['Utopia', 'TN619C', '2026-08', 10, 0]]);
+  put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [
+    ['Freedom', 'TN619Y', 14, T], ['Quest', 'WX103', 0, T], ['Star', 'TN619C', 2, T], ['Utopia', 'TN619C', 2, T]]);
+  put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [
+    ['ship', 'Freedom', 'Royal', 'TN619Y', 'TN619Y YELLOW TONER', 'Toner', null, 8, null, 'SPAR'],
+    ['ship', 'Quest', 'Azamara', 'WX103', 'WASTE TONER BOX WX-103', 'Toner', null, 2, null, 'SPAR'],
+    ['ship', 'Star', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR'],
+    ['ship', 'Utopia', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR']]);
+  put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
+    ['Freedom', 'FR1', 'HOTEL BIWEEKLY HOTEL', '2026-11-05', '2026-10-14']]);
+  put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [
+    ['Freedom', 'TN619Y', serial('2027-01-14'), 2, T], ['Freedom', 'TN619Y', serial('2027-02-06'), 3, T]]);
+  const got = (await fleetRunway(d1(rdb), T)).findings;
+  const row = (ship) => got.find((f) => f.ship === ship);
+
+  assert.equal(row('Freedom'), undefined,
+    `Freedom plans on last month's 3, its 14 reach the 14 Jan delivery; nothing to ask: ${JSON.stringify(row('Freedom'))}`);
+
+  assert.ok(row('Star'), 'Star, 2 aboard, runs out either way');
+  assert.equal(row('Star').rate, 3, 'Star plans on last month (3), not the average (7) and not the higher one');
+  assert.equal(row('Star').rate_last, 3);
+
+  assert.ok(row('Utopia'), 'Utopia runs out');
+  assert.equal(row('Utopia').rate_last, null, 'no September reading: last month has no figure');
+  assert.equal(row('Utopia').rate, 5, 'so the average of July and August (6, 4) stands in');
+
+  // A zero month on an item the ship used before. Ray's rule for it is not
+  // known; planning on zero would drop an empty shelf from the email.
+  assert.ok(row('Quest'), 'Quest WX-103, none aboard, used 2 and 2 before a zero month: still in the email');
+  assert.equal(row('Quest').rate_last, 0);
+  assert.equal(row('Quest').rate, 1.3, 'the zero month falls back to the average of 2, 2, 0 (1.3 as carried)');
+  console.log('ok - runwayDb: usage is last month (Ray 12 Oct); the average only when last month has no figure or reads zero');
+}
