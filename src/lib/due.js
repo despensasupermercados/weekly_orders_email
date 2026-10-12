@@ -129,7 +129,8 @@ export function classifyAll(rows, today) {
       } else if (azamara && r.order_lines > 0) {
         state = 'PO_NOT_RECORDED'; // Ray's problem, not the ship's
         lastCovered = r.loading_delivery_date;
-      } else if (!r.loading_delivery_date && r.days_to_due != null && r.days_to_due < -MISSED_CREW_DAYS) {
+      } else if ((!r.loading_delivery_date || !ISO_DATE.test(String(r.loading_delivery_date)))
+        && r.days_to_due != null && r.days_to_due < -MISSED_CREW_DAYS) {
         // HISTORY WITH A FIELD MISSING IS NOT A LIVE FAULT.
         //
         // The `past` test below keys on the loading date, so a row with NO

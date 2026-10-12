@@ -17,6 +17,7 @@
 // tested pieces is where this project keeps breaking, so the seam gets run.
 
 import worker from '../src/index.js';
+import { SEND_FAILED_MARK } from '../src/lib/sendNote.js';
 import assert from 'node:assert';
 
 const TODAY = '2026-09-14'; // a Monday
@@ -305,6 +306,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
     { id: 9, ship: 'Anthem', to_json: null, cc_json: null, note: null, kind: 'chase' },
   ];
   const updates = [];
+  const notes = [];
   const queued = {
     prepare(sql) {
       const inner = fakeDb.prepare(sql);
@@ -313,6 +315,7 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
         run: async () => {
           if (/result = 'claimed'/.test(sql)) { const row = queue.find((q) => q.id === stmt._binds[0]); const ok = Boolean(row && !row.claimed); if (ok) row.claimed = true; return { success: true, meta: { changes: ok ? 1 : 0 } }; }
           if (/UPDATE weekly_send_request/.test(sql)) { updates.push(stmt._binds); queue.splice(queue.findIndex((q) => q.id === stmt._binds[0]), 1); }
+          if (/INSERT INTO ingest_log/.test(sql)) notes.push(String(stmt._binds[2]));
           return inner.run();
         },
         first: inner.first,
@@ -341,7 +344,16 @@ console.log('     and preheader count the stockouts and gaps, not just the voyag
   assert.ok(/"count":1,"of":1/.test(star), `the '*' row records what it sent: ${star}`);
   const anthem = updates.find((u) => u[0] === 9)[1];
   assert.ok(/not missing its Ordering Schedule, not chased/.test(anthem), `a ship with a schedule is skipped: ${anthem}`);
-  console.log('ok - schedule chase: ship * mails every missing ship once, cc Ray, 24 hours; a ship with a schedule is skipped');
+  // REVIEW OF 6 Oct 2026: SKIPPING A COMPLIANT SHIP IS NOT A SEND FAILURE.
+  // The per-ship line read "NOT SENT ... not chased", onDemandOutcome marks
+  // any NOT SENT line as a send failure, and the night check raises a CRITICAL
+  // on that mark - so a hand-queued chase for a ship that had already sent its
+  // schedule would have woken Miguel for the healthiest outcome a chase has.
+  const anthemNote = notes.find((n) => /#9 Anthem/.test(n));
+  assert.ok(anthemNote, `the Anthem row is logged: ${notes.join(' || ')}`);
+  assert.ok(!anthemNote.includes(SEND_FAILED_MARK), `a compliant ship skipped is not a failed send: ${anthemNote}`);
+  assert.match(anthemNote, /SKIPPED/, 'and the line says so in a word the reader can tell from NOT SENT');
+  console.log('ok - schedule chase: ship * mails every missing ship once, cc Ray, 24 hours; a ship with a schedule is skipped, not "failed"');
 }
 
 // THE MONTHLY CHASE CRON. Miguel, 17 Sep 2026: "schedule this email on the 2nd

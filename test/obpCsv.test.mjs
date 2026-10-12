@@ -300,3 +300,46 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.deepEqual(both, [], `no ship carries both csv and mirror-fill in-transit rows: ${JSON.stringify(both)}`);
   console.log('ok - obp csv: the mirror fills only ships the export did not mention in either file');
 }
+
+// REVIEW OF 12 Oct 2026 (Ray's review of the 12 Oct email): THE COUNT AT THE
+// START OF EACH MONTH IS KEPT FOR GOOD. OBP's consumption is day-1 count +
+// receipts - last-day count, and our 1st-of-month CSV matched OBP's ending
+// inventory on 44 of 44 rows. KEEP_DAYS deletes daily snapshots after two
+// weeks, so without this the opening count of every month is lost by the 15th.
+{
+  const { CSV_MONTH_OPEN } = await import('../src/lib/obpCsv.js');
+  const mdb = new DatabaseSync(':memory:');
+  mdb.exec(`CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+            CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);`);
+  const mh = d1(mdb);
+  const file = (radiant) => {
+    const lines = [INV_HEAD];
+    for (let i = 0; i < MIN_INVENTORY_ROWS; i++) lines.push(invLine(`Ship${i % 48}`, `P${i}`, 'FILLER', 2));
+    lines.push(invLine('Silhouette', 'Celebrity Map Paper', 'RADIANT WHITE 28# 11x17', radiant));
+    return [{ filename: CSV_FILES.inventory, content: lines.join('\r\n') }];
+  };
+  const kept = (month) => mdb.prepare(`SELECT COUNT(*) n, MIN(snapshot_date) d FROM ${CSV_MONTH_OPEN} WHERE substr(snapshot_date,1,7) = ?`).get(month);
+  const radiant = (d) => (mdb.prepare(`SELECT on_hand FROM ${CSV_MONTH_OPEN} WHERE ship='Silhouette' AND snapshot_date = ?`).get(d) || {}).on_hand;
+
+  const a = await ingestObpCsv(mh, file(6), '2026-10-01');
+  assert.equal(a.refused.length, 0, a.refused.join('; '));
+  assert.equal(a.month_open, MIN_INVENTORY_ROWS + 1, 'the 1st-of-month export is kept whole');
+  assert.equal(radiant('2026-10-01'), 6, "Silhouette's opening count is OBP's figure");
+
+  const b = await ingestObpCsv(mh, file(6), '2026-10-01'); // the 21:00 UTC send of the same file
+  assert.equal(b.month_open, undefined, 'a second mail the same day keeps nothing new');
+  await ingestObpCsv(mh, file(5), '2026-10-02');
+  assert.equal(kept('2026-10').n, MIN_INVENTORY_ROWS + 1, 'later days of the month are not kept');
+  assert.equal(radiant('2026-10-01'), 6, "and do not overwrite the month's opening count");
+
+  await ingestObpCsv(mh, file(3), '2026-10-20');
+  const daily = mdb.prepare(`SELECT COUNT(*) n FROM ${CSV_INVENTORY} WHERE snapshot_date = '2026-10-01'`).get().n;
+  assert.equal(daily, 0, 'the daily copy of 1 Oct is deleted after KEEP_DAYS, as before');
+  assert.equal(radiant('2026-10-01'), 6, 'the opening count survives it');
+
+  // The 1st and 2nd never arrived: the first count of November is kept with
+  // its REAL date, so nobody mistakes 3 Nov for the 1st.
+  await ingestObpCsv(mh, file(9), '2026-11-03');
+  assert.equal(kept('2026-11').d, '2026-11-03');
+  console.log("ok - obp csv: each month's opening count is kept for good, once, with its real date");
+}
