@@ -92,9 +92,17 @@ export async function fleetRunway(hon, today, opts = {}) {
         FROM used GROUP BY ship, part_number
     )
     -- Every open line, with its Excel-serial ETA already a date. Read once.
+    -- A LATE DELIVERY IS STILL A DELIVERY. A line still in the in-transit
+    -- export with its ETA already past has not been received yet: it is late,
+    -- or on board and not yet booked in OBP. Either way the stock is coming.
+    -- This query used to keep only ETA >= today, so a late line simply
+    -- vanished. Oasis, 12 Oct 2026: 40 cases of 11x17 due 11 Oct, still in
+    -- transit; we told the ship to add 40 more and Ray answered "no paper
+    -- order required". His own projection counts it. A late line now counts
+    -- as arriving today.
     , transit AS (
       SELECT t.ship, t.part_number, t.qty,
-             ${src.intransit.land('t')} land
+             CASE WHEN ${src.intransit.land('t')} < ?4 THEN ?4 ELSE ${src.intransit.land('t')} END land
         FROM ${src.intransit.table} t
        WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
          AND ${src.intransit.etaOk('t')}
