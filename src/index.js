@@ -439,6 +439,7 @@ async function ingestEmail(message, env) {
         `OBP CSV: inventory ${r.inventory} rows` +
         (r.inventory_ships ? ` / ${r.inventory_ships} ships, newest UpdateDate ${r.inventory_newest_update}` : '') +
         `, intransit ${r.intransit} rows` +
+        (r.month_open ? ` | ${r.month_open} rows kept as this month's opening count` : '') +
         (r.refused.length ? ` | REFUSED: ${r.refused.join('; ')}` : '') +
         ` | files: ${r.seen.join(', ')}`);
       return;

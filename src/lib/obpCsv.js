@@ -37,6 +37,26 @@ export const CSV_FILES = {
 export const MIN_INVENTORY_ROWS = 1000;
 export const KEEP_DAYS = 14;
 
+// THE COUNT AT THE START OF EACH MONTH, KEPT FOR GOOD.
+//
+// OBP's own "Consumption Statistic" is Beginning (day 1) + Additions - Ending
+// (last day), from OBP's own counts (requirements doc, OBP enhancements, Aug
+// 2024). Our nightly CSV IS that count: the snapshot dated the 1st of a month
+// matched Ray's OBP "Ending Inventory" for the month before on 44 of 44 rows
+// (checked 12 Oct 2026). So OBP's consumption can be rebuilt from files this
+// Worker already receives - but only if the 1st-of-month snapshot survives,
+// and KEEP_DAYS deletes it after two weeks.
+//
+// The usage figure the runway uses today comes from cims-hon's monthly table,
+// which is built from the stale workbook mirror; Silhouette's Radiant White read
+// as 16 a month where OBP says 5 (Ray's review, 12 Oct 2026). This table is
+// the clean replacement's foundation.
+//
+// The FIRST snapshot of each month is kept, with its real date. Normally that
+// is the 1st; if the 1st's mail never came, the next one is kept and its date
+// says so, rather than a reader assuming it was the 1st.
+export const CSV_MONTH_OPEN = 'weekly_obp_month_open';
+
 // A ZERO IS A CLAIM, A NULL IS AN ABSENCE. cims-hon found on 17 Sep 2026, by
 // running both apps' readers over the same file, that this parser turned an
 // absent Quantity into 0, and 0 is "stocked out, critical, today" for every
@@ -174,7 +194,28 @@ export const DDL = [
      po_number TEXT, vendor_invoice TEXT, voyage TEXT, port TEXT,
      eta_date TEXT, order_date TEXT, snapshot_date TEXT NOT NULL, source TEXT)`,
   `CREATE INDEX IF NOT EXISTS ${CSV_INTRANSIT}_snap ON ${CSV_INTRANSIT} (snapshot_date, ship)`,
+  `CREATE TABLE IF NOT EXISTS ${CSV_MONTH_OPEN} (
+     ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT,
+     on_hand REAL, update_date TEXT, snapshot_date TEXT NOT NULL,
+     kept_at TEXT NOT NULL DEFAULT (datetime('now')),
+     PRIMARY KEY (ship, part_number, snapshot_date))`,
 ];
+
+// Copy today's export rows into CSV_MONTH_OPEN when this month has none yet.
+// Export rows only (source 'csv'): a mirror-fill row is the stale workbook's
+// figure, not OBP's count. Returns the number of rows kept (0 if the month
+// already had its opening count).
+async function keepMonthOpen(hon, today) {
+  const month = String(today).slice(0, 7);
+  const have = await hon.prepare(
+    `SELECT COUNT(*) n FROM ${CSV_MONTH_OPEN} WHERE substr(snapshot_date, 1, 7) = ?`).bind(month).first();
+  if (have && Number(have.n) > 0) return 0;
+  const r = await hon.prepare(
+    `INSERT OR IGNORE INTO ${CSV_MONTH_OPEN} (ship, part_number, description, on_hand, update_date, snapshot_date)
+     SELECT ship, part_number, description, on_hand, update_date, snapshot_date
+       FROM ${CSV_INVENTORY} WHERE snapshot_date = ? AND source = 'csv'`).bind(today).run();
+  return Number((r && r.meta && r.meta.changes) ?? (r && r.changes) ?? 0);
+}
 
 export async function ensureTables(hon) {
   for (const sql of DDL) await hon.prepare(sql).run();
@@ -284,6 +325,11 @@ export async function ingestObpCsv(hon, attachments, today) {
       out.refused.push(`${CSV_FILES.inventory}: every Quantity is 0 or blank across ${rows.length} rows - not a real inventory, not written`);
     } else {
       await replaceSnapshot(hon, CSV_INVENTORY, rows, today, INV_COLS);
+      // Never let keeping the month's opening count cost the day's ingest.
+      try {
+        const kept = await keepMonthOpen(hon, today);
+        if (kept) out.month_open = kept;
+      } catch (e) { out.refused.push(`month-open copy threw: ${String((e && e.message) || e)}`); }
       out.inventory = rows.length;
       out.inventory_ships = new Set(rows.map((r) => r.ship)).size;
       out.inventory_newest_update = rows.reduce((m, r) => (r.update_date && r.update_date > m ? r.update_date : m), '');
