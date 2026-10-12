@@ -356,3 +356,34 @@ console.log('ok - ship email: "enough until" never appears beside "you will have
 }
 
 console.log('ok - ship email: the rate shows both halves of Ray\'s rule when they differ, with the real number of months behind the average');
+
+// RAY'S REVIEW OF THE 12 Oct 2026 EMAIL: Silhouette's row read "The order due
+// Wed 14 Oct already has enough. Add nothing. More is coming on Sat 7 Nov
+// first. But you will have none for 5 days before that." - and 7 Nov WAS that
+// order's arrival. Two faults: "first" about the order itself (the open order's
+// own lines are in transit, so its landing is also the next landing), and
+// "already has enough" in the same sentence as running out.
+{
+  const f = {
+    ship: 'Silhouette', item: 'RADIANT WHITE 28# 11x17', description: 'RADIANT WHITE 28# 11x17',
+    on_hand: 11, rate: 16, stockout: '2026-11-02', severity: 'critical',
+    order_due: '2026-10-14', order_lands: '2026-11-07', next_loading: '2026-11-07', cover_to: '2026-11-21',
+    add_qty: 0, add_basis: 'already on the way',
+  };
+  const opts = { gaps: [], deliveries: [], schedules: [], checked: ['Silhouette'], audience: 'ship', ship: 'Silhouette' };
+  const text = (x) => renderWeekly([], [], '2026-10-12', { ...opts, runsOut: [x] })
+    .replace(/<[^>]+>/g, ' ').replace(/&middot;/g, '·').replace(/\s+/g, ' ');
+  const same = text(f);
+  assert.ok(!/More is coming on Sat 7 Nov first/.test(same), 'the order is not "more coming first" before itself');
+  assert.ok(/arrive 5 days after you run out/.test(same), 'it says the order itself arrives after the stockout');
+  assert.ok(!/already has enough/.test(same), '"already has enough" never sits beside a gap');
+  assert.ok(/Nothing to add to the order due Wed 14 Oct/.test(same), 'it says what is true: nothing to add');
+
+  // A different delivery that lands BEFORE the order is still "first".
+  const earlier = text({ ...f, next_loading: '2026-11-04' });
+  assert.ok(/More is coming on Wed 4 Nov first/.test(earlier), 'an earlier, different delivery is still named');
+  // No gap at all: the reassurance stays.
+  const fine = text({ ...f, stockout: '2026-11-30' });
+  assert.ok(/already has enough\. Add nothing\./.test(fine), 'with no gap, "already has enough" is the right line');
+}
+console.log('ok - ship email: an order is never "more coming first" before itself, and "already has enough" never sits beside a gap (Ray, 12 Oct)');

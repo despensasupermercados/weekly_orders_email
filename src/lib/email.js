@@ -376,7 +376,12 @@ function dryUntil(f) {
   const ends = [f.next_loading, f.order_lands].filter((d) => d && d > f.stockout).sort();
   if (!ends.length) return null;
   const d = Math.round((Date.parse(ends[0]) - Date.parse(f.stockout)) / 86400000);
-  return { date: ends[0], days: d, byOrder: ends[0] === f.order_lands && ends[0] !== f.next_loading };
+  // byOrder: the first thing to arrive after the item runs dry IS the open
+  // order. This used to also require that no in-transit line landed the same
+  // day, but the open order's own lines ARE in transit, so when they matched
+  // the email said "More is coming on Sat 7 Nov first" about the very order
+  // it was talking about (Silhouette, 12 Oct 2026).
+  return { date: ends[0], days: d, byOrder: ends[0] === f.order_lands };
 }
 const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : 's'}</strong>`;
 
@@ -468,7 +473,13 @@ function addLine(f, fg) {
   const order = `the order due <strong>${fmtDowFull(f.order_due)}</strong>`;
   let head;
   if (f.add_qty == null) head = `Add it to ${order}. Look in your statistics file for the number.`;
-  else if (f.add_qty === 0) head = `${order[0].toUpperCase()}${order.slice(1)} already has enough. Add nothing.`;
+  // "ALREADY HAS ENOUGH" BESIDE "YOU WILL HAVE NONE" IS A CONTRADICTION.
+  // Nothing to add means the order covers the cycle after it lands; it says
+  // nothing about the days before it lands. When there is a gap, say only
+  // what is true: nothing to add, and the gap follows in the next sentence.
+  else if (f.add_qty === 0) head = dry
+    ? `Nothing to add to ${order}.`
+    : `${order[0].toUpperCase()}${order.slice(1)} already has enough. Add nothing.`;
   else head = `Add ${big(f.add_qty)} to ${order}.`;
   return `<div style="font-family:${FB};font-size:13px;color:${BODY};padding-top:5px;">${head} ${after}</div>${why}`;
 }

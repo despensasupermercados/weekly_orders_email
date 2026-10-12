@@ -7,6 +7,29 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **12 Oct — Miguel: "don't ask me to merge anything, go ahead and do it all."**
+  Sessions merge their own PRs once tests pass and the change is measured.
+- **12 Oct — Ray reviewed the 12 Oct fleet email (`email stats 10122026.xlsx`).**
+  We matched him on 2 of 6 items. Causes, each proven on data (Brain
+  recm81KqiNOmmYrKY, rec28jc86U9FZ6KRL):
+  1. Late in-transit lines were ignored (Oasis). FIXED: a line still in transit
+     with a past ETA counts as arriving today. Replayed on Monday's data: 6 of
+     27 rows drop (Oasis, Eclipse, Equinox x2, Quantum, Summit), each because
+     that exact item was already shipped 1–8 days late; none added.
+  2. "More is coming on <date> first" printed about the order itself, and
+     "already has enough" beside "none for N days" (Silhouette). FIXED.
+  3. Usage rate: Ray's sheet uses LAST MONTH (42 of 44 rows), not the higher of
+     last month and the average. OPEN — question to Ray; not changed yet.
+  4. No spare: Ray keeps about one month of usage on board at each month end
+     (Legend, Jewel). OPEN — his method scores 5/6 on replay but adds ~30 rows
+     he has not seen; needs his review of a sample before it goes live.
+  5. Usage derived from the stale workbook mirror (Silhouette 16 vs OBP 5).
+     OBP's Consumption Statistic = day-1 count + receipts − last-day count; our
+     1st-of-month CSV equals OBP's month-end count on 44 of 44 rows. Each
+     month's opening count is now kept (`weekly_obp_month_open`, PR #32).
+     October is the first month we can rebuild and check against OBP (1 Nov).
+  Not built: counting every in-transit delivery in the stock walk. Measured,
+  it changes which items show, so it belongs with Ray's method, not here.
 - **25 Sep — Azamara toner tolerance is ZERO days (Ray).** Asked how many days
   without an item is acceptable on Azamara. Ray answered with the Azamara toner
   par table: `Days without item = 0` on every toner, note "if item drops to 0,

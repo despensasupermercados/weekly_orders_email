@@ -117,3 +117,45 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.equal(r2.findings.filter((f) => /TN619M/.test(f.item)).length, 0, 'and none of them is called a stockout');
   console.log('ok - runwayDb: NULL on-hand carries through as unread, never as 0');
 }
+
+// REVIEW OF 12 Oct 2026 (Ray's review of the 12 Oct email): A LATE DELIVERY IS
+// STILL A DELIVERY. Oasis had 40 cases of 11x17 due 11 Oct, still in the
+// in-transit export on the 12th - late, or aboard and not yet booked. The query
+// kept only ETAs from today on, the 40 cases vanished, and the email told Oasis
+// to add 40 more. Ray: "no paper order required". Five other ships had the same
+// shape the same Monday (Eclipse, Equinox x2, Quantum, Summit).
+{
+  const ldb = new DatabaseSync(':memory:');
+  ldb.exec(`
+    CREATE TABLE consumption_snapshot (ship TEXT, part_number TEXT, month TEXT, on_hand INTEGER, receipts INTEGER);
+    CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+    CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);
+    CREATE TABLE par (scope TEXT, ship TEXT, brand TEXT, part_number TEXT, description TEXT, category TEXT, model TEXT, par_qty INTEGER, sku TEXT, source TEXT);
+    CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT, cadence TEXT,
+      loading_port TEXT, loading_delivery_date TEXT, total_lead_days INTEGER, due_date TEXT, must_be_in_ct_by TEXT,
+      status TEXT, source TEXT, po_number TEXT, po_state TEXT, date_changed INTEGER);`);
+  const put = (sql, rows) => { const st = ldb.prepare(sql); for (const r of rows) st.run(...r); };
+  const T = '2026-10-12';
+  // Oasis's real 11x17 history: 21, 19, 25 a month (last month 25).
+  put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
+    ['Oasis', 'P11x17', '2026-06', 67, 40], ['Oasis', 'P11x17', '2026-07', 46, 0],
+    ['Oasis', 'P11x17', '2026-08', 27, 0], ['Oasis', 'P11x17', '2026-09', 42, 40]]);
+  put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [['Oasis', 'P11x17', 34, T]]);
+  put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [['ship', 'Oasis', 'Royal', 'P11x17', '20 LBS 11 x 17 DG3 PAPER', 'Paper', null, 40, null, 'SPAR']]);
+  put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
+    ['Oasis', 'OA1', 'HOTEL BIWEEKLY HOTEL', '2026-11-06', '2026-10-15'],
+    ['Oasis', 'OA2', 'HOTEL BIWEEKLY HOTEL', '2026-11-20', '2026-10-29']]);
+  put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [['Oasis', 'P11x17', serial('2026-12-04'), 40, T]]);
+  const oasis = async () => (await fleetRunway(d1(ldb), T)).findings.filter((f) => f.ship === 'Oasis');
+
+  // Control: with no late line the ship really is short, and is told so.
+  const without = await oasis();
+  assert.equal(without.length, 1, 'with no late delivery, 34 cases at 25 a month do run out before 4 Dec');
+  assert.equal(without[0].add_qty, 40);
+
+  // The real Monday: 40 cases due 11 Oct, still in transit.
+  put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [['Oasis', 'P11x17', serial('2026-10-11'), 40, T]]);
+  const withLate = await oasis();
+  assert.equal(withLate.length, 0, `a delivery one day late is still coming; nothing to add: ${JSON.stringify(withLate.map((f) => [f.stockout, f.add_qty]))}`);
+  console.log('ok - runwayDb: a late delivery still in transit counts as arriving today (Oasis, Ray 12 Oct)');
+}
