@@ -96,31 +96,49 @@ export function stockoutDate({ onHand, rate, arrivals = [], today, horizonDays =
 // THE FINDING. An item runs out BEFORE the next delivery that could have
 // carried it - so the fix is to add it to an order that is still open, and the
 // cost of missing it is a full cycle.
-export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays }) {
+export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays, orderLands = null }) {
   const out = stockoutDate({ onHand, rate, arrivals, today, horizonDays });
   if (!out) return null;
-  // A CONTAINER WITH THIS ITEM LANDS FIRST: NOTHING TO SAY. `arrivals` holds
-  // only the NEXT known landing for the item - the orders after it have not
-  // been raised yet, so a balance that runs dry weeks after that landing is
-  // the next order's business, not a finding. A code review on 16 Sep 2026
-  // proposed dropping this on the case "a small top-up lands early and the
-  // ship still runs dry before the next container"; that case cannot occur in
-  // this data (the top-up IS the next landing), and without the shortcut the
-  // 15 Sep snapshot went from 47 findings to 272 - every item that would
-  // eventually run out inside the horizon. Kept, on purpose.
-  const covered = (arrivals || []).some((a) => a.date <= out && Number(a.qty) > 0 && a.date >= today);
-  if (covered) return null;
+  // A DELIVERY LANDS BEFORE THE SHELF EMPTIES: USUALLY NOTHING TO SAY. Running
+  // dry after the LAST planned delivery is the business of orders not raised
+  // yet. (Dropping this rule on 16 Sep 2026 took the 15 Sep snapshot from 47
+  // findings to 272 - every item that would ever run out in 120 days.)
+  //
+  // BUT RUNNING DRY BETWEEN TWO PLANNED DELIVERIES IS A FINDING, when the open
+  // order cannot land in time to stop it. `arrivals` held only the first
+  // landing until 12 Oct 2026, so this case was invisible - and the comment
+  // here said it "cannot occur in this data". It did: on 12 Oct, Infinity's
+  // yellow toner (16 a month, 8 landing each month) ran dry 30 Nov to 8 Dec
+  // with its open order landing 14 Jan, and four more items had the same
+  // shape (Quest x2, Pursuit, Spectrum). Nothing the crew adds can arrive in
+  // time; they must be told now. A gap AFTER the open order lands is left to
+  // Ray's month-end planning (asked 12 Oct, not built).
+  const known = (arrivals || []).filter((a) => a && a.date >= today && Number(a.qty) > 0);
+  const first = known.filter((a) => a.date <= out);
+  let refill = nextLoading || null;
+  if (first.length) {
+    const after = known.filter((a) => a.date > out).map((a) => a.date).sort()[0];
+    if (!after) return null;
+    if (orderLands && orderLands <= out) return null;
+    refill = after;
+  }
   return {
     ship, item,
     code: 'RUNS_OUT',
-    severity: out <= (nextLoading || out) ? 'critical' : 'warn',
+    severity: out <= (refill || out) ? 'critical' : 'warn',
     on_hand: Number(onHand || 0),
     rate: Math.round(rate * 10) / 10,
     stockout: out,
-    next_loading: nextLoading || null,
+    next_loading: refill,
+    // What lands BEFORE the empty date and is already counted in it, so the
+    // reader can check the date: 18 aboard at 16 a month is mid-November, and
+    // only the 8 landing on 14 Nov make it 30 Nov. Null when nothing does.
+    arrive_first: first.length
+      ? { qty: first.reduce((n, a) => n + Number(a.qty), 0), by: first.map((a) => a.date).sort().pop(), count: first.length }
+      : null,
     detail: `${item}: ${Number(onHand || 0)} on board, using about ${Math.round(rate)} a month. ` +
       `Runs out around ${out}` +
-      (nextLoading ? `, and the next loading after that is ${nextLoading}.` : '.'),
+      (refill ? `, and the next loading after that is ${refill}.` : '.'),
   };
 }
 

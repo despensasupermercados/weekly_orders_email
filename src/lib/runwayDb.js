@@ -159,6 +159,12 @@ export async function fleetRunway(hon, today, opts = {}) {
            COALESCE((SELECT SUM(x.qty) FROM transit x
                       WHERE x.ship = a.ship AND x.part_number = a.part_number
                         AND x.land = n.next_eta), 0) on_next,
+           -- EVERY planned landing for the item, late ones counted as today, so
+           -- the stock walk sees a dry spell between two deliveries (runway.js,
+           -- runsOutFirst). 'date=qty' pairs; the walk sums a shared date.
+           (SELECT GROUP_CONCAT(x.land || '=' || x.qty, ',') FROM transit x
+             WHERE x.ship = a.ship AND x.part_number = a.part_number
+               AND x.land >= ?4) all_landings,
            o.due_date order_due,
            o.loading_delivery_date order_lands,
            COALESCE((SELECT SUM(x.qty) FROM transit x
@@ -198,7 +204,8 @@ export async function fleetRunway(hon, today, opts = {}) {
   const unread = [];
   for (const r of rows) {
     if (r.on_hand == null || r.on_hand === '') { unread.push({ ship: r.ship, item: r.item }); continue; }
-    const arrivals = r.next_eta ? [{ date: r.next_eta, qty: Number(r.on_next) || 0 }] : [];
+    const arrivals = String(r.all_landings || '').split(',').filter(Boolean)
+      .map((pair) => { const [date, qty] = pair.split('='); return { date, qty: Number(qty) || 0 }; });
     const f = runsOutFirst({
       ship: r.ship,
       item: r.item,
@@ -207,6 +214,7 @@ export async function fleetRunway(hon, today, opts = {}) {
       arrivals,
       today,
       nextLoading: r.next_eta || null,
+      orderLands: r.order_lands || null,
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
     if (f) findings.push({
