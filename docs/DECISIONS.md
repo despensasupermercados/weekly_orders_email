@@ -7,6 +7,19 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **12 Oct — a dry spell between two planned deliveries is a finding.** The
+  stock walk now sees every planned landing (late ones as today). An item that
+  runs dry between two deliveries, before its open order can land, is shown
+  with "If you cannot wait, tell your Inventory Manager now". That sentence
+  now ends EVERY dry gap; it used to appear only when the order itself closed
+  the gap (Ray 25 Sep: this line is the Azamara as-needed trigger). The
+  headline names deliveries counted in the empty date ("8 more arriving Sat
+  14 Nov"). Replayed on 12 Oct: 18 rows → 23, all five new (Infinity TN619Y
+  dry 30 Nov–8 Dec, Quest TN619M 1–8 Dec, Pursuit 8.5x11 10–19 Dec, Quest
+  TN324M 20 Dec–7 Feb, Spectrum TN619C 26 Dec–6 Jan); none changed. NOT
+  built: a gap AFTER the open order lands (five paper items, Jan–Feb) — that is
+  Ray's month-end planning, in his sample. Dry only after the last planned
+  delivery stays the next order's business (the 47 → 272 lesson, 16 Sep).
 - **12 Oct — Ray: "the usage used was from last month."** In writing, after
   his review. The rate is now last month's usage (`runwayDb.js`, `RATE`). The
   average stands in only when last month has no figure, or reads ZERO for an
@@ -42,8 +55,9 @@ connector. Newest at the top of each list. Dates are 2026.
      1st-of-month CSV equals OBP's month-end count on 44 of 44 rows. Each
      month's opening count is now kept (`weekly_obp_month_open`, PR #32).
      October is the first month we can rebuild and check against OBP (1 Nov).
-  Not built: counting every in-transit delivery in the stock walk. Measured,
-  it changes which items show, so it belongs with Ray's method, not here.
+  Counting every in-transit delivery: the part that finds hidden dry spells
+  was built the same day (entry above); the part that plans spare stock after
+  the order lands belongs with Ray's method.
 - **25 Sep — Azamara toner tolerance is ZERO days (Ray).** Asked how many days
   without an item is acceptable on Azamara. Ray answered with the Azamara toner
   par table: `Days without item = 0` on every toner, note "if item drops to 0,

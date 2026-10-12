@@ -224,3 +224,57 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.equal(row('Quest').rate, 1.3, 'the zero month falls back to the average of 2, 2, 0 (1.3 as carried)');
   console.log('ok - runwayDb: usage is last month (Ray 12 Oct); the average only when last month has no figure or reads zero');
 }
+
+// A DRY SPELL BETWEEN TWO PLANNED DELIVERIES (12 Oct 2026). The stock walk saw
+// only the first landing; if it arrived before the shelf emptied the item was
+// "covered", whatever came after. Infinity's yellow toner, real figures: 18
+// aboard, 16 used last month, 8 landing each month. The 8 on 14 Nov carry it to
+// 30 Nov; the next 8 land 8 Dec; the open order lands 14 Jan. Eight dry days
+// nothing the crew adds can prevent - and the email said nothing.
+{
+  const gdb = new DatabaseSync(':memory:');
+  gdb.exec(`
+    CREATE TABLE consumption_snapshot (ship TEXT, part_number TEXT, month TEXT, on_hand INTEGER, receipts INTEGER);
+    CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+    CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);
+    CREATE TABLE par (scope TEXT, ship TEXT, brand TEXT, part_number TEXT, description TEXT, category TEXT, model TEXT, par_qty INTEGER, sku TEXT, source TEXT);
+    CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT, cadence TEXT,
+      loading_port TEXT, loading_delivery_date TEXT, total_lead_days INTEGER, due_date TEXT, must_be_in_ct_by TEXT,
+      status TEXT, source TEXT, po_number TEXT, po_state TEXT, date_changed INTEGER);`);
+  const put = (sql, rows) => { const st = gdb.prepare(sql); for (const r of rows) st.run(...r); };
+  const T = '2026-10-12';
+  // Three hulls with Infinity's figures; only the landings differ.
+  //   Infinity - the real case: open order lands 14 Jan, after the gap.
+  //   Edge     - the open order lands 20 Nov, BEFORE the gap: that is Ray's
+  //              month-end planning (asked 12 Oct), not built; no finding.
+  //   Summit   - only the 14 Nov landing: dry after the LAST planned delivery
+  //              is the next order's business, as before; no finding.
+  for (const ship of ['Infinity', 'Edge', 'Summit']) {
+    put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
+      [ship, 'TN619Y', '2026-06', 15, 9], [ship, 'TN619Y', '2026-07', 16, 9],
+      [ship, 'TN619Y', '2026-08', 12, 4], [ship, 'TN619Y', '2026-09', 12, 16]]);
+    put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [[ship, 'TN619Y', 18, T]]);
+    put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [['ship', ship, 'Celebrity', 'TN619Y', 'TN619Y YELLOW TONER', 'Parts', 'C4070', 10, null, 'SPAR']]);
+    put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [[ship, 'TN619Y', serial('2026-11-14'), 8, T]]);
+  }
+  for (const ship of ['Infinity', 'Edge']) {
+    put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [
+      [ship, 'TN619Y', serial('2026-12-08'), 8, T], [ship, 'TN619Y', serial('2027-01-02'), 8, T], [ship, 'TN619Y', serial('2027-02-07'), 8, T]]);
+  }
+  put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
+    ['Infinity', null, 'HOTEL BIWEEKLY HOTEL', '2027-01-14', '2026-10-22'],
+    ['Infinity', null, 'HOTEL BIWEEKLY HOTEL', '2027-01-26', '2026-10-29'],
+    ['Edge', null, 'HOTEL BIWEEKLY HOTEL', '2026-11-20', '2026-10-22'],
+    ['Summit', null, 'HOTEL BIWEEKLY HOTEL', '2027-01-14', '2026-10-22']]);
+  const got = (await fleetRunway(d1(gdb), T)).findings;
+  const inf = got.find((f) => f.ship === 'Infinity');
+  assert.ok(inf, 'Infinity runs dry between the 14 Nov and 8 Dec deliveries: a finding');
+  assert.equal(inf.stockout, '2026-11-30', '18 + 8 at 16 a month');
+  assert.equal(inf.next_loading, '2026-12-08', 'the delivery that ends the gap, not the one before it');
+  assert.equal(inf.order_due, '2026-10-22');
+  assert.equal(inf.order_lands, '2027-01-14');
+  assert.deepEqual(inf.arrive_first, { qty: 8, by: '2026-11-14', count: 1 }, 'the 8 counted in the empty date are named');
+  assert.equal(got.find((f) => f.ship === 'Edge'), undefined, 'the open order lands before the gap: not built, no finding');
+  assert.equal(got.find((f) => f.ship === 'Summit'), undefined, 'dry only after the last planned delivery: no finding');
+  console.log('ok - runwayDb: a dry spell between two planned deliveries, before the open order lands, is a finding (Infinity, 12 Oct)');
+}

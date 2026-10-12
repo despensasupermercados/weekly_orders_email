@@ -429,6 +429,15 @@ function rateBasis(f) {
     + `${lastText} &middot; ${avg} average${over} &middot; we plan on ${onAverage ? 'the average' : 'last month'}</div>`;
 }
 
+// THE DELIVERIES BEHIND THE EMPTY DATE. When stock lands before the shelf
+// empties, "18 on board, 16 a month, empty by 30 Nov" does not add up for the
+// reader - 18 at 16 a month is mid-November. Name what was counted.
+function arriveFirst(f) {
+  const a = f.arrive_first;
+  if (!a || !a.qty) return '';
+  return ` &middot; <strong>${a.qty}</strong> more arriving ${a.count > 1 ? 'by ' : ''}${fmtDowFull(a.by)}`;
+}
+
 function addLine(f, fg) {
   const big = (n) => `<span style="font-family:${FH};font-size:20px;font-weight:700;color:${fg};">${n}</span>`;
   const dry = dryUntil(f);
@@ -475,7 +484,13 @@ function addLine(f, fg) {
   let after;
   if (!dry) after = 'It will arrive before you run out. Good.';
   else if (dry.byOrder) after = `It will arrive ${redDays(dry.days)} after you run out. If you cannot wait, tell your Inventory Manager now.`;
-  else after = `More is coming on <strong>${fmtDowFull(dry.date)}</strong> first. But you will have none for ${redDays(dry.days)} before that.`;
+  // The same action whichever delivery ends the gap. Until 12 Oct it was only
+  // printed when the order itself ended it, so a gap closed by another
+  // delivery told the crew they would have none and stopped there. Ray, 25 Sep
+  // 2026: on Azamara "if item drops to 0, printer needs to communicate
+  // immediately" - this sentence is that trigger, and adding to the order
+  // cannot close a gap that ends before the order lands.
+  else after = `More is coming on <strong>${fmtDowFull(dry.date)}</strong> first. But you will have none for ${redDays(dry.days)} before that. If you cannot wait, tell your Inventory Manager now.`;
   const order = `the order due <strong>${fmtDowFull(f.order_due)}</strong>`;
   let head;
   if (f.add_qty == null) head = `Add it to ${order}. Look in your statistics file for the number.`;
@@ -523,7 +538,7 @@ ${tiles}
   <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
-  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board &middot; you use <strong>${Math.round(f.rate)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board${arriveFirst(f)} &middot; you use <strong>${Math.round(f.rate)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
   ${rateBasis(f)}
   ${addLine(f, fg)}
 </td></tr></table>

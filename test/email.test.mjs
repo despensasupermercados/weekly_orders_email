@@ -394,3 +394,32 @@ console.log('ok - ship email: the rate shows both halves of Ray\'s rule when the
   assert.ok(/already has enough\. Add nothing\./.test(fine), 'with no gap, "already has enough" is the right line');
 }
 console.log('ok - ship email: an order is never "more coming first" before itself, and "already has enough" never sits beside a gap (Ray, 12 Oct)');
+
+// A GAP BETWEEN TWO PLANNED DELIVERIES (12 Oct 2026). Infinity's yellow toner,
+// real figures: 18 aboard, 8 more on 14 Nov, 16 a month, empty 30 Nov, the next
+// 8 on 8 Dec, the open order landing 14 Jan. Two things the row must carry:
+// the 8 counted in the empty date (18 at 16 a month alone is mid-November, so
+// the date did not add up for a reader), and the action - adding to an order
+// that lands in January cannot close a gap in November. That sentence was only
+// printed when the order itself ended the gap.
+{
+  const f = {
+    ship: 'Infinity', item: 'TN619Y YELLOW TONER', description: 'TN619Y YELLOW TONER',
+    on_hand: 18, rate: 16, stockout: '2026-11-30', severity: 'critical',
+    next_loading: '2026-12-08', arrive_first: { qty: 8, by: '2026-11-14', count: 1 },
+    order_due: '2026-10-22', order_lands: '2027-01-14', cover_to: '2027-01-26',
+    add_qty: 10, add_basis: '7 used in 12 days + 3 spare',
+  };
+  const opts = { gaps: [], deliveries: [], schedules: [], checked: ['Infinity'], audience: 'ship', ship: 'Infinity' };
+  const text = (x) => renderWeekly([], [], '2026-10-12', { ...opts, runsOut: [x] })
+    .replace(/<[^>]+>/g, ' ').replace(/&middot;/g, '·').replace(/\s+/g, ' ');
+  const t = text(f);
+  assert.ok(/18 on board · 8 more arriving Sat 14 Nov · you use 16 a month · empty by Mon 30 Nov/.test(t), t.slice(0, 600));
+  assert.ok(/More is coming on Tue 8 Dec first\. But you will have none for 8 days before that\. If you cannot wait, tell your Inventory Manager now\./.test(t),
+    'a gap the order cannot close carries the action');
+  const two = text({ ...f, arrive_first: { qty: 13, by: '2026-11-28', count: 2 } });
+  assert.ok(/13 more arriving by Sat 28 Nov/.test(two), 'several deliveries: their total, "by" the last');
+  const none = text({ ...f, arrive_first: null });
+  assert.ok(/18 on board · you use 16 a month/.test(none), 'nothing landing first: the line is as before');
+}
+console.log('ok - ship email: a gap between deliveries names what was counted and tells the crew to act (12 Oct)');
