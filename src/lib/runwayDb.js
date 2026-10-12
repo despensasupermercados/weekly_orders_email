@@ -25,6 +25,21 @@ const ITEM_FILTER = `(
 
 export const HORIZON_DAYS = 120;
 
+// THE USAGE WE PLAN ON IS LAST MONTH'S. Ray, 12 Oct 2026, in writing: "the
+// usage used was from last month". His projection sheets agree on 42 of 44
+// rows. From 11 Sep to 12 Oct this was the higher of last month and the
+// average, quoted to him as his SOP; it was never his practice, and it
+// inflated Solstice's radiant (11 against his 7) and Freedom's yellow toner
+// (5 against his 3), both rows he struck out of the 12 Oct email.
+// The average stands in when last month cannot be measured (no reading for
+// the month before it, or a negative figure dropped as a typo) AND when last
+// month reads ZERO for an item the ship used before. Ray's six sheets never
+// show a zero month, so his rule for it is unknown (asked 12 Oct). Planning on
+// zero would remove the item from the email when stock is lowest: Quest's
+// WX-103 waste box, 0 aboard on 12 Oct, used 2 in July, 2 in August, 0 in
+// September. Until he answers, a zero month falls back to the average.
+const RATE = 'COALESCE(NULLIF(a.lastm, 0), a.avg3)';
+
 // Which schedule rows carry an order the ship can add to. The same three
 // clauses as due.js and fallback.js; `t` is the schedule_order alias.
 const eligible = (t) => `(
@@ -129,7 +144,7 @@ export async function fleetRunway(hon, today, opts = {}) {
            -- month 11 against a 3-month average of 7 — but the email showed
            -- only the answer, so there was nothing to check it against and the
            -- disagreement cost a round trip. Carry the inputs.
-           MAX(a.avg3, COALESCE(a.lastm, 0)) rate,
+           ${RATE} rate,
            a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
            -- not an empty shelf: the export writes real zeros (1,445 of 3,481
@@ -163,7 +178,7 @@ export async function fleetRunway(hon, today, opts = {}) {
       LEFT JOIN nxt n ON n.ship = a.ship AND n.part_number = a.part_number
       LEFT JOIN open_order o ON o.ship = a.ship AND o.rn = 1
      WHERE ${ITEM_FILTER}
-       AND MAX(a.avg3, COALESCE(a.lastm, 0)) > 0`;
+       AND ${RATE} > 0`;
 
   const prevMonth = monthsBack(month, 1);
 

@@ -396,14 +396,18 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // Ray, 23 Sep 2026, choosing between leaving the forecast alone, switching to
 // the 3-month average, and showing both: "Show both." He had read Infinity's
 // notice as too pessimistic — it said 11 a month where he remembered 6 — and
-// the 11 was correct: it is his own SOP, the greater of last month or the
-// trailing 3-month average, and August really was 11 against an average of 7.
-// The 6 was June.
+// August really was 11 against an average of 7. The 6 was June.
 //
 // The email gave him one number and no way to check it, so a correct forecast
 // cost a round trip to defend. Printing both inputs makes the rule auditable
 // at a glance: anyone who thinks the figure is wrong can see which half drove
 // it and which month to go and look at.
+//
+// WHICH HALF WE PLAN ON. Until 12 Oct this line said "we plan on the higher
+// one". Ray, 12 Oct 2026: "the usage used was from last month". We plan on
+// last month, and on the average only when last month has no figure or reads
+// zero (runwayDb's RATE says why). The line names the one used, never a rule
+// that did not run.
 //
 // AND NEVER CLAIM A SAMPLE WE DO NOT HAVE. The average is over however many
 // months are actually measurable, which is rarely three — Infinity's is 7.5
@@ -416,11 +420,13 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 function rateBasis(f) {
   const last = f.rate_last == null ? null : Math.round(f.rate_last);
   const avg = f.rate_avg == null ? null : Math.round(f.rate_avg);
-  if (last == null || avg == null || last === avg) return '';
+  if (avg == null || last === avg) return '';
   const n = Number(f.rate_avg_months) || 0;
   const over = n > 1 ? ` of ${n} months` : '';
+  const onAverage = f.rate_last == null || Number(f.rate_last) === 0;
+  const lastText = f.rate_last == null ? 'no figure for last month' : `${last} last month`;
   return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
-    + `${last} last month &middot; ${avg} average${over} &middot; we plan on the higher one</div>`;
+    + `${lastText} &middot; ${avg} average${over} &middot; we plan on ${onAverage ? 'the average' : 'last month'}</div>`;
 }
 
 function addLine(f, fg) {

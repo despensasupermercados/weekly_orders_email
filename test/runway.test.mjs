@@ -4,7 +4,7 @@
 // Adding a line to an order that has not closed is free. Missing it is a month
 // dry or an emergency freight, which is the objective this system exists for.
 
-import { monthlyUsage, burnRate, stockoutDate, runsOutFirst, isConsumable, MONTH_DAYS }
+import { monthlyUsage, stockoutDate, runsOutFirst, isConsumable, MONTH_DAYS }
   from '../src/lib/runway.js';
 import assert from 'node:assert';
 
@@ -23,12 +23,7 @@ assert.deepEqual(usage.map((u) => u.used), [7, 6, 7],
 assert.ok(!usage.some((u) => u.month === '2026-09'),
   'the current month is half counted and must never be used as a rate');
 
-// The greater of last month or the 3-month average, and deliberately the
-// pessimistic one: under-ordering strands a ship.
-assert.equal(burnRate(usage), 7);
-assert.equal(burnRate([{ month: '2026-08', used: 12 }, { month: '2026-07', used: 2 }].reverse()), 12,
-  'a spike in the last month wins over a calm average');
-assert.equal(burnRate([]), null, 'no history means no claim');
+// Which month's usage is planned on is pinned in runwayDb.test.mjs, against the real SQL.
 
 // THE PURSUIT FAILURE MODE. One mistyped ending inventory produces a negative
 // usage; letting it into the average hides a real stockout behind a fake

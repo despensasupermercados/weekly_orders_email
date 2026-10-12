@@ -20,9 +20,10 @@
 // which over the monthly snapshots is on_hand(prev) + receipts(m) - on_hand(m).
 // Checked against Onward cyan: Jun 7, Jul 7, Aug 7 a month. It holds.
 //
-// THE RATE IS THE GREATER OF LAST MONTH OR THE 3-MONTH AVERAGE - Ray's SOP, and
-// deliberately the pessimistic of the two. Under-ordering strands a ship;
-// over-ordering costs shelf space.
+// THE RATE IS LAST MONTH'S USAGE - Ray, 12 Oct 2026, in writing. Until then it
+// was the greater of last month or the 3-month average, chosen as the
+// pessimistic one and quoted to him as his SOP; his sheets never used it. The
+// rule is runwayDb.js, const RATE.
 //
 // ON QUANTITIES. The first version of this file refused to print one: par is
 // what should be ABOARD and an order line is a different number, and the
@@ -62,14 +63,11 @@ export function monthlyUsage(snapshots, currentMonth) {
   return out;
 }
 
-// Ray's SOP: the greater of last month or the trailing 3-month average.
-export function burnRate(usage) {
-  if (!usage.length) return null;
-  const last = usage[usage.length - 1].used;
-  const tail = usage.slice(-3);
-  const avg = tail.reduce((a, u) => a + u.used, 0) / tail.length;
-  return Math.max(last, avg);
-}
+// THE RATE RULE LIVES IN ONE PLACE: runwayDb.js, const RATE (last month;
+// the average only when last month has no figure or reads zero - Ray, 12 Oct
+// 2026). A JS copy here said "the greater of last month or the average" for a
+// month after that stopped being the rule; it was removed so no reader takes
+// it for the live one.
 
 const addDays = (iso, n) => new Date(Date.parse(iso) + n * 86400000).toISOString().slice(0, 10);
 

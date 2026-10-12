@@ -7,6 +7,20 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **12 Oct — Ray: "the usage used was from last month."** In writing, after
+  his review. The rate is now last month's usage (`runwayDb.js`, `RATE`). The
+  average stands in only when last month has no figure, or reads ZERO for an
+  item used before: Ray's sheets never show a zero month, so his rule for it is
+  unknown and was asked; planning on zero would have dropped Quest's WX-103
+  waste box (0 aboard) from the email. The ship email now says "we plan on last
+  month" (or "on the average" when it fell back). Replayed on 12 Oct's data:
+  21 rows → 18 (Solstice radiant and Freedom yellow, both struck by Ray, and
+  Quest TN324BK, 4 aboard at 1 a month); Ray's six now 5 of 6 (was 2). The
+  sixth, Legend +40, needs his month-end spare rule. He also wrote: "the
+  statistics shows what is expected to be ordered in the coming months,
+  subject to change based on actual consumption", "Legend will need paper
+  even during the transition to USA at lower usage", and "Jewel will also be
+  required to align their paper order".
 - **12 Oct — Miguel: "don't ask me to merge anything, go ahead and do it all."**
   Sessions merge their own PRs once tests pass and the change is measured.
 - **12 Oct — Ray reviewed the 12 Oct fleet email (`email stats 10122026.xlsx`).**
@@ -19,7 +33,7 @@ connector. Newest at the top of each list. Dates are 2026.
   2. "More is coming on <date> first" printed about the order itself, and
      "already has enough" beside "none for N days" (Silhouette). FIXED.
   3. Usage rate: Ray's sheet uses LAST MONTH (42 of 44 rows), not the higher of
-     last month and the average. OPEN — question to Ray; not changed yet.
+     last month and the average. FIXED 12 Oct after Ray confirmed (above).
   4. No spare: Ray keeps about one month of usage on board at each month end
      (Legend, Jewel). OPEN — his method scores 5/6 on replay but adds ~30 rows
      he has not seen; needs his review of a sample before it goes live.
@@ -50,10 +64,10 @@ connector. Newest at the top of each list. Dates are 2026.
   no PO is an issue and gets warned, even in a ship's usual skip slot (code was
   already right); (b) "filter by due date" means SORT by due date (already
   done).
-- **23 Sep — Ray chose "show both".** The burn rate stays `MAX(last month,
-  trailing average)` (his SOP). The ship email prints both inputs under the
-  headline when they differ: `11 last month · 8 average of 2 months · we plan
-  on the higher one`. The average is over however many months are measurable
+- **23 Sep — Ray chose "show both".** (The MAX rule it kept was retired on
+  12 Oct; see above.) The ship email prints both inputs under the headline when
+  they differ: `11 last month · 8 average of 2 months · we plan on last
+  month`. The average is over however many months are measurable
   (usually 2, never assume 3) and the label prints the true count.
 - **23 Sep — Infinity RADIANT WHITE: 6 was June, 11 was August.** Ray still
   quotes 6. Corrected twice by email; not landed. Decision: stop emailing it,
@@ -187,4 +201,8 @@ Read the live log before the code, then the code with a fault injected.
   CSV export (rec1iiLB86ZwLFsNk, recGwzmL0tcZmPSuC). An inbound-refusal alarm
   on `obp@cims.work` (recLzeixD5h8FvpDH). See
   `docs/cims-hon-handoff-2026-09-21.md`.
-- **Ray:** nothing pending. Both questions of 24 Sep are answered.
+- **Ray:** (1) when last month reads zero for an item used before, plan on
+  zero or on the average? (default: the average). (2) His month-end spare:
+  is the target one month of usage on board at each month end, ~3 months
+  ahead? A side-by-side sample of what that adds (about 20 paper pallets on
+  ~20 ships) goes to him before it is built.

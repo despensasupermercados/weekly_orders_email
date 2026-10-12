@@ -319,10 +319,10 @@ console.log('ok - ship email: "enough until" never appears beside "you will have
 // the 3-month average, and showing both: "Show both."
 //
 // He had read Infinity's notice as too pessimistic - it said 11 a month where
-// he remembered 6 - and the 11 was correct. It is his own SOP, the greater of
-// last month or the trailing average, and August really was 11. The 6 was
+// he remembered 6 - and the 11 was correct: August really was 11. The 6 was
 // June. The email gave one number and no way to check it, so a correct
-// forecast cost a round trip to defend.
+// forecast cost a round trip to defend. Since 12 Oct the line says we plan on
+// last month (Ray: "the usage used was from last month").
 {
   const mk = (o) => ({
     ship: 'Infinity', item: 'RADIANT WHITE 28# 11x17', description: 'RADIANT WHITE 28# 11x17',
@@ -338,7 +338,14 @@ console.log('ok - ship email: "enough until" never appears beside "you will have
   const real = render(mk({ rate_last: 11, rate_avg: 7.5, rate_avg_months: 2 }));
   assert.ok(/11 last month/.test(real), 'the month that drove the forecast is named');
   assert.ok(/8 average of 2 months/.test(real), 'and the average it beat, with its real sample size');
-  assert.ok(/we plan on the higher one/.test(real), 'and which of the two the forecast used');
+  assert.ok(/we plan on last month/.test(real), 'and which of the two the forecast used (Ray 12 Oct: last month)');
+  assert.ok(!/higher one/.test(real), 'the retired rule is never named');
+  // The average stands in only when last month has no figure or reads zero,
+  // and the line then says so rather than claiming last month drove it.
+  const zero = render(mk({ rate: 1.3, rate_last: 0, rate_avg: 1.33, rate_avg_months: 3 }));
+  assert.ok(/0 last month · 1 average of 3 months · we plan on the average/.test(zero), zero.slice(0, 400));
+  const none = render(mk({ rate: 5, rate_last: null, rate_avg: 5, rate_avg_months: 2 }));
+  assert.ok(/no figure for last month · 5 average of 2 months · we plan on the average/.test(none), none.slice(0, 400));
 
   // NEVER CLAIM A SAMPLE WE DO NOT HAVE. `avg3` is only three months when
   // three are measurable: a month needs the month before it inside the window
