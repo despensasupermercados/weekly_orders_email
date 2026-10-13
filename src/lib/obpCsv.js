@@ -4,7 +4,9 @@
 // SharePoint / OnboardPrintAdmin / Inventory Reporting / Exports:
 //   onboardinventory.csv     what is aboard each ship
 //   intransititems.csv       every open order line and the day it lands
-//   acceptedorderdetails.csv receipts (not used by this Worker yet)
+//   acceptedorderdetails.csv receipts, every accepted order line since 2023.
+//                            Stored for cims-hon (weekly_obp_order); this
+//                            Worker does not read it.
 // The Power Automate flow "HON — nightly OBP" (its mails are titled "OBP
 // nightly") attaches them and mails them to obp-csv@cims.work, which routes
 // here. Column names are the export's own,
@@ -16,13 +18,17 @@
 //              PlacedBy,VoyageNum,ShipProvPort,ShipProvDate,PartID,PartCategory,
 //              PartNumber,PartDescr,Quantity,PartPrice,Total Price,CustomerName,
 //              Supplier
+//   orders:    ShipName,Category,Supplier,Part Number,Description,Price,
+//              AcceptedQuantity,ReceivedDate,VendorInvoice,PONumber
+//              (checked against the live file on 13 Oct 2026: ~18k rows,
+//              ReceivedDate "6/15/2024 12:00:00 AM", Price "1.1100")
 // ShipProvDate is the landing date ("9/18/2026 12:00:00 AM"), the same fact
 // obp_intransit.eta carries as an Excel serial.
 //
 // These tables are THIS WORKER'S. The obp_* mirror belongs to cims-hon and is
 // never written here; obpSource.js decides which copy the readers use.
 
-import { CSV_INVENTORY, CSV_INTRANSIT } from './obpSource.js';
+import { CSV_INVENTORY, CSV_INTRANSIT, CSV_ORDERS } from './obpSource.js';
 import { columnsOf } from './schema.js';
 
 export const CSV_FILES = {
@@ -36,6 +42,14 @@ export const CSV_FILES = {
 // the fleet read as empty. Refuse, log, keep yesterday's copy.
 export const MIN_INVENTORY_ROWS = 1000;
 export const KEEP_DAYS = 14;
+
+// THE ORDERS FILE IS CUMULATIVE. Every snapshot carries every receipt since
+// 2023, ~18k rows, so yesterday's snapshot is today's minus a few lines. Three
+// days covers a missed mail; fourteen would be 250k rows of near-duplicates.
+// It is also mailed twice a day with identical content (09:00 and 21:00 UTC,
+// 12 Oct 2026); the second copy is recognised and not rewritten.
+export const ORDERS_KEEP_DAYS = 3;
+export const MIN_ORDER_ROWS = 1000;
 
 // THE COUNT AT THE START OF EACH MONTH, KEPT FOR GOOD.
 //
@@ -68,6 +82,7 @@ export const CSV_MONTH_OPEN = 'weekly_obp_month_open';
 export const REQUIRED_HEADERS = {
   inventory: ['ShipName', 'PartNumber', 'Quantity', 'UpdateDate'],
   intransit: ['ShipName', 'PartNumber', 'Quantity', 'ShipProvDate'],
+  orders: ['ShipName', 'Part Number', 'AcceptedQuantity', 'ReceivedDate'],
 };
 export const MAX_BLANK_SHARE = 0.2;
 
@@ -180,6 +195,24 @@ export function mapIntransit(rows, snapshotDate) {
     .filter((r) => r.ship && r.part_number);
 }
 
+export function mapOrders(rows, snapshotDate) {
+  return rows
+    .map((r) => ({
+      ship: r.ShipName,
+      category: r.Category || null,
+      supplier: r.Supplier || null,
+      part_number: r['Part Number'],
+      description: r.Description || null,
+      price: num(r.Price),
+      accepted_qty: num(r.AcceptedQuantity),
+      received_date: usDate(r.ReceivedDate),
+      vendor_invoice: r.VendorInvoice || null,
+      po_number: r.PONumber || null,
+      snapshot_date: snapshotDate,
+    }))
+    .filter((r) => r.ship && r.part_number);
+}
+
 export const DDL = [
   // source: 'csv' for a row from the export, 'mirror-fill' for a ship the
   // export did not cover, copied from the workbook mirror so that ship keeps
@@ -194,6 +227,12 @@ export const DDL = [
      po_number TEXT, vendor_invoice TEXT, voyage TEXT, port TEXT,
      eta_date TEXT, order_date TEXT, snapshot_date TEXT NOT NULL, source TEXT)`,
   `CREATE INDEX IF NOT EXISTS ${CSV_INTRANSIT}_snap ON ${CSV_INTRANSIT} (snapshot_date, ship)`,
+  `CREATE TABLE IF NOT EXISTS ${CSV_ORDERS} (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     ship TEXT NOT NULL, category TEXT, supplier TEXT, part_number TEXT NOT NULL,
+     description TEXT, price REAL, accepted_qty REAL, received_date TEXT,
+     vendor_invoice TEXT, po_number TEXT, snapshot_date TEXT NOT NULL, source TEXT)`,
+  `CREATE INDEX IF NOT EXISTS ${CSV_ORDERS}_snap ON ${CSV_ORDERS} (snapshot_date, ship)`,
   `CREATE TABLE IF NOT EXISTS ${CSV_MONTH_OPEN} (
      ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT,
      on_hand REAL, update_date TEXT, snapshot_date TEXT NOT NULL,
@@ -238,6 +277,72 @@ async function replaceSnapshot(hon, table, records, snapshotDate, cols) {
   const ins = hon.prepare(`INSERT OR REPLACE INTO ${table} (${cols.join(',')}) VALUES (${ph})`);
   await runAll(hon, records.map((r) => ins.bind(...cols.map((c) => r[c] ?? null))));
   await hon.prepare(`DELETE FROM ${table} WHERE snapshot_date < date(?, '-${KEEP_DAYS} day')`).bind(snapshotDate).run();
+}
+
+// 18k rows one statement each is 360 round trips; several rows per INSERT cut
+// that eightfold. D1 caps bound parameters at 100 per statement, so the rows
+// per statement follow from the column count.
+async function replaceSnapshotWide(hon, table, records, snapshotDate, cols, keepDays) {
+  await hon.prepare(`DELETE FROM ${table} WHERE snapshot_date = ?`).bind(snapshotDate).run();
+  const per = Math.max(1, Math.floor(100 / cols.length));
+  const stmts = [];
+  for (let i = 0; i < records.length; i += per) {
+    const chunk = records.slice(i, i + per);
+    const ph = chunk.map(() => `(${cols.map(() => '?').join(',')})`).join(',');
+    stmts.push(hon.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES ${ph}`)
+      .bind(...chunk.flatMap((r) => cols.map((c) => r[c] ?? null))));
+  }
+  // A write that dies partway leaves a short snapshot that would read as the
+  // newest. Count it; if short, remove it so readers keep yesterday's whole one.
+  try {
+    await runAll(hon, stmts);
+  } finally {
+    const got = await hon.prepare(`SELECT COUNT(*) n FROM ${table} WHERE snapshot_date = ?`).bind(snapshotDate).first();
+    if (Number(got && got.n) !== records.length) {
+      await hon.prepare(`DELETE FROM ${table} WHERE snapshot_date = ?`).bind(snapshotDate).run();
+      throw new Error(`${table}: wrote ${Number(got && got.n)} of ${records.length} rows, snapshot ${snapshotDate} removed`);
+    }
+  }
+  await hon.prepare(`DELETE FROM ${table} WHERE snapshot_date < date(?, '-${keepDays} day')`).bind(snapshotDate).run();
+}
+
+const ORD_COLS = ['ship', 'category', 'supplier', 'part_number', 'description', 'price', 'accepted_qty', 'received_date', 'vendor_invoice', 'po_number', 'snapshot_date', 'source'];
+
+// Same guards as the other two files: a renamed column, a short file, or
+// unreadable quantities or dates are refused by name and yesterday's copy stays.
+async function ingestOrders(hon, file, today, out) {
+  const raw = parseCsv(textOf(file));
+  const rows = mapOrders(raw, today).map((r) => ({ ...r, source: 'csv' }));
+  const miss = missingHeaders(raw, 'orders');
+  const blank = rows.filter((r) => r.accepted_qty == null).length;
+  const dated = rows.filter((r) => r.received_date).length;
+  if (miss.length) {
+    out.refused.push(`${CSV_FILES.orders}: column(s) ${miss.join(', ')} not in the header - the export format changed, not written`);
+    return;
+  }
+  if (rows.length < MIN_ORDER_ROWS) {
+    out.refused.push(`${CSV_FILES.orders} parsed to ${rows.length} rows, below ${MIN_ORDER_ROWS} - not the full export, not written`);
+    return;
+  }
+  if (blank > rows.length * MAX_BLANK_SHARE) {
+    out.refused.push(`${CSV_FILES.orders}: AcceptedQuantity unreadable on ${blank} of ${rows.length} rows - not written`);
+    return;
+  }
+  if (dated < rows.length / 2) {
+    out.refused.push(`${CSV_FILES.orders}: only ${dated} of ${rows.length} rows carry a readable ReceivedDate - the export format may have changed, not written`);
+    return;
+  }
+  const total = rows.reduce((a, r) => a + (r.accepted_qty || 0), 0);
+  const have = await hon.prepare(
+    `SELECT COUNT(*) n, SUM(accepted_qty) s FROM ${CSV_ORDERS} WHERE snapshot_date = ?`).bind(today).first();
+  if (have && Number(have.n) === rows.length && Number(have.s) === total) {
+    out.orders = rows.length;
+    out.orders_unchanged = true;
+    return;
+  }
+  await replaceSnapshotWide(hon, CSV_ORDERS, rows, today, ORD_COLS, ORDERS_KEEP_DAYS);
+  out.orders = rows.length;
+  out.orders_newest_received = rows.reduce((m, r) => (r.received_date && r.received_date > m ? r.received_date : m), '');
 }
 
 const INV_COLS = ['ship', 'part_number', 'description', 'category', 'on_hand', 'update_date', 'snapshot_date', 'source'];
@@ -299,12 +404,13 @@ const textOf = (a) => {
 export async function ingestObpCsv(hon, attachments, today) {
   const byName = new Map();
   for (const a of attachments || []) byName.set(String(a.filename || '').toLowerCase(), a);
-  const out = { inventory: 0, intransit: 0, refused: [], seen: [...byName.keys()] };
+  const out = { inventory: 0, intransit: 0, orders: 0, refused: [], seen: [...byName.keys()] };
 
   const inv = byName.get(CSV_FILES.inventory);
   const tr = byName.get(CSV_FILES.intransit);
-  if (!inv && !tr) {
-    out.refused.push(`neither ${CSV_FILES.inventory} nor ${CSV_FILES.intransit} attached`);
+  const ord = byName.get(CSV_FILES.orders);
+  if (!inv && !tr && !ord) {
+    out.refused.push(`none of ${Object.values(CSV_FILES).join(', ')} attached`);
     return out;
   }
   await ensureTables(hon);
@@ -351,6 +457,13 @@ export async function ingestObpCsv(hon, attachments, today) {
       out.intransit = rows.length;
       out.intransit_undated = rows.length - dated.length;
     }
+  }
+  // Orders last, and fenced: a bad receipts file must never cost the stock
+  // figures the Monday email is built from. No mirror fill - the mirror's
+  // orders are the stale workbook's, the copy this table exists to replace.
+  if (ord) {
+    try { await ingestOrders(hon, ord, today, out); }
+    catch (e) { out.refused.push(`${CSV_FILES.orders} threw: ${String((e && e.message) || e)}`); }
   }
   if (out.inventory || out.intransit) {
     try { out.filled = await fillFromMirror(hon, today, { inventory: Boolean(out.inventory), intransit: Boolean(out.intransit) }); }
