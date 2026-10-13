@@ -7,6 +7,20 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **13 Oct — the OBP workbook is being retired; the CSVs are the feed.**
+  OBPInventoryReporting.Linked.xlsx is re-saved every night (~04:01 UTC) but
+  its values change only when someone opens it in desktop Excel: obp_inventory
+  held 8 Oct's content (3550 / 14269) through 12 Oct, then exactly the CSV of
+  that day; same for 1 Oct. Power Automate cannot refresh Power Query, so
+  "make it refresh daily" has no reliable fix, and it would only re-serve the
+  CSVs anyway. The CSVs change once a day (OBP export, 04:00 UTC); the 09:00
+  and 21:00 UTC mails carry the same files. `acceptedorderdetails.csv` is now
+  stored in `weekly_obp_order` (ISO dates, 3 days kept) for cims-hon, which
+  still builds receipts and consumption from the workbook. The night check now
+  judges feed age and movement on the copy the readers use; a stale workbook
+  is one worth-knowing line, a retired one is silence. Last step, Miguel's:
+  remove the workbook email from "HON — nightly OBP" once cims-hon reads
+  `weekly_obp_order`.
 - **12 Oct — a dry spell between two planned deliveries is a finding.** The
   stock walk now sees every planned landing (late ones as today). An item that
   runs dry between two deliveries, before its open order can land, is shown

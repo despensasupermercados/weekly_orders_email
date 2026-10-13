@@ -114,7 +114,10 @@ const attachments = [
   { filename: CSV_FILES.orders, content: 'ShipName\nAdventure' },
 ];
 const r = await ingestObpCsv(hon, attachments, '2026-09-16');
-assert.equal(r.refused.length, 0, `nothing refused: ${r.refused.join('; ')}`);
+// The junk orders file is refused by name, and costs the stock files nothing.
+assert.equal(r.refused.length, 1, `only the junk orders file is refused: ${r.refused.join('; ')}`);
+assert.match(r.refused[0], /acceptedorderdetails\.csv: column\(s\) Part Number, AcceptedQuantity, ReceivedDate not in the header/);
+assert.equal(r.orders, 0);
 assert.equal(r.inventory, MIN_INVENTORY_ROWS + 1);
 assert.equal(r.intransit, 3);
 assert.equal(r.inventory_newest_update, '2026-09-15');
@@ -342,4 +345,86 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   await ingestObpCsv(mh, file(9), '2026-11-03');
   assert.equal(kept('2026-11').d, '2026-11-03');
   console.log("ok - obp csv: each month's opening count is kept for good, once, with its real date");
+}
+
+// ---- RECEIPTS: acceptedorderdetails.csv -> weekly_obp_order ----
+// cims-hon builds receipts and consumption from the workbook mirror, which
+// refreshes only when someone opens it in desktop Excel (13 Oct 2026: content
+// of 8 Oct re-stamped five days running). This is the CSV copy it moves to.
+{
+  const { CSV_ORDERS } = await import('../src/lib/obpSource.js');
+  const { mapOrders, MIN_ORDER_ROWS, ORDERS_KEEP_DAYS } = await import('../src/lib/obpCsv.js');
+  const odb = new DatabaseSync(':memory:');
+  let stmts = 0;
+  const base = d1(odb);
+  const oh = { prepare(sql) { if (/^INSERT INTO weekly_obp_order/.test(sql)) stmts++; return base.prepare(sql); }, batch: base.batch };
+
+  const ORD_HEAD = 'ShipName,Category,Supplier,Part Number,Description,Price,AcceptedQuantity,ReceivedDate,VendorInvoice,PONumber';
+  // Verbatim from the live export, 13 Oct 2026: a quoted comma in Description
+  // and another in VendorInvoice.
+  const real = [
+    'Adventure,Parts,Konica,25SA40960 / 99PRD67752,"#TIRE, DOUBLE FEED PREVENTION****",1.1100,1,6/15/2024 12:00:00 AM,51686355,67877342',
+    'Allure,Supplies,DG3 Paper,8.5 x 11 / 99PRD75632,20 LBS 8.5 x 11 DG3 PAPER,36.4800,40,10/11/2026 12:00:00 AM,"52517706, 52528518",PO337504RCL',
+  ];
+  const m = mapOrders(parseCsv([ORD_HEAD, ...real].join('\r\n')), '2026-10-13');
+  assert.deepEqual(m[1], {
+    ship: 'Allure', category: 'Supplies', supplier: 'DG3 Paper', part_number: '8.5 x 11 / 99PRD75632',
+    description: '20 LBS 8.5 x 11 DG3 PAPER', price: 36.48, accepted_qty: 40, received_date: '2026-10-11',
+    vendor_invoice: '52517706, 52528518', po_number: 'PO337504RCL', snapshot_date: '2026-10-13',
+  });
+  assert.equal(m[0].description, '#TIRE, DOUBLE FEED PREVENTION****');
+
+  const ordFile = (n, qty = 2) => {
+    const lines = [ORD_HEAD, ...real];
+    for (let i = 0; i < n; i++) lines.push(`Ship${i % 48},Parts,Konica,P${i},FILLER,4.8100,${qty},9/${1 + (i % 28)}/2026 12:00:00 AM,5${i},6${i}`);
+    return { filename: 'AcceptedOrderDetails.csv', content: lines.join('\r\n') };
+  };
+
+  // An orders-only mail is enough: the file stands on its own.
+  const r1 = await ingestObpCsv(oh, [ordFile(MIN_ORDER_ROWS)], '2026-10-13');
+  assert.equal(r1.refused.length, 0, r1.refused.join('; '));
+  assert.equal(r1.orders, MIN_ORDER_ROWS + 2);
+  assert.equal(r1.orders_newest_received, '2026-10-11');
+  assert.equal(odb.prepare(`SELECT COUNT(*) n FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-13'`).get().n, MIN_ORDER_ROWS + 2);
+  assert.equal(odb.prepare(`SELECT received_date FROM ${CSV_ORDERS} WHERE ship='Allure'`).get().received_date, '2026-10-11', 'ISO, never an Excel serial');
+  assert.ok(stmts * 8 >= MIN_ORDER_ROWS + 2 && stmts < (MIN_ORDER_ROWS + 2) / 4, `rows are written several per INSERT (${stmts} statements)`);
+
+  // The 21:00 mail carries the same file as the 09:00 one: not rewritten.
+  stmts = 0;
+  const r2 = await ingestObpCsv(oh, [ordFile(MIN_ORDER_ROWS)], '2026-10-13');
+  assert.equal(r2.orders_unchanged, true);
+  assert.equal(stmts, 0, 'an identical second mail writes nothing');
+
+  // A changed file the same day replaces, never appends.
+  await ingestObpCsv(oh, [ordFile(MIN_ORDER_ROWS, 3)], '2026-10-13');
+  const s = odb.prepare(`SELECT COUNT(*) n, SUM(accepted_qty) q FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-13'`).get();
+  assert.equal(s.n, MIN_ORDER_ROWS + 2);
+  assert.equal(s.q, MIN_ORDER_ROWS * 3 + 41);
+
+  // Guards, each refused by name with the good copy kept.
+  const short = await ingestObpCsv(oh, [ordFile(10)], '2026-10-14');
+  assert.match(short.refused[0], /parsed to 12 rows, below 1000/);
+  const undated = ordFile(MIN_ORDER_ROWS);
+  undated.content = undated.content.replace(/\d+\/\d+\/2026 12:00:00 AM/g, '46300');
+  const u = await ingestObpCsv(oh, [undated], '2026-10-14');
+  assert.match(u.refused[0], /readable ReceivedDate/, 'an Excel serial is not a date we read');
+  assert.equal(odb.prepare(`SELECT COUNT(*) n FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-14'`).get().n, 0);
+
+  // A write that dies partway is removed, not left as a short "newest" snapshot.
+  {
+    let n = 0;
+    const flaky = { prepare: oh.prepare, async batch(st) { if (++n === 3) throw new Error('D1 overloaded'); return base.batch(st); } };
+    const r = await ingestObpCsv(flaky, [ordFile(MIN_ORDER_ROWS)], '2026-10-15');
+    assert.match(r.refused.join(';'), /threw: .*wrote \d+ of 1002 rows, snapshot 2026-10-15 removed/, r.refused.join(';'));
+    assert.equal(odb.prepare(`SELECT COUNT(*) n FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-15'`).get().n, 0);
+    assert.equal(odb.prepare(`SELECT COUNT(*) n FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-13'`).get().n, MIN_ORDER_ROWS + 2, 'the last whole snapshot stands');
+  }
+
+  // Cumulative file: only ORDERS_KEEP_DAYS of snapshots are kept.
+  await ingestObpCsv(oh, [ordFile(MIN_ORDER_ROWS)], `2026-10-${13 + ORDERS_KEEP_DAYS + 1}`);
+  assert.equal(odb.prepare(`SELECT COUNT(*) n FROM ${CSV_ORDERS} WHERE snapshot_date='2026-10-13'`).get().n, 0, 'old snapshots are pruned');
+
+  // And obp_order, cims-hon's, is never created or written by this Worker.
+  assert.equal(odb.prepare(`SELECT COUNT(*) n FROM sqlite_master WHERE name='obp_order'`).get().n, 0);
+  console.log('ok - obp csv: receipts land in weekly_obp_order (ISO dates, batched, deduped, pruned), never in obp_order');
 }

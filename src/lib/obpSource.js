@@ -22,6 +22,9 @@ import { columnsOf } from './schema.js';
 
 export const CSV_INVENTORY = 'weekly_obp_inventory';
 export const CSV_INTRANSIT = 'weekly_obp_intransit';
+// acceptedorderdetails.csv - receipts. Written by obpCsv.js, read by cims-hon
+// (its receipts and consumption), not by this Worker. received_date is ISO.
+export const CSV_ORDERS = 'weekly_obp_order';
 
 // obp_intransit.eta is an Excel serial in a TEXT column; the CSV copy stores a
 // real ISO date. The readers ask the source for the expression, so neither

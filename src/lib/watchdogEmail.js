@@ -24,6 +24,7 @@ const CHECK_LABEL = {
   feed: 'OBP feed',
   feed_frozen: 'OBP feed not moving',
   csv_feed: 'OBP CSV copy',
+  mirror_stale: 'OBP workbook copy stale',
   on_hand_unread: 'Inventory rows with no reading',
   mail_route: 'Mail route to this Worker',
   queue_stuck: 'Send queue row stuck',

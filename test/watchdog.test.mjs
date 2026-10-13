@@ -207,6 +207,56 @@ assert.equal(clean.repairs.length, 0);
 console.log('ok - watchdog catches stale feed, format drift, scope leaks and expired schedules,');
 console.log('     repairs only its own rows, and recognises the hyphenated MOT variant');
 
+// ---- The feed checks judge the copy the readers USE ----
+// 13 Oct 2026: "OBP feed not moving - STILL STANDING 26 DAYS" was about the
+// workbook mirror, while every reader ran on the fresh CSV copy. And once the
+// workbook mail is retired the mirror stops entirely: judged alone, check 1
+// would then page critical every night forever.
+{
+  const T = '2026-10-13';
+  const days = (from, n) => Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.parse(from) - i * 86400000); return d.toISOString().slice(0, 10);
+  });
+  const series = (dates, sumOf) => dates.map((d, i) => ({ d, n: 3550, s: sumOf(i) }));
+  // Mirror: 8 Oct content re-stamped through the 12th (the live shape).
+  const mirror = series(days('2026-10-12', 8), (i) => (i <= 4 ? 14269 : 13595));
+  const csvMoving = series(days('2026-10-12', 7), (i) => 15087 - i * 200);
+  const csvFrozen = series(days('2026-10-12', 7), () => 15087);
+  const COLS = ['ship', 'part_number', 'on_hand', 'qty', 'snapshot_date'].map((name) => ({ name }));
+  const scenario = ({ mirrorLatest, mirrorRows, csvRows }) => fakeDb([
+    // most specific first: frozenFor reads LIMIT 7, obpSource's effectiveDate LIMIT 60
+    ['FROM weekly_obp_inventory GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 7', csvRows],
+    ['FROM weekly_obp_intransit GROUP BY snapshot_date ORDER BY snapshot_date DESC LIMIT 7', csvRows],
+    ['FROM obp_inventory GROUP BY snapshot_date', mirrorRows],
+    ['FROM obp_intransit GROUP BY snapshot_date', mirrorRows],
+    ['PRAGMA table_info(weekly_obp_inventory)', COLS],
+    ['PRAGMA table_info(weekly_obp_intransit)', COLS],
+    ['MAX(snapshot_date) d FROM weekly_obp_inventory', { d: '2026-10-12' }],
+    ['MAX(snapshot_date) d FROM weekly_obp_intransit', { d: '2026-10-12' }],
+    ['MAX(snapshot_date) d FROM obp_inventory', { d: mirrorLatest }],
+    ['MAX(snapshot_date) d FROM obp_intransit', { d: mirrorLatest }],
+    ...withRow('MAX(snapshot_date) inv', { inv: mirrorLatest, it: mirrorLatest }),
+  ]);
+  const feedChecks = (w) => w.findings.filter((f) => ['feed', 'feed_frozen', 'mirror_stale'].includes(f.check));
+
+  // 1. Today's live shape: workbook frozen, CSV moving -> one worth-knowing line, no page.
+  const live = feedChecks(await runWatchdog({ HON: scenario({ mirrorLatest: '2026-10-12', mirrorRows: mirror, csvRows: csvMoving }) }, T, { repair: false }));
+  assert.deepEqual(live.map((f) => `${f.severity}:${f.check}`), ['warn:mirror_stale'], JSON.stringify(live));
+  assert.match(live[0].detail, /last changed 2026-10-08/);
+  assert.match(live[0].detail, /reads the CSV copy \(2026-10-12\)/);
+
+  // 2. OBP's own export stops moving: THAT pages, on the table the readers use.
+  const stuck = feedChecks(await runWatchdog({ HON: scenario({ mirrorLatest: '2026-10-12', mirrorRows: mirror, csvRows: csvFrozen }) }, T, { repair: false }));
+  const fz = stuck.filter((f) => f.check === 'feed_frozen');
+  assert.equal(fz.length, 2, JSON.stringify(stuck));
+  assert.ok(fz.every((f) => f.severity === 'critical' && /^weekly_obp_/.test(f.detail)), JSON.stringify(fz));
+
+  // 3. The workbook mail retired: mirror two weeks silent, CSV fresh -> nothing at all.
+  const retired = feedChecks(await runWatchdog({ HON: scenario({ mirrorLatest: '2026-09-30', mirrorRows: mirror.map((r) => ({ ...r, d: '2026-09-30' })).slice(0, 1), csvRows: csvMoving }) }, T, { repair: false }));
+  assert.deepEqual(retired, [], `a retired workbook is silence, not a page: ${JSON.stringify(retired)}`);
+  console.log('ok - watchdog: feed age and movement are judged on the copy the readers use; a stale workbook is worth knowing, a retired one is silent');
+}
+
 // ---- Memory: a finding is mailed the night it appears, then goes quiet ----
 // Miguel emptied WATCHDOG_TO on 10 Sep 2026 because a stateless check would
 // repeat a standing condition nightly until it was filtered. The feed freeze of

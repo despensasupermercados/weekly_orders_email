@@ -57,9 +57,21 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // ---- 1. Is the OBP feed still arriving? ----
   // Every number this system prints is a statement about stale data if this
   // stops and nobody notices.
+  //
+  // JUDGE THE COPY THE READERS USE. Checks 1 and 1b once watched only the
+  // workbook mirror (obp_*). From 17 Sep that copy was frozen while every
+  // reader ran on the fresh CSV copy, so "needs a human" stood 26 days about a
+  // table nothing here read (13 Oct 2026). Worse, once the workbook mail is
+  // retired the mirror stops entirely and check 1 would page critical every
+  // night forever. So age and movement are judged on obpSource's choice; the
+  // CSV copy's age is check 1c. The mirror gets one worth-knowing line below.
+  let using = null;
+  try { using = await obpSource(hon); } catch (_) { using = null; }
+  const onCsv = (kind) => Boolean(using && using[kind] && using[kind].source === 'csv');
   const snap = await one(hon,
     `SELECT MAX(snapshot_date) inv, (SELECT MAX(snapshot_date) FROM obp_intransit) it FROM obp_inventory`);
-  for (const [name, d] of [['obp_inventory', snap.inv], ['obp_intransit', snap.it]]) {
+  for (const [name, d, kind] of [['obp_inventory', snap.inv, 'inventory'], ['obp_intransit', snap.it, 'intransit']]) {
+    if (onCsv(kind)) continue;
     const age = d ? Math.round((Date.parse(today) - Date.parse(d)) / 86400000) : null;
     if (age === null) add('critical', 'feed', `${name} has no snapshot at all`);
     else if (age >= 2) add(age >= 4 ? 'critical' : 'warn', 'feed',
@@ -74,6 +86,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // said "fresh" every night. The night reader found it by hand, not this
   // Worker. Same class of error as the quantity and waste-box rules before it:
   // the check read the wrong column. Compare CONTENT across recent snapshots.
+  // On the CSV copy this is the real alarm: OBP's own export has stopped.
   const frozenFor = async (table, valueCol) => {
     const rows = (await many(hon,
       `SELECT snapshot_date d, COUNT(*) n, ROUND(SUM(${valueCol}), 2) s
@@ -83,13 +96,29 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
       if (rows[i].n === rows[0].n && rows[i].s === rows[0].s) run++;
       else break;
     }
-    return { run, latest: rows[0] || null };
+    return { run, latest: rows[0] || null, since: run ? rows[run - 1].d : null };
   };
-  for (const [table, col] of [['obp_inventory', 'on_hand'], ['obp_intransit', 'qty']]) {
+  for (const [kind, col] of [['inventory', 'on_hand'], ['intransit', 'qty']]) {
+    const table = onCsv(kind) ? using[kind].table : `obp_${kind}`;
     const f = await frozenFor(table, col);
     if (f.run >= 3) add(f.run >= 5 ? 'critical' : 'warn', 'feed_frozen',
       `${table} content identical for ${f.run} consecutive snapshots ` +
       `(${f.latest.n} rows, total ${f.latest.s}) - the source is not moving even though snapshot_date is`);
+  }
+
+  // The workbook mirror, while the readers are on the CSV copy: worth knowing,
+  // not a page. It refreshes only when someone opens the workbook in desktop
+  // Excel, and cims-hon still builds receipts and consumption from it until it
+  // is repointed at the CSV copy. Silent once the workbook mail stops.
+  // obpSource's own frozen flag is only computed when the CSV copy is older,
+  // so on a same-day tie (the normal case) it reads false: measure it here.
+  if (onCsv('inventory')) {
+    const mAge = snap.inv ? Math.round((Date.parse(today) - Date.parse(snap.inv)) / 86400000) : null;
+    const m = mAge !== null && mAge < 2 ? await frozenFor('obp_inventory', 'on_hand') : null;
+    if (m && m.run >= 3) add('warn', 'mirror_stale',
+      `the OBP workbook copy (obp_inventory) last changed ${m.since} and has been re-sent unchanged since - ` +
+      `it refreshes only when someone opens OBPInventoryReporting.Linked.xlsx in desktop Excel. This Worker reads the CSV copy ` +
+      `(${using.csv.inventory}); cims-hon still builds receipts and consumption from the workbook until it reads weekly_obp_order`);
   }
 
   // ---- 1c. Which copy of OBP is being read, and is the CSV route alive? ----
