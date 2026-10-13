@@ -421,5 +421,12 @@ console.log('ok - ship email: an order is never "more coming first" before itsel
   assert.ok(/13 more arriving by Sat 28 Nov/.test(two), 'several deliveries: their total, "by" the last');
   const none = text({ ...f, arrive_first: null });
   assert.ok(/18 on board · you use 16 a month/.test(none), 'nothing landing first: the line is as before');
+  // A LATE LINE IS COUNTED BUT NOT "ARRIVING TODAY". Explorer, 13 Oct 2026: 12
+  // waste boxes on a June PO, dated 12 Sep, still in transit a month later.
+  const late = text({ ...f, arrive_first: { qty: 0, by: null, count: 0, late: { qty: 12, since: '2026-09-12' } } });
+  assert.ok(/18 on board · 12 more overdue since Sat 12 Sep · you use/.test(late), late.slice(0, 500));
+  assert.ok(!/arriving/.test(late), 'nothing is "arriving" when every counted line is overdue');
+  const mixed = text({ ...f, arrive_first: { qty: 8, by: '2026-11-14', count: 1, late: { qty: 1, since: '2026-10-10' } } });
+  assert.ok(/8 more arriving Sat 14 Nov · 1 more overdue since Sat 10 Oct/.test(mixed), mixed.slice(0, 500));
 }
 console.log('ok - ship email: a gap between deliveries names what was counted and tells the crew to act (12 Oct)');

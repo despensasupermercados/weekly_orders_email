@@ -81,13 +81,22 @@ export async function fleetRunway(hon, today, opts = {}) {
   const sql = `
     WITH cons AS (
       SELECT c.ship, c.part_number, c.month, c.on_hand, c.receipts,
-             LAG(c.on_hand) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev
+             LAG(c.on_hand) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev,
+             LAG(c.month) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev_month
         FROM consumption_snapshot c
        WHERE c.month < ?1 AND c.month >= ?2
     ), used AS (
+      -- THE PREVIOUS ROW MUST BE THE PREVIOUS MONTH. LAG takes the row before,
+      -- whatever month it is: with July missing, August's "usage" would be
+      -- June's count plus August's receipts minus August's count - two months
+      -- of use less July's receipts, read as one month. A comment here used to
+      -- claim such a row "drops out as well"; it did not. Now it does.
+      -- (No gap in the data on 13 Oct 2026: 10,106 of 10,106 pairs consecutive.)
       SELECT ship, part_number, month, (prev + receipts - on_hand) u
         FROM cons
        WHERE prev IS NOT NULL AND (prev + receipts - on_hand) >= 0
+         AND (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER))
+           - (CAST(substr(prev_month, 1, 4) AS INTEGER) * 12 + CAST(substr(prev_month, 6, 2) AS INTEGER)) = 1
     ), agg AS (
       -- HOW MANY MONTHS THE AVERAGE IS ACTUALLY MADE OF.
       --
@@ -116,7 +125,8 @@ export async function fleetRunway(hon, today, opts = {}) {
     -- as arriving today.
     , transit AS (
       SELECT t.ship, t.part_number, t.qty,
-             CASE WHEN ${src.intransit.land('t')} < ?4 THEN ?4 ELSE ${src.intransit.land('t')} END land
+             CASE WHEN ${src.intransit.land('t')} < ?4 THEN ?4 ELSE ${src.intransit.land('t')} END land,
+             ${src.intransit.land('t')} eta
         FROM ${src.intransit.table} t
        WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
          AND ${src.intransit.etaOk('t')}
@@ -160,8 +170,10 @@ export async function fleetRunway(hon, today, opts = {}) {
                         AND x.land = n.next_eta), 0) on_next,
            -- EVERY planned landing for the item, late ones counted as today, so
            -- the stock walk sees a dry spell between two deliveries (runway.js,
-           -- runsOutFirst). 'date=qty' pairs; the walk sums a shared date.
-           (SELECT GROUP_CONCAT(x.land || '=' || x.qty, ',') FROM transit x
+           -- runsOutFirst). 'counted=qty=eta' triples: the day it is counted,
+           -- the quantity, and the date OBP gave, so a late line is named as
+           -- overdue rather than "arriving today".
+           (SELECT GROUP_CONCAT(x.land || '=' || x.qty || '=' || x.eta, ',') FROM transit x
              WHERE x.ship = a.ship AND x.part_number = a.part_number
                AND x.land >= ?4) all_landings,
            o.due_date order_due,
@@ -204,7 +216,7 @@ export async function fleetRunway(hon, today, opts = {}) {
   for (const r of rows) {
     if (r.on_hand == null || r.on_hand === '') { unread.push({ ship: r.ship, item: r.item }); continue; }
     const arrivals = String(r.all_landings || '').split(',').filter(Boolean)
-      .map((pair) => { const [date, qty] = pair.split('='); return { date, qty: Number(qty) || 0 }; });
+      .map((triple) => { const [date, qty, eta] = triple.split('='); return { date, qty: Number(qty) || 0, eta: eta || date }; });
     const f = runsOutFirst({
       ship: r.ship,
       item: r.item,
@@ -214,6 +226,7 @@ export async function fleetRunway(hon, today, opts = {}) {
       today,
       nextLoading: r.next_eta || null,
       orderLands: r.order_lands || null,
+      orderUntil: r.order_until || null,
       horizonDays: opts.horizonDays ?? HORIZON_DAYS,
     });
     if (f) findings.push({

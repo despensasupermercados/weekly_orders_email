@@ -432,10 +432,17 @@ function rateBasis(f) {
 // THE DELIVERIES BEHIND THE EMPTY DATE. When stock lands before the shelf
 // empties, "18 on board, 16 a month, empty by 30 Nov" does not add up for the
 // reader - 18 at 16 a month is mid-November. Name what was counted.
+// A LATE LINE IS NOT "ARRIVING TODAY". A line OBP dated before today is still
+// counted (Ray: a late delivery is still a delivery) but it is overdue, and a
+// crew told "12 more arriving today" will look and find nothing. Explorer,
+// 13 Oct 2026: 12 waste boxes on a June PO, 31 days past their date.
 function arriveFirst(f) {
   const a = f.arrive_first;
-  if (!a || !a.qty) return '';
-  return ` &middot; <strong>${a.qty}</strong> more arriving ${a.count > 1 ? 'by ' : ''}${fmtDowFull(a.by)}`;
+  if (!a) return '';
+  const parts = [];
+  if (a.qty) parts.push(`<strong>${a.qty}</strong> more arriving ${a.count > 1 ? 'by ' : ''}${fmtDowFull(a.by)}`);
+  if (a.late && a.late.qty) parts.push(`<strong>${a.late.qty}</strong> more overdue since ${fmtDowFull(a.late.since)}`);
+  return parts.length ? ` &middot; ${parts.join(' &middot; ')}` : '';
 }
 
 function addLine(f, fg) {

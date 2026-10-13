@@ -7,6 +7,38 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **13 Oct — review by execution of the runway logic (PR #39). Four bugs,
+  one latent guard, two left alone on purpose.** Each measured on the 12 Oct
+  data with the repo's own SQL; the fixes change 23 rows → 28 and one quantity.
+  1. A delivery landing before the shelf emptied silenced the finding even
+     when the OPEN ORDER was the only route out of the dry spell. Onward: cyan
+     4 aboard at 3 a month, 1 landing 7 Nov, dry 1 Dec, order due 3 Dec lands
+     5 Feb, nothing else coming — not printed; the same ship WITHOUT the
+     November delivery was always printed. Four Onward toner/paper rows plus
+     Onward 11x17 (order lands 5 Feb, dry 6 Feb). Rule now: with a delivery
+     first, silent only when there is no open order, or when the shelf lasts
+     past the landing AFTER the open order (Ray struck every such row on
+     13 Oct: 14 rows, unchanged). Edge/Summit test cases from 12 Oct asserted
+     the wrong thing and were flipped.
+  2. "Still aboard when the order lands" was zero whenever the shelf emptied
+     before the landing, ignoring deliveries in between. Pursuit TNP75 (MFD par
+     5): "add 5" with about 4 aboard on 24 Feb → "add 1". Now a day-by-day
+     balance walk (`balanceOn`). Affects par top-ups only.
+  3. A late in-transit line (counted as arriving today since PR #33) printed
+     "N more arriving <today>". Explorer: 12 waste boxes on a June PO, 31 days
+     past date, 18 already aboard. The email now says "N more overdue since
+     <OBP's date>". Lateness on 13 Oct: 33 lines 1–7 days, 5 lines 8–30, 1
+     line 31 days; nothing older.
+  4. `LAG(on_hand)` took the previous ROW, not the previous MONTH; the SQL
+     comment claimed a gap "drops out", it did not. Guard added. Latent: all
+     10,106 month pairs Jun–Sep are consecutive today.
+  Left alone: (a) Quest's open order is picked by earliest DUE (19 Oct → lands
+  7 Feb) while a later-due order lands 18 Dec; retargeting would drop the ask
+  for the 7 Feb landing, which closes 19 Oct. OBP shows Quest lines landing
+  8 Dec, the MLS says 18 Dec — a date disagreement for Ray. (b) `severity` on
+  runway findings is always 'critical' and nothing reads it; dead field.
+  (c) Print-shop toner quantity (cycle + 3) ignores stock aboard at landing;
+  Ray's own marks go both ways (Freedom 0, Legend +40), so it waits for him.
 - **13 Oct — Ray marked the month-end sample: 2 Y, 24 N. The spare-stock
   method is NOT built.** (`Ray method sample 12 Oct 2026 RG.xlsx`, reply to the
   "Orders due this week" thread.) His rules, in his words:
@@ -263,3 +295,6 @@ Read the live log before the code, then the code with a fault injected.
   beside "low usage"; OBP's September Consumption Statistic for the fleet, to
   replace the four-plus rows our mirror-derived September usage gets wrong
   until our own October figure exists (1 Nov).
+  Also: Quest's order due 8 Dec — OBP lines land 8 Dec, the MLS says 18 Dec;
+  which is right? Explorer's 12 waste boxes (PO229591RCL, dated 12 Sep) — still
+  coming, or a dead line to close in OBP?
