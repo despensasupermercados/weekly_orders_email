@@ -35,6 +35,7 @@ const CHECK_LABEL = {
   orphan_rows: 'Failed ingest swap',
   duplicates: 'Duplicate voyages',
   coverage: 'Schedule coverage',
+  schedule_undated: 'Schedule has no usable dates',
   schedule_expired: 'Schedule expired',
   schedule_expiring: 'Schedule running out',
   send_failed: 'Weekly email failed',

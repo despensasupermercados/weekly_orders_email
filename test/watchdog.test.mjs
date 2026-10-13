@@ -64,6 +64,72 @@ const base = [
 ];
 const withRow = (frag, val) => base.map(([f, v]) => (f === frag ? [f, val] : [f, v]));
 
+// ---- Schedule coverage: the two silences that compounded (13 Oct 2026) ----
+// Both were LATENT when found - no ship was in either state - which is exactly
+// why they are pinned: a guard with no live trigger is the kind that rots
+// unnoticed until the upload that needs it.
+
+// A ship whose every eligible row has a NULL loading date produced NO finding.
+// MAX(loading_delivery_date) is NULL, Date.parse(null) is NaN, and NaN fails
+// both `< 0` and `< 30`, so it fell through schedule_expired AND
+// schedule_expiring - while still counting as covered. Two silences that
+// compound into "that ship is fine".
+{
+  const r = await runWatchdog({ HON: fakeDb(withRow('MAX(loading_delivery_date) last_load', [
+    { ship: 'Summit', last_load: '2027-03-28', rows_: 29 },
+    { ship: 'Riviera', last_load: null, rows_: 17 },
+  ])) }, TODAY, { repair: false });
+  const undated = r.findings.filter((f) => f.check === 'schedule_undated');
+  assert.equal(undated.length, 1, 'a ship with no usable loading date must be reported');
+  assert.match(undated[0].detail, /Riviera/);
+  assert.match(undated[0].detail, /17 eligible schedule rows/);
+  assert.equal(undated[0].severity, 'critical');
+  assert.equal(r.findings.filter((f) => f.check === 'schedule_expired'
+    && f.detail.includes('Riviera')).length, 0, 'undated is not expired');
+  assert.equal(r.findings.filter((f) => f.check === 'schedule_expiring'
+    && f.detail.includes('Riviera')).length, 0, 'undated is not expiring');
+  assert.equal(r.findings.filter((f) => f.check === 'schedule_undated'
+    && f.detail.includes('Summit')).length, 0, "Summit's real date is untouched");
+}
+
+// '' and a non-ISO date are the same fault as NULL: the column is TEXT and a
+// bad upload puts '', 'TBC' or a d/m/y string in it. Date.parse gives NaN for
+// all of them, which is the silent path this guard closes.
+for (const bad of ['', 'TBC', '28/03/2027']) {
+  const r = await runWatchdog({ HON: fakeDb(withRow('MAX(loading_delivery_date) last_load',
+    [{ ship: 'Riviera', last_load: bad, rows_: 4 }])) }, TODAY, { repair: false });
+  assert.equal(r.findings.filter((f) => f.check === 'schedule_undated').length, 1,
+    `last_load ${JSON.stringify(bad)} must be reported, not silently skipped`);
+}
+
+// coverage compared a COUNT of schedule_order ships against a COUNT of par
+// ships. Equal counts read as full coverage even when they were not the same
+// ships, and once covered >= fleet.n the check could not fire at all. It now
+// names the ships actually missing, which a count cannot be inflated past.
+{
+  const resp = [...base.map(([f, v]) => (
+    f === 'MAX(loading_delivery_date) last_load'
+      ? [f, [{ ship: 'Summit', last_load: '2027-03-28', rows_: 29 },
+             { ship: 'Ghost', last_load: '2027-03-28', rows_: 3 }]]
+      : f === 'COUNT(DISTINCT ship) n FROM par' ? [f, { n: 2 }] : [f, v])),
+    ['SELECT DISTINCT ship FROM par', [{ ship: 'Summit' }, { ship: 'Solstice' }]]];
+  const r = await runWatchdog({ HON: fakeDb(resp) }, TODAY, { repair: false });
+  const cov = r.findings.filter((f) => f.check === 'coverage');
+  assert.equal(cov.length, 1, 'counts tie at 2 and 2, but Solstice has no schedule');
+  assert.match(cov[0].detail, /Solstice cannot be checked at all/);
+  assert.ok(!cov[0].detail.includes('Ghost'), 'a ship absent from par is not an uncovered ship');
+}
+
+// If the par list is unavailable the check must behave exactly as before, so a
+// hiccup on one query cannot turn coverage silent.
+{
+  const r = await runWatchdog({ HON: fakeDb(base) }, TODAY, { repair: false });
+  const cov = r.findings.filter((f) => f.check === 'coverage');
+  assert.equal(cov.length, 1);
+  assert.match(cov[0].detail, /the rest cannot be checked at all/);
+}
+
+
 // A stale feed is the failure that makes every other number a lie.
 const stale = await runWatchdog(
   { HON: fakeDb(withRow('MAX(snapshot_date) inv', { inv: '2026-09-04', it: '2026-09-04' })) },
