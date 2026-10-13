@@ -4,7 +4,7 @@
 // Adding a line to an order that has not closed is free. Missing it is a month
 // dry or an emergency freight, which is the objective this system exists for.
 
-import { monthlyUsage, stockoutDate, runsOutFirst, isConsumable, MONTH_DAYS }
+import { monthlyUsage, stockoutDate, runsOutFirst, isConsumable, MONTH_DAYS, balanceOn, withQuantity }
   from '../src/lib/runway.js';
 import assert from 'node:assert';
 
@@ -88,4 +88,31 @@ console.log('     never becomes a negative burn, and a date is reported instead 
   assert.equal(stockoutDate({ onHand: 0, rate: 7, arrivals: [], today: '2026-09-17' }), '2026-09-17', 'a real zero still runs out today');
   assert.equal(runsOutFirst({ ship: 'Onward', item: 'TN619C CYAN', onHand: null, rate: 7, arrivals: [], today: '2026-09-17', nextLoading: null }), null);
   console.log('ok - runway: a missing on-hand reading is not a stockout; a real zero is');
+}
+
+// WHAT IS ABOARD THE DAY THE ORDER LANDS (review of 13 Oct 2026). The old
+// formula was today's count plus arrivals minus straight-line usage, and ZERO
+// whenever the shelf emptied before the landing - so a delivery that landed
+// between the empty day and the order was ignored. Legend, 12 Oct: 2 cases,
+// 44 a month, dry 14 Oct, 40 landing 22 Oct, order landing 7 Nov. The shelf is
+// not empty on 7 Nov; about 16 cases are left of the 40.
+{
+  const T = '2026-10-12';
+  const legend = balanceOn({ onHand: 2, rate: 44, arrivals: [{ date: '2026-10-22', qty: 40 }], today: T, date: '2026-11-07' });
+  assert.ok(legend > 16 && legend < 17, `about 16.5 cases on 7 Nov, got ${legend}`);
+  assert.equal(balanceOn({ onHand: 2, rate: 44, arrivals: [], today: T, date: '2026-11-07' }), 0, 'a dry shelf stays at zero, it does not go negative');
+  assert.equal(balanceOn({ onHand: null, rate: 44, arrivals: [], today: T, date: '2026-11-07' }), null, 'no reading, no claim');
+  assert.equal(balanceOn({ onHand: 9, rate: 30, arrivals: [{ date: T, qty: 6 }], today: T, date: '2026-10-13' }), 14, 'a line counted today is aboard tomorrow, less one day of use');
+
+  // Pursuit's shape: an MFD toner with a par of 5. 2 aboard at 1 a month, dry
+  // 11 Dec, 5 landing 20 Dec, the open order landing 24 Feb. About 2.8 are
+  // still aboard on 24 Feb, so the top-up is 3 - not 5.
+  const f = runsOutFirst({ ship: 'Pursuit', item: 'TNP75 BLACK TONER', onHand: 2, rate: 1,
+    arrivals: [{ date: '2026-12-20', qty: 5 }], today: T, nextLoading: '2026-12-20', orderLands: '2027-02-24', orderUntil: '2027-03-31' });
+  assert.ok(f && f.stockout === '2026-12-11', `dry 11 Dec, got ${f && f.stockout}`);
+  const q = withQuantity({ ...f, description: 'TNP75 BLACK TONER BH 5000i (YIELD: 20K)' },
+    { brand: 'Azamara', parQty: 5, due: '2026-11-23', lands: '2027-02-24', until: '2027-03-31', coming: 0, today: T, arrivals: [{ date: '2026-12-20', qty: 5 }] });
+  assert.equal(q.add_qty, 3, 'par 5 less the 2 still aboard when the order lands');
+  assert.ok(/about 2 still aboard/.test(q.add_basis), q.add_basis);
+  console.log('ok - runway: what is aboard when the order lands is walked day by day, so a par top-up does not re-order stock already coming');
 }

@@ -93,36 +93,83 @@ export function stockoutDate({ onHand, rate, arrivals = [], today, horizonDays =
   return null;
 }
 
+// What is on the shelf on the morning of `date`, before anything lands that
+// day: today's count, every arrival before `date` (a late one counts today),
+// daily usage taken off, and never below zero - a dry shelf uses nothing.
+// Used for what is still aboard the day the open order lands. The formula it
+// replaced (13 Oct 2026) was today's count plus arrivals minus straight-line
+// usage, and ZERO whenever the shelf emptied before the landing - so a
+// delivery that landed between the empty day and the order was ignored.
+// Pursuit's MFD black toner: dry 11 Dec, 5 landing 19 Dec, order landing
+// 24 Feb with about 4 still aboard; the top-up to a par of 5 read "add 5".
+export function balanceOn({ onHand, rate, arrivals = [], today, date }) {
+  if (onHand == null || onHand === '' || !Number.isFinite(Number(onHand))) return null;
+  const daily = (Number(rate) || 0) / MONTH_DAYS;
+  const due = new Map();
+  for (const a of arrivals) {
+    if (!a || !a.date || !Number.isFinite(Number(a.qty))) continue;
+    due.set(a.date, (due.get(a.date) || 0) + Number(a.qty));
+  }
+  let bal = Number(onHand);
+  for (let d = today; d < date; d = addDays(d, 1)) {
+    bal += due.get(d) || 0;
+    bal = Math.max(0, bal - daily);
+  }
+  return bal;
+}
+
 // THE FINDING. An item runs out BEFORE the next delivery that could have
 // carried it - so the fix is to add it to an order that is still open, and the
 // cost of missing it is a full cycle.
-export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays, orderLands = null }) {
+//
+// arrivals: every planned landing for the item, { date, qty, eta? }. `date` is
+// the day it is counted (a late line counts today); `eta` is the date OBP gave,
+// so the email can say "overdue since" instead of "arriving today".
+export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLoading, horizonDays, orderLands = null, orderUntil = null }) {
   const out = stockoutDate({ onHand, rate, arrivals, today, horizonDays });
   if (!out) return null;
-  // A DELIVERY LANDS BEFORE THE SHELF EMPTIES: USUALLY NOTHING TO SAY. Running
-  // dry after the LAST planned delivery is the business of orders not raised
-  // yet. (Dropping this rule on 16 Sep 2026 took the 15 Sep snapshot from 47
-  // findings to 272 - every item that would ever run out in 120 days.)
-  //
-  // BUT RUNNING DRY BETWEEN TWO PLANNED DELIVERIES IS A FINDING, when the open
-  // order cannot land in time to stop it. `arrivals` held only the first
-  // landing until 12 Oct 2026, so this case was invisible - and the comment
-  // here said it "cannot occur in this data". It did: on 12 Oct, Infinity's
-  // yellow toner (16 a month, 8 landing each month) ran dry 30 Nov to 8 Dec
-  // with its open order landing 14 Jan, and four more items had the same
-  // shape (Quest x2, Pursuit, Spectrum). Nothing the crew adds can arrive in
-  // time; they must be told now. A gap AFTER the open order lands stays out:
-  // Ray, 13 Oct, struck 24 of 26 month-end planning rows ("current order
-  // projections do not affect paper usage"); it is an emergency "depending
-  // when next order is expected to arrive", which is this rule.
   const known = (arrivals || []).filter((a) => a && a.date >= today && Number(a.qty) > 0);
   const first = known.filter((a) => a.date <= out);
-  let refill = nextLoading || null;
+  const after = known.filter((a) => a.date > out).map((a) => a.date).sort()[0] || null;
+  // WHEN A DELIVERY LANDS BEFORE THE SHELF EMPTIES. Until 12 Oct 2026 that
+  // alone silenced the finding ("the next order's business"), and the comment
+  // said a dry spell after such a delivery "cannot occur in this data". On
+  // 12 Oct it hid Infinity's yellow toner, dry 30 Nov to 8 Dec with 8 landing
+  // each month; and on 13 Oct, four Onward toner and paper rows dry from
+  // December with the open order landing 5 Feb and nothing else coming - the
+  // same ship WITHOUT its one November delivery would have been flagged.
+  // The rule now asks the question the email exists for: can the OPEN order
+  // still fix this?
+  //  - No open order: what comes after the pipeline is an order not raised
+  //    yet (16 Sep 2026; without this the 15 Sep snapshot went from 47
+  //    findings to 272). Silent.
+  //  - The order lands BEFORE the shelf empties: if the shelf also lasts past
+  //    the landing AFTER it, that later order's business - Ray, 13 Oct 2026,
+  //    struck every such row ("current order projections do not affect paper
+  //    usage"). Otherwise this order must carry the item: a finding, and the
+  //    email says it arrives in time.
+  //  - The order lands ON OR AFTER the empty day: a finding. A later planned
+  //    delivery ends the dry spell, or the order does; either way the crew
+  //    must hear it now ("if you cannot wait, tell your Inventory Manager").
   if (first.length) {
-    const after = known.filter((a) => a.date > out).map((a) => a.date).sort()[0];
-    if (!after) return null;
-    if (orderLands && orderLands <= out) return null;
-    refill = after;
+    if (!orderLands) return null;
+    if (orderLands < out && orderUntil && out > orderUntil) return null;
+  }
+  const refill = first.length ? after : (nextLoading || after);
+  // What lands BEFORE the empty date and is already counted in it, so the
+  // reader can check the date: 18 aboard at 16 a month is mid-November, and
+  // only the 8 landing on 14 Nov make it 30 Nov. A line OBP dated before today
+  // is overdue, not "arriving today"; it is named apart with its real date.
+  let arriveFirst = null;
+  if (first.length) {
+    const onTime = first.filter((a) => !a.eta || a.eta >= today);
+    const late = first.filter((a) => a.eta && a.eta < today);
+    arriveFirst = {
+      qty: onTime.reduce((n, a) => n + Number(a.qty), 0),
+      by: onTime.length ? onTime.map((a) => a.date).sort().pop() : null,
+      count: onTime.length,
+    };
+    if (late.length) arriveFirst.late = { qty: late.reduce((n, a) => n + Number(a.qty), 0), since: late.map((a) => a.eta).sort()[0] };
   }
   return {
     ship, item,
@@ -132,12 +179,7 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
     rate: Math.round(rate * 10) / 10,
     stockout: out,
     next_loading: refill,
-    // What lands BEFORE the empty date and is already counted in it, so the
-    // reader can check the date: 18 aboard at 16 a month is mid-November, and
-    // only the 8 landing on 14 Nov make it 30 Nov. Null when nothing does.
-    arrive_first: first.length
-      ? { qty: first.reduce((n, a) => n + Number(a.qty), 0), by: first.map((a) => a.date).sort().pop(), count: first.length }
-      : null,
+    arrive_first: arriveFirst,
     detail: `${item}: ${Number(onHand || 0)} on board, using about ${Math.round(rate)} a month. ` +
       `Runs out around ${out}` +
       (refill ? `, and the next loading after that is ${refill}.` : '.'),
@@ -261,15 +303,11 @@ export function withQuantity(finding, { brand, parQty, due = null, lands = null,
   if (!finding) return finding;
   const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
   const cycleDays = lands && until && until > lands ? daysBetween(lands, until) : MONTH_DAYS;
-  // What is aboard when the order lands: nothing if the item is dry by then,
-  // otherwise today's stock less usage to that day, plus anything landing first.
-  let onHandAtLanding = 0;
-  if (lands && today && finding.stockout && lands < finding.stockout) {
-    const used = (Number(finding.rate) || 0) * (daysBetween(today, lands) / MONTH_DAYS);
-    const early = (arrivals || []).filter((a) => a.date >= today && a.date < lands)
-      .reduce((n, a) => n + (Number(a.qty) || 0), 0);
-    onHandAtLanding = Math.max(0, (Number(finding.on_hand) || 0) + early - used);
-  }
+  // What is aboard the morning the order lands: the shelf walked day by day
+  // with every arrival before that day, floored at zero (balanceOn).
+  const onHandAtLanding = lands && today
+    ? (balanceOn({ onHand: finding.on_hand, rate: finding.rate, arrivals, today, date: lands }) ?? 0)
+    : 0;
   // Match the rule on the FULL description: `item` is cut to 34 characters for
   // the email, and a long description can lose its part number in the cut.
   const q = orderQuantity({ item: finding.description || finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding });

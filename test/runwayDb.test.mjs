@@ -191,14 +191,20 @@ console.log('     never at a container whose order already closed; no schedule -
     ['Star', 'TN619C', '2026-08', 11, 9], ['Star', 'TN619C', '2026-09', 8, 0],
     // Utopia TN619C: no September reading, so no last month -> the average.
     ['Utopia', 'TN619C', '2026-06', 20, 0], ['Utopia', 'TN619C', '2026-07', 14, 0],
-    ['Utopia', 'TN619C', '2026-08', 10, 0]]);
+    ['Utopia', 'TN619C', '2026-08', 10, 0],
+    // Vision TN619C: AUGUST is missing. September's previous ROW is July, so a
+    // plain LAG would read July's 14 + 0 - 10 = 4 as one month's usage (it is
+    // two). The guard drops September; only July (6) is measurable.
+    ['Vision', 'TN619C', '2026-06', 20, 0], ['Vision', 'TN619C', '2026-07', 14, 0],
+    ['Vision', 'TN619C', '2026-09', 10, 0]]);
   put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [
-    ['Freedom', 'TN619Y', 14, T], ['Quest', 'WX103', 0, T], ['Star', 'TN619C', 2, T], ['Utopia', 'TN619C', 2, T]]);
+    ['Freedom', 'TN619Y', 14, T], ['Quest', 'WX103', 0, T], ['Star', 'TN619C', 2, T], ['Utopia', 'TN619C', 2, T], ['Vision', 'TN619C', 2, T]]);
   put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [
     ['ship', 'Freedom', 'Royal', 'TN619Y', 'TN619Y YELLOW TONER', 'Toner', null, 8, null, 'SPAR'],
     ['ship', 'Quest', 'Azamara', 'WX103', 'WASTE TONER BOX WX-103', 'Toner', null, 2, null, 'SPAR'],
     ['ship', 'Star', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR'],
-    ['ship', 'Utopia', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR']]);
+    ['ship', 'Utopia', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR'],
+    ['ship', 'Vision', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR']]);
   put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
     ['Freedom', 'FR1', 'HOTEL BIWEEKLY HOTEL', '2026-11-05', '2026-10-14']]);
   put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [
@@ -216,6 +222,11 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.ok(row('Utopia'), 'Utopia runs out');
   assert.equal(row('Utopia').rate_last, null, 'no September reading: last month has no figure');
   assert.equal(row('Utopia').rate, 5, 'so the average of July and August (6, 4) stands in');
+
+  assert.ok(row('Vision'), 'Vision runs out');
+  assert.equal(row('Vision').rate_last, null, 'August missing: September has no previous month to measure from');
+  assert.equal(row('Vision').rate_avg_months, 1, 'only July is measurable');
+  assert.equal(row('Vision').rate, 6, 'July\'s 6, not the two-month 4 a row-wise LAG would produce');
 
   // A zero month on an item the ship used before. Ray's rule for it is not
   // known; planning on zero would drop an empty shelf from the email.
@@ -245,11 +256,20 @@ console.log('     never at a container whose order already closed; no schedule -
   const T = '2026-10-12';
   // Three hulls with Infinity's figures; only the landings differ.
   //   Infinity - the real case: open order lands 14 Jan, after the gap.
-  //   Edge     - the open order lands 20 Nov, BEFORE the gap: the open order
-  //              can still close it; Ray (13 Oct) wants no row; no finding.
-  //   Summit   - only the 14 Nov landing: dry after the LAST planned delivery
-  //              is the next order's business, as before; no finding.
-  for (const ship of ['Infinity', 'Edge', 'Summit']) {
+  //   Edge     - the open order lands 20 Nov, BEFORE the gap, and the landing
+  //              after it (8 Dec) is after the gap: this order must carry the
+  //              toner. A finding that says it arrives in time. (Review of
+  //              13 Oct 2026; the day before, this case was asserted silent.)
+  //   Summit   - only the 14 Nov landing, dry 30 Nov, nothing else coming,
+  //              the open order lands 14 Jan: six dry weeks the crew must hear
+  //              about now. The day before this review the test asserted
+  //              silence here, calling it "the next order's business"; it is
+  //              the open order's business, and the same ship WITHOUT the
+  //              14 Nov delivery was always flagged.
+  //   Mariner  - Summit's figures with NO ordering schedule: nothing to add to,
+  //              so what follows the pipeline is an order not raised yet
+  //              (16 Sep 2026). Silent.
+  for (const ship of ['Infinity', 'Edge', 'Summit', 'Mariner']) {
     put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
       [ship, 'TN619Y', '2026-06', 15, 9], [ship, 'TN619Y', '2026-07', 16, 9],
       [ship, 'TN619Y', '2026-08', 12, 4], [ship, 'TN619Y', '2026-09', 12, 16]]);
@@ -274,7 +294,65 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.equal(inf.order_due, '2026-10-22');
   assert.equal(inf.order_lands, '2027-01-14');
   assert.deepEqual(inf.arrive_first, { qty: 8, by: '2026-11-14', count: 1 }, 'the 8 counted in the empty date are named');
-  assert.equal(got.find((f) => f.ship === 'Edge'), undefined, 'the open order lands before the gap: not built, no finding');
-  assert.equal(got.find((f) => f.ship === 'Summit'), undefined, 'dry only after the last planned delivery: no finding');
+  const edge = got.find((f) => f.ship === 'Edge');
+  assert.ok(edge, 'Edge: the open order lands 20 Nov, before the 30 Nov gap, and can carry the toner: a finding');
+  assert.equal(edge.stockout, '2026-11-30');
+  assert.equal(edge.order_lands, '2026-11-20');
+  assert.equal(edge.next_loading, '2026-12-08', 'the delivery that would otherwise end the gap');
+  assert.equal(edge.cycle_days, 18, '20 Nov to the 8 Dec landing');
+  assert.equal(edge.add_qty, 13, '16 a month over 18 days is 10, plus 3 spare, nothing on the order yet');
+  assert.ok(edge.order_lands < edge.stockout, 'so the email says it arrives before the shelf empties');
+  const summit = got.find((f) => f.ship === 'Summit');
+  assert.ok(summit, 'Summit: one delivery, dry 30 Nov, the open order lands 14 Jan and nothing else is coming: a finding');
+  assert.equal(summit.stockout, '2026-11-30');
+  assert.equal(summit.next_loading, null, 'nothing known lands after the shelf empties; the order is the only route');
+  assert.equal(summit.order_lands, '2027-01-14');
+  assert.equal(got.find((f) => f.ship === 'Mariner'), undefined, 'no open order: dry after the last planned delivery stays silent');
+  console.log('ok - runwayDb: an open order that lands before a dry spell, with the next landing after it, is told to carry the item (Edge)');
+
+  // REVIEW OF 13 Oct 2026. The same ship WITHOUT its one small delivery was
+  // flagged; WITH it, nothing. Onward (Azamara, toner tolerance zero), real
+  // figures: cyan 4 aboard at 3 a month, 1 landing 7 Nov, dry in December,
+  // the open order due 3 Dec lands 5 Feb and nothing else is coming. Four
+  // Onward rows had this shape on 12 Oct and none was printed. The 11x17 is
+  // the other shape: the order lands 5 Feb, the shelf empties 6 Feb, nothing of
+  // the item is on that order. Brilliance black is the control that must stay
+  // silent: dry 4 Feb, after the landing (30 Nov) that follows the open order
+  // (16 Nov) - Ray struck every such row.
+  for (const [ship, pn, desc, par, brand, oh, cons] of [
+    ['Onward', 'TN328C', 'TN-328C CYAN TONER', 5, 'Azamara', 4, [13, 10, 7, 4]],
+    ['Onward', 'P11x17', '20 LBS 11 x 17 DG3 PAPER', null, 'Azamara', 35, [86, 69, 52, 35]],
+    ['Brilliance', 'TN634K', 'TN634K BLACK TONER', 10, 'Royal', 15, [30, 25, 20, 15]],
+  ]) {
+    put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', ['2026-06', '2026-07', '2026-08', '2026-09'].map((m, i) => [ship, pn, m, cons[i], 0]));
+    put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [[ship, pn, oh, T]]);
+    put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [['ship', ship, brand, pn, desc, 'Parts', null, par, null, 'SPAR']]);
+  }
+  put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [
+    ['Onward', 'TN328C', serial('2026-10-10'), 1, T],   // overdue two days, still counted
+    ['Onward', 'TN328C', serial('2026-11-07'), 1, T],
+    ['Onward', 'P11x17', serial('2026-11-07'), 11, T], ['Onward', 'P11x17', serial('2026-12-22'), 20, T],
+    ['Brilliance', 'TN634K', serial('2027-01-11'), 4, T]]);
+  put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
+    ['Onward', 'ON1', 'AZAMARA BWS', '2027-02-05', '2026-12-03'],
+    ['Brilliance', 'BR1', 'HOTEL BIWEEKLY HOTEL', '2026-11-16', '2026-10-20'],
+    ['Brilliance', 'BR2', 'HOTEL BIWEEKLY HOTEL', '2026-11-30', '2026-11-03']]);
+  const got2 = (await fleetRunway(d1(gdb), T)).findings;
+  const cyan = got2.find((f) => f.ship === 'Onward' && /CYAN/.test(f.item));
+  assert.ok(cyan, 'Onward cyan: one delivery, then dry, the open order lands after: a finding');
+  assert.equal(cyan.stockout, '2026-12-12');
+  assert.equal(cyan.order_lands, '2027-02-05');
+  assert.equal(cyan.next_loading, null, 'nothing known lands after the shelf empties');
+  assert.equal(cyan.add_qty, 5, 'MFD toner tops up to the OBP par of 5, nothing aboard when the order lands');
+  assert.deepEqual(cyan.arrive_first, { qty: 1, by: '2026-11-07', count: 1, late: { qty: 1, since: '2026-10-10' } },
+    'the overdue line is counted but named apart with the date OBP gave it');
+  const p11 = got2.find((f) => f.ship === 'Onward' && /11 x 17/.test(f.item));
+  assert.ok(p11, 'Onward 11x17: the order lands 5 Feb, the shelf empties 6 Feb: a finding');
+  assert.equal(p11.stockout, '2027-02-06');
+  assert.ok(p11.order_lands < p11.stockout);
+  assert.equal(p11.add_qty, 17, 'Azamara paper is strict consumption: 17 a month over the default 30-day cycle');
+  assert.equal(got2.find((f) => f.ship === 'Brilliance'), undefined,
+    'dry 4 Feb, after the landing that follows the open order: the next order\'s business, silent');
+  console.log('ok - runwayDb: a delivery landing first no longer hides a dry spell the open order could fix (Onward, 13 Oct)');
   console.log('ok - runwayDb: a dry spell between two planned deliveries, before the open order lands, is a finding (Infinity, 12 Oct)');
 }
