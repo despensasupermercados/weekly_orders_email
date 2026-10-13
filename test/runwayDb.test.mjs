@@ -245,8 +245,8 @@ console.log('     never at a container whose order already closed; no schedule -
   const T = '2026-10-12';
   // Three hulls with Infinity's figures; only the landings differ.
   //   Infinity - the real case: open order lands 14 Jan, after the gap.
-  //   Edge     - the open order lands 20 Nov, BEFORE the gap: that is Ray's
-  //              month-end planning (asked 12 Oct), not built; no finding.
+  //   Edge     - the open order lands 20 Nov, BEFORE the gap: the open order
+  //              can still close it; Ray (13 Oct) wants no row; no finding.
   //   Summit   - only the 14 Nov landing: dry after the LAST planned delivery
   //              is the next order's business, as before; no finding.
   for (const ship of ['Infinity', 'Edge', 'Summit']) {
