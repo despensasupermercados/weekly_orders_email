@@ -33,11 +33,10 @@ export const HORIZON_DAYS = 120;
 // (5 against his 3), both rows he struck out of the 12 Oct email.
 // The average stands in when last month cannot be measured (no reading for
 // the month before it, or a negative figure dropped as a typo) AND when last
-// month reads ZERO for an item the ship used before. Ray's six sheets never
-// show a zero month, so his rule for it is unknown (asked 12 Oct). Planning on
-// zero would remove the item from the email when stock is lowest: Quest's
-// WX-103 waste box, 0 aboard on 12 Oct, used 2 in July, 2 in August, 0 in
-// September. Until he answers, a zero month falls back to the average.
+// month reads ZERO for an item the ship used before. Ray confirmed this on
+// 13 Oct ("correct"), asked about Quest's WX-103 waste box: 0 aboard on
+// 12 Oct, used 2 in July, 2 in August, 0 in September. Planning on zero would
+// have removed it from the email when stock was lowest.
 const RATE = 'COALESCE(NULLIF(a.lastm, 0), a.avg3)';
 
 // Which schedule rows carry an order the ship can add to. The same three

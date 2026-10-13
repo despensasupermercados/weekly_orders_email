@@ -111,8 +111,10 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
   // yellow toner (16 a month, 8 landing each month) ran dry 30 Nov to 8 Dec
   // with its open order landing 14 Jan, and four more items had the same
   // shape (Quest x2, Pursuit, Spectrum). Nothing the crew adds can arrive in
-  // time; they must be told now. A gap AFTER the open order lands is left to
-  // Ray's month-end planning (asked 12 Oct, not built).
+  // time; they must be told now. A gap AFTER the open order lands stays out:
+  // Ray, 13 Oct, struck 24 of 26 month-end planning rows ("current order
+  // projections do not affect paper usage"); it is an emergency "depending
+  // when next order is expected to arrive", which is this rule.
   const known = (arrivals || []).filter((a) => a && a.date >= today && Number(a.qty) > 0);
   const first = known.filter((a) => a.date <= out);
   let refill = nextLoading || null;

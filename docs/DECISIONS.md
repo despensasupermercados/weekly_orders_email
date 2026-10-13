@@ -7,6 +7,35 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **13 Oct — Ray marked the month-end sample: 2 Y, 24 N. The spare-stock
+  method is NOT built.** (`Ray method sample 12 Oct 2026 RG.xlsx`, reply to the
+  "Orders due this week" thread.) His rules, in his words:
+  - Q1 "Paper and toner is by consumption, paper is ordered in sets of 40
+    cases based on previous months consumption."
+  - Q2 "local vessels are 3 months orders while international ships hold 6
+    months of orders" (the pipeline of planned deliveries, not a check window).
+  - Q3 zero last month → plan on the average: "correct". Live since PR #34.
+  - Q4 "It becomes a concern when the paper drops below the usage level, which
+    then it becomes an emergency depending when next order is expected to
+    arrive." That is the live rule: a row when the ship runs dry before the
+    next delivery. All five "dry after the open order lands" items (Freedom,
+    Silhouette, Constellation, Ascent, Reflection paper) were in the sample;
+    he marked all five N. Do not build month-end spare or that gap.
+  - Q5 Wonder: twice-monthly pallets cover usage; "minimum of 40 cases till
+    next orders arrive".
+  Y: Legend (+40, he already asked the vessel), Infinity yellow (but his note
+  says usage is low, ~3 + 4 spare; the shelf agrees: 2 used 1–13 Oct). His
+  Silhouette-radiant note ("had 33, usage around 7") matches SOLSTICE's
+  figures, not Silhouette's (6 on 1 Oct). Asked.
+  DATA: his "had X cases" = our 1 Oct CSV count on 22 of 22 rows. Usage
+  matches on 18; four rows are exactly 10 higher in ours (Ascent 8.5x11,
+  Brilliance x2, Constellation 11x17). OBP receipts (weekly_obp_order) match
+  ours; the gap is our AUGUST closing count, taken from the stale workbook
+  mirror via cims-hon's consumption_snapshot. Same cause as Silhouette radiant
+  (22 vs OBP's implied 11). Infinity yellow's 16 is a booking-timing artefact
+  (8 booked received 28 Sep, on the shelf count 6 Oct). Fix: from 1 Nov,
+  usage = 1st-of-month count (weekly_obp_month_open) + receipts
+  (weekly_obp_order) − next 1st-of-month count, our own copy of OBP's formula.
 - **13 Oct — the OBP workbook is being retired; the CSVs are the feed.**
   OBPInventoryReporting.Linked.xlsx is re-saved every night (~04:01 UTC) but
   its values change only when someone opens it in desktop Excel: obp_inventory
@@ -229,8 +258,8 @@ Read the live log before the code, then the code with a fault injected.
   CSV export (rec1iiLB86ZwLFsNk, recGwzmL0tcZmPSuC). An inbound-refusal alarm
   on `obp@cims.work` (recLzeixD5h8FvpDH). See
   `docs/cims-hon-handoff-2026-09-21.md`.
-- **Ray:** (1) when last month reads zero for an item used before, plan on
-  zero or on the average? (default: the average). (2) His month-end spare:
-  is the target one month of usage on board at each month end, ~3 months
-  ahead? A side-by-side sample of what that adds (about 20 paper pallets on
-  ~20 ships) goes to him before it is built.
+- **Ray (13 Oct):** both questions answered (see decisions). Open: his
+  Silhouette-radiant note reads as Solstice's figures; Infinity yellow "Y"
+  beside "low usage"; OBP's September Consumption Statistic for the fleet, to
+  replace the four-plus rows our mirror-derived September usage gets wrong
+  until our own October figure exists (1 Nov).
