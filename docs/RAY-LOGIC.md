@@ -2,7 +2,9 @@
 
 Kept in the repo because a session depends on it (Miguel, 14 Oct 2026: "keep
 in the brain all you have been learning from Ray … learn the logic behind").
-The Brain holds the same text with record ids. Dates are 2026 unless marked.
+The Brain holds the same model (recgdbUC2oXqQD3Nl, linked to Ray Guerra,
+CIMS Inventory Reporting and this repo) and Ray's usage statement as a
+correction on his subject (recos9rpgrWV2vKIo). Dates are 2026 unless marked.
 Sources: Ray's written answers of 1 Sep (Q19–Q22) and 4 Sep (Q1, Q7, Q8); his
 emails of 24–25 Sep; his review of the 12 Oct email (`email stats
 10122026.xlsx`); his marked sample of 13 Oct (`Ray method sample 12 Oct 2026
