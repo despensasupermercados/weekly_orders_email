@@ -7,9 +7,9 @@
 // wrong answer this email could give.
 
 import { inService } from './fleetStatus.js';
-import { require_ } from './schema.js';
+import { require_, columnsOf } from './schema.js';
 import { runsOutFirst, withQuantity, byDueDate } from './runway.js';
-import { obpSource } from './obpSource.js';
+import { obpSource, CSV_CONSUMPTION } from './obpSource.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
@@ -74,6 +74,20 @@ export async function fleetRunway(hon, today, opts = {}) {
   const month = String(today).slice(0, 7);
   const fromMonth = monthsBack(month, 4);
 
+  // OBP'S OWN FIGURE FOR LAST MONTH, WHEN WE HAVE IT. Ray's monthly export
+  // (14 Oct 2026, September, three files by brand) is what he plans on. Our
+  // count-derived figure matched it on 400 of 419 consumable rows; the rest
+  // differed on receipts the stale workbook never carried (Quest, Spectrum,
+  // Infinity), one wrong August count (Pursuit), and five rows where OBP
+  // subtracts something its counts do not show (Ascent, Brilliance x2,
+  // Constellation 10 low; Silhouette radiant 15 low). So OBP's number wins
+  // where it exists, the computed one stands in where it does not, and the
+  // email says which it used. Absent table: the computed figure, as before.
+  const haveObp = Boolean(await columnsOf(hon, CSV_CONSUMPTION));
+  const obpm = haveObp
+    ? `SELECT ship, part_number, usage FROM ${CSV_CONSUMPTION} WHERE month = ?3`
+    : `SELECT NULL ship, NULL part_number, NULL usage WHERE 0`;
+
   // Usage per month is Ray's formula, computed in SQL because the alternative
   // is pulling three years of snapshots for 48 ships into a Worker.
   // A negative usage is a mistyped ending inventory (the Pursuit failure) and
@@ -97,7 +111,7 @@ export async function fleetRunway(hon, today, opts = {}) {
        WHERE prev IS NOT NULL AND (prev + receipts - on_hand) >= 0
          AND (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER))
            - (CAST(substr(prev_month, 1, 4) AS INTEGER) * 12 + CAST(substr(prev_month, 6, 2) AS INTEGER)) = 1
-    ), agg AS (
+    ), agg0 AS (
       -- HOW MANY MONTHS THE AVERAGE IS ACTUALLY MADE OF.
       --
       -- avg3 is not always three. A month is only measurable when the month
@@ -111,8 +125,21 @@ export async function fleetRunway(hon, today, opts = {}) {
       -- not have, on the very line added to make the figure auditable. Carry
       -- the count and say the true one.
       SELECT ship, part_number, AVG(u) avg3, COUNT(u) avg_months,
-             MAX(CASE WHEN month = ?3 THEN u END) lastm
+             MAX(CASE WHEN month = ?3 THEN u END) lastm_calc
         FROM used GROUP BY ship, part_number
+    ), obpm AS (${obpm}),
+    -- OBP's last-month figure over the computed one; and an item OBP reports
+    -- that has no count history at all still gets a rate from OBP alone.
+    agg AS (
+      SELECT a0.ship, a0.part_number, a0.avg3, a0.avg_months,
+             COALESCE(m.usage, a0.lastm_calc) lastm,
+             CASE WHEN m.usage IS NOT NULL THEN 'obp' ELSE 'calc' END last_src
+        FROM agg0 a0
+        LEFT JOIN obpm m ON m.ship = a0.ship AND m.part_number = a0.part_number
+      UNION ALL
+      SELECT m.ship, m.part_number, NULL avg3, 0 avg_months, m.usage lastm, 'obp' last_src
+        FROM obpm m
+       WHERE NOT EXISTS (SELECT 1 FROM agg0 a0 WHERE a0.ship = m.ship AND a0.part_number = m.part_number)
     )
     -- Every open line, with its Excel-serial ETA already a date. Read once.
     -- A LATE DELIVERY IS STILL A DELIVERY. A line still in the in-transit
@@ -154,7 +181,7 @@ export async function fleetRunway(hon, today, opts = {}) {
            -- only the answer, so there was nothing to check it against and the
            -- disagreement cost a round trip. Carry the inputs.
            ${RATE} rate,
-           a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months,
+           a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months, a.last_src rate_source,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
            -- not an empty shelf: the export writes real zeros (1,445 of 3,481
            -- rows on 16 Sep 2026), so a missing figure is never "0 on board".
@@ -240,6 +267,7 @@ export async function fleetRunway(hon, today, opts = {}) {
         rate_last: r.rate_last == null ? null : Number(r.rate_last),
         rate_avg: r.rate_avg == null ? null : Number(r.rate_avg),
         rate_avg_months: r.rate_avg_months == null ? null : Number(r.rate_avg_months),
+        rate_source: r.rate_source || 'calc',
       }, {
         brand: r.brand,
         parQty: r.par_qty == null ? null : Number(r.par_qty),
@@ -270,6 +298,6 @@ export async function fleetRunway(hon, today, opts = {}) {
   return {
     ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut,
     unread,
-    source: { inventory: src.inventory.source, intransit: src.intransit.source },
+    source: { inventory: src.inventory.source, intransit: src.intransit.source, consumption: haveObp ? 'obp' : 'calc' },
   };
 }

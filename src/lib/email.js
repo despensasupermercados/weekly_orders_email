@@ -424,7 +424,9 @@ function rateBasis(f) {
   const n = Number(f.rate_avg_months) || 0;
   const over = n > 1 ? ` of ${n} months` : '';
   const onAverage = f.rate_last == null || Number(f.rate_last) === 0;
-  const lastText = f.rate_last == null ? 'no figure for last month' : `${last} last month`;
+  // "(OBP)" when the figure is OBP's own Consumption Statistic (Ray's monthly
+  // export), so Ray reads his number, not ours, and knows which to check.
+  const lastText = f.rate_last == null ? 'no figure for last month' : `${last} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
   return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
     + `${lastText} &middot; ${avg} average${over} &middot; we plan on ${onAverage ? 'the average' : 'last month'}</div>`;
 }

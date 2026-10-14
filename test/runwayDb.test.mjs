@@ -356,3 +356,62 @@ console.log('     never at a container whose order already closed; no schedule -
   console.log('ok - runwayDb: a delivery landing first no longer hides a dry spell the open order could fix (Onward, 13 Oct)');
   console.log('ok - runwayDb: a dry spell between two planned deliveries, before the open order lands, is a finding (Infinity, 12 Oct)');
 }
+
+// OBP'S OWN USAGE FIGURE WINS (14 Oct 2026). Ray exported September's
+// Consumption Statistic. Where a row exists it is last month's usage; the
+// computed figure is the fallback; an item OBP reports with no count history
+// still gets a rate; OBP's zero falls back to the average like any zero.
+{
+  const odb = new DatabaseSync(':memory:');
+  odb.exec(`
+    CREATE TABLE consumption_snapshot (ship TEXT, part_number TEXT, month TEXT, on_hand INTEGER, receipts INTEGER);
+    CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+    CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);
+    CREATE TABLE par (scope TEXT, ship TEXT, brand TEXT, part_number TEXT, description TEXT, category TEXT, model TEXT, par_qty INTEGER, sku TEXT, source TEXT);
+    CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT, cadence TEXT,
+      loading_port TEXT, loading_delivery_date TEXT, total_lead_days INTEGER, due_date TEXT, must_be_in_ct_by TEXT,
+      status TEXT, source TEXT, po_number TEXT, po_state TEXT, date_changed INTEGER);`);
+  const put = (sql, rows) => { const st = odb.prepare(sql); for (const r of rows) st.run(...r); };
+  const T = '2026-10-12';
+  // Ascent 8.5x11, real: counts give 49 for September, OBP's file says 39.
+  put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
+    ['Ascent', 'P85', '2026-06', 60, 0], ['Ascent', 'P85', '2026-07', 50, 40], ['Ascent', 'P85', '2026-08', 44, 0], ['Ascent', 'P85', '2026-09', 35, 40],
+    // Star cyan: counts give 3 for September; OBP says 0 -> the average (9, 9) stands in.
+    ['Star', 'TN619C', '2026-06', 20, 0], ['Star', 'TN619C', '2026-07', 11, 0], ['Star', 'TN619C', '2026-08', 11, 9], ['Star', 'TN619C', '2026-09', 8, 0]]);
+  put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [['Ascent', 'P85', 20, T], ['Star', 'TN619C', 2, T], ['Hero2', 'TN619C', 1, T]]);
+  put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [
+    ['ship', 'Ascent', 'Celebrity', 'P85', '20 LBS 8.5 x 11 DG3 PAPER', 'Paper', null, 40, null, 'SPAR'],
+    ['ship', 'Star', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR'],
+    ['ship', 'Hero2', 'Royal', 'TN619C', 'TN619C CYAN TONER', 'Toner', null, 8, null, 'SPAR']]);
+  const run = async () => (await fleetRunway(d1(odb), T));
+  // Without the table: the computed figure, as before.
+  const before = await run();
+  assert.equal(before.source.consumption, 'calc');
+  const a0 = before.findings.find((f) => f.ship === 'Ascent');
+  assert.ok(a0 && a0.rate === 49 && a0.rate_source === 'calc', `computed 49 before the load, got ${JSON.stringify(a0 && [a0.rate, a0.rate_source])}`);
+  assert.equal(before.findings.find((f) => f.ship === 'Hero2'), undefined, 'no history, no OBP row: no rate, no claim');
+  // Load OBP's September.
+  odb.exec(`CREATE TABLE weekly_obp_consumption (ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT, month TEXT NOT NULL,
+    begin_qty REAL, additions REAL, end_qty REAL, usage REAL NOT NULL, source TEXT, loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (ship, part_number, month))`);
+  put('INSERT INTO weekly_obp_consumption (ship, part_number, description, month, begin_qty, additions, end_qty, usage, source) VALUES (?,?,?,?,?,?,?,?,?)', [
+    ['Ascent', 'P85', '20 LBS 8.5 x 11 DG3 PAPER', '2026-09', 44, 40, 35, 39, 'ray-export'],
+    ['Star', 'TN619C', 'TN619C CYAN TONER', '2026-09', 11, 0, 8, 0, 'ray-export'],
+    ['Hero2', 'TN619C', 'TN619C CYAN TONER', '2026-09', 4, 0, 1, 3, 'ray-export'],
+    ['Ascent', 'P85', '20 LBS 8.5 x 11 DG3 PAPER', '2026-08', 50, 0, 44, 99, 'ray-export']]); // ANOTHER MONTH: never read for October
+  const after = await run();
+  assert.equal(after.source.consumption, 'obp');
+  assert.equal(after.findings.filter((f) => f.ship === 'Ascent').length, 1, 'one row per item: the August OBP row must not join in');
+  const a1 = after.findings.find((f) => f.ship === 'Ascent');
+  assert.equal(a1.rate, 39, 'OBP\'s 39 over the computed 49, and never August\'s 99');
+  assert.equal(a1.rate_last, 39); assert.equal(a1.rate_source, 'obp');
+  assert.equal(a1.rate_avg, 35, 'the average stays the computed one: July 50, August 6, September 49');
+  assert.equal(a1.rate_avg_months, 3);
+  const st = after.findings.find((f) => f.ship === 'Star');
+  assert.equal(st.rate_last, 0, 'OBP says zero');
+  assert.equal(st.rate, 7, 'a zero month falls back to the computed average (9, 9, 3)');
+  const h = after.findings.find((f) => f.ship === 'Hero2');
+  assert.ok(h, 'an item with no count history but an OBP figure is measured');
+  assert.equal(h.rate, 3); assert.equal(h.rate_source, 'obp'); assert.equal(h.rate_avg, null); assert.equal(h.rate_avg_months, 0);
+  console.log('ok - runwayDb: OBP\'s own monthly usage is last month\'s figure where it exists; computed otherwise; the email can say which');
+}

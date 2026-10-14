@@ -28,7 +28,7 @@
 // These tables are THIS WORKER'S. The obp_* mirror belongs to cims-hon and is
 // never written here; obpSource.js decides which copy the readers use.
 
-import { CSV_INVENTORY, CSV_INTRANSIT, CSV_ORDERS } from './obpSource.js';
+import { CSV_INVENTORY, CSV_INTRANSIT, CSV_ORDERS, CSV_CONSUMPTION } from './obpSource.js';
 import { columnsOf } from './schema.js';
 
 export const CSV_FILES = {
@@ -233,6 +233,11 @@ export const DDL = [
      description TEXT, price REAL, accepted_qty REAL, received_date TEXT,
      vendor_invoice TEXT, po_number TEXT, snapshot_date TEXT NOT NULL, source TEXT)`,
   `CREATE INDEX IF NOT EXISTS ${CSV_ORDERS}_snap ON ${CSV_ORDERS} (snapshot_date, ship)`,
+  `CREATE TABLE IF NOT EXISTS ${CSV_CONSUMPTION} (
+     ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT, month TEXT NOT NULL,
+     begin_qty REAL, additions REAL, end_qty REAL, usage REAL NOT NULL,
+     source TEXT, loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+     PRIMARY KEY (ship, part_number, month))`,
   `CREATE TABLE IF NOT EXISTS ${CSV_MONTH_OPEN} (
      ship TEXT NOT NULL, part_number TEXT NOT NULL, description TEXT,
      on_hand REAL, update_date TEXT, snapshot_date TEXT NOT NULL,
