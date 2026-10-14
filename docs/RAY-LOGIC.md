@@ -9,7 +9,9 @@ Sources: Ray's written answers of 1 Sep (Q19–Q22) and 4 Sep (Q1, Q7, Q8); his
 emails of 24–25 Sep; his review of the 12 Oct email (`email stats
 10122026.xlsx`); his marked sample of 13 Oct (`Ray method sample 12 Oct 2026
 RG.xlsx`, 2 Y / 24 N, Q1–Q5); his September OBP export of 14 Oct; his email
-answers of 14 Oct. Every quote below is verbatim.
+answers of 14 Oct, and his evening reply the same day with the October-to-date
+files (Brain recg5ns8T9RAGYj0G on OBP, recA7ZeRI6XXhmk7f on Ray). Every quote
+below is verbatim.
 
 ## 1. The logic, in one paragraph
 
@@ -77,11 +79,16 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 1. **Our 1st-of-month CSV count = OBP's previous-month ending inventory**
    (44 of 44 rows, 12 Oct; 48 of 48 ships by code, 14 Oct). Kept for good in
    `weekly_obp_month_open`.
-2. **OBP's usage is not always Begin + Additions − End.** September: 400 of
-   419 consumable rows equal; 5 rows lower with every input equal (Ascent
-   8.5x11 49 → 39, Brilliance ×2, Constellation 10 lower, Silhouette radiant
-   16 → 1). OBP subtracts something its counts do not show. Asked 14 Oct.
-   Our own formula overstates those rows; Ray's export is the source.
+2. **OBP's usage = Begin + Additions − End − cases transferred out.**
+   September: 400 of 419 consumable rows equal our arithmetic; 5 rows lower
+   with every input equal. Ray, 14 Oct, on Ascent 8.5x11 (49 → 39), Brilliance
+   11x17 and 8.5x11, Constellation 11x17: "10 cases transferred to Legend";
+   "most of the above is related to transfers, which the other ship accepts
+   the order on OBP." The receiving ship books the transfer as an Addition
+   (Legend's September Additions, 60, carry them). Silhouette radiant
+   (16 → 1): "IT will be checking this one … Silhouette is an issue and has
+   been sent to IT for review." Our own formula overstates a sender's usage by
+   the transfer; Ray's export is the source (Brain recg5ns8T9RAGYj0G).
 3. **Receipts in the old workbook mirror were incomplete** (Quest ×11,
    Spectrum, Infinity). The CSV `acceptedorderdetails` is right.
 4. **A receipt can be booked before the shelf rises.** Infinity yellow: 8
@@ -105,6 +112,23 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    SI Silhouette, SL Solstice, SM Summit, XC Xcel; HE Hero (not in service).
 9. **Ray's "had X cases" = our 1 Oct count** on 22 of 22 rows: we and he
    start from the same shelf; disagreements are about usage and judgement.
+10. **A file Ray calls "Nov start" is October to date.** 14 Oct, evening:
+    "Novembers numbers up to today are attached" = AZA / Royal / CEL "Nov start
+    OBP.xlsx". Beginning = September's Ending on 2,360 of 2,369 rows; usage
+    about 45% of September's (14 of 30 days). A month in progress is never
+    loaded as a planning month (on 1 Nov it would become the rate), so these
+    stayed out of `weekly_obp_consumption`. The complete October file, first
+    week of November, is the one to load.
+11. **The statistic loses rows.** Beginning > 0, Ending 0, Usage 0 while OBP's
+    live count is > 0: Grandeur 11x17 (statistic 0, live 33 on 14 Oct),
+    Millennium radiant white (statistic 0 in September and October, live 10).
+    Not a transfer, not a dry shelf. Usage 0 falls to the trailing average by
+    the zero rule in `runwayDb.js` (`COALESCE(NULLIF(lastm, 0), avg3)`), and
+    the stock walk uses the live count, so neither the rate nor the shelf is
+    misread. Do not "fix" such a row at load time.
+12. **The engine's Legend call held.** 12 Oct email: Legend 8.5x11, 2 cases,
+    44 a month, dry 14 Oct, 40 landing 22 Oct. OBP's statistic on 14 Oct:
+    Beginning 23, Ending 0, Usage 23; live count 1.
 
 ## 5. Contradictions the Brain still carries — for Miguel to settle
 
@@ -125,13 +149,20 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    engine. OBP's statistic is a reported figure per ship and month. Do not
    conflate them.
 
-## 6. Open with Ray (14 Oct)
+## 6. Open with Ray (14 Oct, evening)
 
-- What OBP subtracts on the five rows of §4.2.
-- The monthly export, first week of each month (October's by 7 Nov).
-- Correct Quest's 8 Dec ETAs to 18 Dec in OBP.
+- The complete October export in the first week of November. He sent October
+  to date on 14 Oct under the name "Nov start" (§4.10); the ask is re-stated
+  in the reply drafted the same evening.
+- Quest's 11 lines (70 units, ordered 8 Oct): "order is updated to
+  12/18/2026". The 14 Oct CSV still carries 8 Dec; verify at the 19 Oct
+  check-in, one line back to him only if it has not moved.
+- Silhouette radiant white: with IT on his side. Nothing to ask until IT
+  answers; the engine plans on OBP's 1, which matches his own judgement.
 - The toner buffer: +3 everywhere, or +4 international (§5.2)?
 - Azamara paper tolerance (ask only when a paper gap on Azamara is called fine).
+
+Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
 
 ## 7. How to work with Ray (standing rules, learned the hard way)
 
