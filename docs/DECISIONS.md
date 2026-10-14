@@ -7,6 +7,27 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **14 Oct — OBP's own monthly usage is the figure we plan on (PR #40).**
+  Ray exported September's Consumption Statistic (Azamara / ROYAL / CEL Sept
+  OBP.xlsx, one sheet per ship by two-letter code; all 49 codes mapped by
+  matching Ending Inventory to our 1 Oct count: 48 ships exact, HE = Hero).
+  Loaded into `weekly_obp_consumption` (443 consumable rows, source
+  `ray-export`); runwayDb reads it as last month's usage ahead of the figure
+  computed from counts, and the email line says "(OBP)". Replay of 12 Oct:
+  28 rows → 24; Spectrum cyan, Silhouette radiant, Infinity yellow (all three
+  Ray struck), Pursuit paper drop; Quest TN324BK/TN324C appear (receipts our
+  copy never had).
+  CORRECTION of 13 Oct: OBP's usage ≠ Begin + Additions − End on every row.
+  On 5 of 419 September rows every input equals ours and OBP's usage is still
+  10 lower (Ascent 8.5x11 44+40−35 = 49, OBP says 39; Brilliance ×2;
+  Constellation) or 15 lower (Silhouette radiant 22+0−6 = 16, OBP 1). So the
+  13 Oct claim "the error is our August closing count" was wrong for those
+  rows: our counts matched; OBP subtracts something its counts do not show.
+  The other 14 differences were receipts (Quest, Spectrum, Infinity: stale
+  workbook) and one wrong August count (Pursuit). CONSEQUENCE: our own
+  month-open + receipts formula reproduces OBP on ~99% of rows and overstates
+  the rest. Ray's export is the source of truth; ask him for it each month
+  (1st week). Our formula stays the fallback. Asked Ray what OBP subtracts.
 - **13 Oct — review by execution of the runway logic (PR #39). Four bugs,
   one latent guard, two left alone on purpose.** Each measured on the 12 Oct
   data with the repo's own SQL; the fixes change 23 rows → 28 and one quantity.
@@ -298,3 +319,8 @@ Read the live log before the code, then the code with a fault injected.
   Also: Quest's order due 8 Dec — OBP lines land 8 Dec, the MLS says 18 Dec;
   which is right? Explorer's 12 waste boxes (PO229591RCL, dated 12 Sep) — still
   coming, or a dead line to close in OBP?
+  Answered 14 Oct: Silhouette note was Solstice's numbers (Silhouette in the
+  USA, radiant not used, orders altered as needed); Infinity yellow "okay with
+  current projected orders"; September export sent. New: what does OBP
+  subtract on Ascent 8.5x11 (44 + 40 − 35 = 49, file says 39)? Please send the
+  same export in the first week of every month.

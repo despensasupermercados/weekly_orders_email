@@ -25,6 +25,12 @@ export const CSV_INTRANSIT = 'weekly_obp_intransit';
 // acceptedorderdetails.csv - receipts. Written by obpCsv.js, read by cims-hon
 // (its receipts and consumption), not by this Worker. received_date is ISO.
 export const CSV_ORDERS = 'weekly_obp_order';
+// OBP's own monthly Consumption Statistic (Begin + Additions - End, with
+// whatever OBP also subtracts: on 5 of 419 September rows its usage was 10 or
+// 15 below that formula with every input equal). One row per ship, part and
+// month. Written from Ray's monthly export; read by runwayDb as last month's
+// usage ahead of the figure computed from counts.
+export const CSV_CONSUMPTION = 'weekly_obp_consumption';
 
 // obp_intransit.eta is an Excel serial in a TEXT column; the CSV copy stores a
 // real ISO date. The readers ask the source for the expression, so neither

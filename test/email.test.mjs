@@ -346,6 +346,10 @@ console.log('ok - ship email: "enough until" never appears beside "you will have
   assert.ok(/0 last month · 1 average of 3 months · we plan on the average/.test(zero), zero.slice(0, 400));
   const none = render(mk({ rate: 5, rate_last: null, rate_avg: 5, rate_avg_months: 2 }));
   assert.ok(/no figure for last month · 5 average of 2 months · we plan on the average/.test(none), none.slice(0, 400));
+  // OBP's own figure is named as OBP's, so Ray reads his number.
+  const obp = render(mk({ rate: 11, rate_last: 11, rate_avg: 7.5, rate_avg_months: 2, rate_source: 'obp' }));
+  assert.ok(/11 last month \(OBP\) · 8 average of 2 months · we plan on last month/.test(obp), obp.slice(0, 400));
+  assert.ok(!/\(OBP\)/.test(real), 'a computed figure carries no OBP tag');
 
   // NEVER CLAIM A SAMPLE WE DO NOT HAVE. `avg3` is only three months when
   // three are measurable: a month needs the month before it inside the window
