@@ -27,7 +27,10 @@ connector. Newest at the top of each list. Dates are 2026.
   workbook) and one wrong August count (Pursuit). CONSEQUENCE: our own
   month-open + receipts formula reproduces OBP on ~99% of rows and overstates
   the rest. Ray's export is the source of truth; ask him for it each month
-  (1st week). Our formula stays the fallback. Asked Ray what OBP subtracts.
+  (1st week). Our formula stays the fallback. Ray answered the same evening:
+  transfers out ("10 cases transferred to Legend"; "the other ship accepts
+  the order on OBP"); Silhouette radiant is with IT. His "Nov start" files of
+  14 Oct are October 1–14, not loaded (`docs/RAY-LOGIC.md` §4.2, §4.10–12).
 - **13 Oct — review by execution of the runway logic (PR #39). Four bugs,
   one latent guard, two left alone on purpose.** Each measured on the 12 Oct
   data with the repo's own SQL; the fixes change 23 rows → 28 and one quantity.
@@ -333,5 +336,16 @@ Read the live log before the code, then the code with a fault injected.
   waste boxes on PO229591RCL are missing; Ray is tracing them with Hellmann
   and keeps the line open as pending. The email counts them and says
   "overdue since 12 Sep"; 18 aboard at 3 a month, so no stockout turns on it.
-  Still open: what OBP subtracts on Ascent 8.5x11 (49 by arithmetic, file
-  says 39); the monthly export request.
+  Answered 14 Oct (evening): the five usage rows are transfers out ("10 cases
+  transferred to Legend"; "most of the above is related to transfers, which
+  the other ship accepts the order on OBP"); Silhouette radiant "has been sent
+  to IT for review". He attached "Novembers numbers up to today": measured as
+  October 1–14 month-to-date (Beginning = September Ending on 2,360 of 2,369
+  rows), so NOT loaded; the complete October file is still expected in the
+  first week of November. Quest: "order is updated to 12/18/2026" — the 14 Oct
+  CSV still shows 8 Dec on the 11 lines; verify 19 Oct. Side findings in his
+  file: Legend 8.5x11 at 0 on 14 Oct, as the 12 Oct email said; Grandeur 11x17
+  and Millennium radiant are rows the statistic has lost (Ending 0, live 33
+  and 10) — usage 0 falls to the average, nothing to fix.
+  Still open: the October export (first week of November); Silhouette radiant
+  with IT.
