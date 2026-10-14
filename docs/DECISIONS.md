@@ -324,3 +324,14 @@ Read the live log before the code, then the code with a fault injected.
   current projected orders"; September export sent. New: what does OBP
   subtract on Ascent 8.5x11 (44 + 40 − 35 = 49, file says 39)? Please send the
   same export in the first week of every month.
+  Answered 14 Oct (later): **Quest** — the MLS is right: due 8 Dec → on board
+  18 Dec, due 18 Dec → on board 5 Jan. OBP's 11 lines (70 units, ordered
+  8 Oct) carry the 8 Dec DUE date as their ETA, so the stock walk counts them
+  ten days early. Fleet-wide check 14 Oct: only Quest has this (Navigator's
+  9 Nov lines are an 88-day transit from 13 Aug that merely coincides with a
+  due date). One ship, one order: recorded, not coded. **Explorer** — the 12
+  waste boxes on PO229591RCL are missing; Ray is tracing them with Hellmann
+  and keeps the line open as pending. The email counts them and says
+  "overdue since 12 Sep"; 18 aboard at 3 a month, so no stockout turns on it.
+  Still open: what OBP subtracts on Ascent 8.5x11 (49 by arithmetic, file
+  says 39); the monthly export request.
