@@ -204,10 +204,11 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 //    "Toners are based on consumption and based on statistics the required
 //     amount is ordered ... order 3 toners over their consumption amount ...
 //     a safety net in case you print a little bit more."  - Ray, 1 Sep 2026 Q20
-//    The +3/+4 was NOT a nationality rule; the Brain corrected that on 7 Sep
-//    (all open ports are +3, and the buffer follows delivery frequency)
-//    [recN47v4lrTkjQNpO]. Until the 192-port transit table is parsed, +3 is the
-//    one figure that is sourced for every open port. It is the only buffer used.
+//    The spare is +3 where delivery comes within the month and +4 on a
+//    long-haul itinerary; see tonerSpare() below (Ray, 15 Oct 2026, read with
+//    his 7 Sep answer on the five ports). Until 15 Oct the code used +3
+//    everywhere, waiting for the loading ports to be on file; they are, in
+//    schedule_order.loading_port.
 //  WASTE TONER BOX (C4070): 12 IS A PAR, NOT AN ORDER QUANTITY.
 //    "the exact order is 12 pieces per ship from all brands" - Ray, 4 Sep Q7;
 //    "12 base, 24 permitted on high volume" - Ray, round 9 [recGzzU4LphovQ1ne].
@@ -231,7 +232,8 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 //     replenish only as needed" - Ray, 4 Sep Q1. Top-up to par.
 // ---------------------------------------------------------------------------
 
-export const TONER_BUFFER = 3;      // Ray Q20 + Brain 7 Sep: +3 at every open port
+export const TONER_BUFFER = 3;      // Ray Q20; delivered within the month (US, Canada, Caribbean)
+export const TONER_BUFFER_LONG_HAUL = 4; // Ray 15 Oct: "international ships have a 4+ rule"
 export const WASTE_BOX_PAR = 12;    // Ray 4 Sep Q7 + round 9; a PAR per the Brain, 10 Sep
 export const PAPER_PALLET = 40;     // Ray 1 Sep Q19, Royal and Celebrity only
 export const RADIANT_MIN = 10;      // Ray 1 Sep Q20
@@ -246,12 +248,103 @@ const AZAMARA_STOCK = /CARD STOCK|GLOSS TEXT/i;
 
 const ceil = (n) => Math.max(0, Math.ceil(n - 1e-9));
 
+// ---------------------------------------------------------------------------
+// THE PRINT-SHOP TONER SPARE FOLLOWS DELIVERY FREQUENCY.
+//
+// Ray, 15 Oct 2026, asked whether the spare is 3 everywhere:
+//   "USA ships have a 3+ rule and international ships have a 4+ rule, if a ship
+//    is leaving the USA, you will normally start processing their international
+//    orders -3 months in advance, which already has to have the 4+ rule. if the
+//    ship is returning to USA, the 3+ rule will come into play when they do
+//    their first order here, allowing them to adjust to new consumption."
+// Read with his 7 Sep answer on the five ports he had not classified
+// [recO6GtPOyx4uTxYM]:
+//   "Vancouver is considered international but since its next to the USA, it
+//    gets delivered within the month. ST MAARTEN, ORANJESTAD, FREEPORT,
+//    PUNTARENAS is also considered international but again nearby so the
+//    delivery once a month works. Canada, Caribbean Islands deliver on a
+//    shorter timeframe than other international sectors."
+// The two agree once "international" means long-haul. So the line is how
+// often a container can reach the ship, not the flag on the port:
+//   delivered within the month (USA, Canada, Caribbean islands)  -> +3
+//   long-haul (Europe, Asia, Australia, South America)           -> +4
+//
+// WHICH ORDER CARRIES THE +4. The spare covers where the ship will be while
+// the order is being used: from its landing to the next one. The September
+// spec of Ray's SOP [recJFeQFxD78KCbaX]: "The last US order before the ship
+// goes international takes +4; the first order on return to the US takes +3".
+// So +4 when this order loads at a long-haul port OR the next loading does.
+// The first order back in the USA, with a US loading after it, is +3.
+//
+// AZAMARA is a flat +3, "exception cruise line, flat" in the same spec. Ray's
+// 15 Oct answer did not mention Azamara; the exception stands until he does.
+//
+// A PORT ON NEITHER LIST gets +3, the floor, and the line names the port as
+// not on file, so the list is extended by a person rather than guessed by code.
+// Names are compared on letters only: the schedule writes "PORTEVERGLADES",
+// "Miami" and "VENICE (RAVENNA)".
+const portKey = (p) => String(p || '').toUpperCase().replace(/[^A-Z]/g, '');
+const MONTHLY_PORTS = new Set([
+  // USA, Puerto Rico and the US Virgin Islands
+  'MIAMI', 'PORTMIAMI', 'PORTEVERGLADES', 'FORTLAUDERDALE', 'PORTCANAVERAL', 'CAPECANAVERAL',
+  'TAMPA', 'GALVESTON', 'NEWORLEANS', 'BAYONNE', 'CAPELIBERTY', 'NEWYORK', 'BROOKLYN', 'BOSTON',
+  'BALTIMORE', 'NORFOLK', 'CHARLESTON', 'JACKSONVILLE', 'MOBILE', 'LOSANGELES', 'SANPEDRO',
+  'LONGBEACH', 'SANDIEGO', 'SANFRANCISCO', 'SEATTLE', 'HONOLULU', 'SEWARD', 'WHITTIER', 'JUNEAU',
+  'SANJUAN', 'STTHOMAS', 'CHARLOTTEAMALIE',
+  // Canada (Ray, 7 Sep: "Canada ... deliver on a shorter timeframe")
+  'VANCOUVER', 'VICTORIA', 'QUEBEC', 'QUEBECCITY', 'MONTREAL', 'HALIFAX', 'SAINTJOHN',
+  // the four he named, and the Caribbean islands ("Caribbean Islands deliver on a shorter timeframe")
+  'STMAARTEN', 'SINTMAARTEN', 'PHILIPSBURG', 'ORANJESTAD', 'ARUBA', 'FREEPORT', 'PUNTARENAS',
+  'NASSAU', 'WILLEMSTAD', 'CURACAO', 'BRIDGETOWN', 'BARBADOS', 'CASTRIES', 'BASSETERRE',
+  'STJOHNS', 'FORTDEFRANCE', 'POINTEAPITRE',
+]);
+const LONG_HAUL_PORTS = new Set([
+  // Europe
+  'CIVITAVECCHIA', 'ROME', 'BARCELONA', 'VENICE', 'RAVENNA', 'VENICERAVENNA', 'LISBON',
+  'SOUTHAMPTON', 'DOVER', 'COPENHAGEN', 'AMSTERDAM', 'ROTTERDAM', 'PIRAEUS', 'ATHENS', 'ISTANBUL',
+  'KIEL', 'HAMBURG', 'STOCKHOLM', 'MARSEILLE', 'GENOA', 'NAPLES', 'MALAGA', 'PALMA', 'VALLETTA',
+  'TRIESTE', 'REYKJAVIK',
+  // Asia ("Soul" is how the schedule writes Seoul)
+  'SINGAPORE', 'BUSAN', 'SEOUL', 'SOUL', 'INCHEON', 'OSAKA', 'NAGASAKI', 'TOKYO', 'YOKOHAMA',
+  'KOBE', 'SHANGHAI', 'TIANJIN', 'HONGKONG', 'KEELUNG', 'MANILA',
+  // Australia and New Zealand
+  'SYDNEY', 'BRISBANE', 'MELBOURNE', 'FREMANTLE', 'AUCKLAND', 'TAURANGA',
+  // South America ("San Antonio" is Chile's: Journey, between Montevideo and the Pacific)
+  'MONTEVIDEO', 'BUENOSAIRES', 'SANANTONIO', 'VALPARAISO', 'RIODEJANEIRO', 'SANTOS', 'CALLAO',
+  // Middle East and Africa
+  'DUBAI', 'ABUDHABI', 'CAPETOWN',
+]);
+const portLabel = (p) => String(p || '').trim().toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+// 'monthly' | 'long-haul' | null (no port, or a port on neither list)
+export function deliveryClass(port) {
+  const k = portKey(port);
+  if (!k) return null;
+  if (MONTHLY_PORTS.has(k)) return 'monthly';
+  if (LONG_HAUL_PORTS.has(k)) return 'long-haul';
+  return null;
+}
+
+// The spare for one print-shop toner line on the order loading at `port`,
+// with the ship's next loading at `nextPort`. `note` is what the email prints
+// after the number; empty when the spare is the plain +3.
+export function tonerSpare({ brand = null, port = null, nextPort = null } = {}) {
+  if (/azamara/i.test(String(brand || ''))) return { spare: TONER_BUFFER, note: '' };
+  const here = deliveryClass(port);
+  const next = deliveryClass(nextPort);
+  if (here === 'long-haul') return { spare: TONER_BUFFER_LONG_HAUL, note: `long-haul delivery, ${portLabel(port)}` };
+  if (next === 'long-haul') return { spare: TONER_BUFFER_LONG_HAUL, note: `next loading ${portLabel(nextPort)} is long-haul` };
+  if (portKey(port) && !here) return { spare: TONER_BUFFER, note: `delivery frequency for ${portLabel(port)} not on file` };
+  if (portKey(nextPort) && !next) return { spare: TONER_BUFFER, note: `delivery frequency for ${portLabel(nextPort)}, the next loading, not on file` };
+  return { spare: TONER_BUFFER, note: '' };
+}
+
 // Returns { qty, basis } or null when no sourced rule applies to the item.
 // qty is what to ADD to the open order. inTransit is what the item already has
 // on that order; onHandAtLanding is what will still be aboard the day it lands
 // (zero for a true stockout, more when the order arrives before the item runs
 // dry) - it matters only to the par rule, which is a top-up.
-export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MONTH_DAYS, parQty = null, onHandAtLanding = 0 }) {
+export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MONTH_DAYS, parQty = null, onHandAtLanding = 0, port = null, nextPort = null }) {
   const desc = String(item || '');
   const azamara = /azamara/i.test(String(brand || ''));
   const need = ceil((Number(rate) || 0) * (cycleDays / MONTH_DAYS)); // units used until the next landing
@@ -263,7 +356,8 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
     return { qty: Math.max(0, WASTE_BOX_PAR - left - coming), basis: `waste box par is ${WASTE_BOX_PAR}${aboard}` };
   }
   if (PRINT_SHOP_TONER.test(desc)) {
-    return { qty: Math.max(0, need + TONER_BUFFER - coming), basis: `${need} used in ${cycleDays} days + ${TONER_BUFFER} spare` };
+    const { spare, note } = tonerSpare({ brand, port, nextPort });
+    return { qty: Math.max(0, need + spare - coming), basis: `${need} used in ${cycleDays} days + ${spare} spare${note ? ` (${note})` : ''}` };
   }
   if (MFD_TONER.test(desc) || MFD_WASTE.test(desc)) {
     if (parQty == null) return null; // Ray: MFD lines follow the OBP par; no par, no number
@@ -299,7 +393,9 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
 //                  cycle; absent, one month.
 //   coming       - what the item already has on that order.
 //   today, arrivals - to project what is still aboard the day the order lands.
-export function withQuantity(finding, { brand, parQty, due = null, lands = null, until = null, coming = 0, today = null, arrivals = [] }) {
+//   port, nextPort - where that order loads and where the next one does; they
+//                  set the print-shop toner spare (tonerSpare).
+export function withQuantity(finding, { brand, parQty, due = null, lands = null, until = null, coming = 0, today = null, arrivals = [], port = null, nextPort = null }) {
   if (!finding) return finding;
   const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
   const cycleDays = lands && until && until > lands ? daysBetween(lands, until) : MONTH_DAYS;
@@ -310,7 +406,7 @@ export function withQuantity(finding, { brand, parQty, due = null, lands = null,
     : 0;
   // Match the rule on the FULL description: `item` is cut to 34 characters for
   // the email, and a long description can lose its part number in the cut.
-  const q = orderQuantity({ item: finding.description || finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding });
+  const q = orderQuantity({ item: finding.description || finding.item, brand, rate: finding.rate, inTransit: coming, cycleDays, parQty, onHandAtLanding, port, nextPort });
   return {
     ...finding,
     order_due: due || null,

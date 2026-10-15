@@ -24,7 +24,8 @@ emergency depending when next order is expected to arrive." He does **not**
 hold a fixed spare at month end; shown 26 rows built on that idea he struck
 24 ("current order projections do not affect paper usage"). Paper moves in
 **pallets of 40 cases**, sized on last month. Print-shop toner is ordered on
-**consumption plus a spare**. **Azamara is kept lean on purpose** and topped
+**consumption plus a spare: 3 where delivery comes within the month, 4 on a
+long-haul itinerary**. **Azamara is kept lean on purpose** and topped
 up as needed, with **zero tolerance** for a toner at nil. MFD toner and waste
 bottles follow the **OBP par**. He trusts **OBP's own usage figure**, which on
 about 1% of rows is lower than the arithmetic of its counts. He reads the
@@ -43,7 +44,12 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 | Paper in sets of 40, sized on last month | "always ordered in a pallet of 40 cases" (Q19); "paper is ordered in sets of 40 cases based om previous months consumption" (Q1) | 1 Sep, 13 Oct | `PAPER_PALLET = 40` |
 | Azamara paper is strict consumption, no pallets | "based on strict consumption due to space so they could not accept 40 cases rather what they use" (Q19) | 1 Sep | `orderQuantity` Azamara branch |
 | Radiant white: minimum 10, more if needed | "minimum of 10 cases … if a ship needs 14 cases, they can order the 14" (Q20, Q8) | 1 Sep, 4 Sep | `RADIANT_MIN = 10` |
-| Print-shop toner: consumption plus a spare | "order 3 toners over their consumption amount … a safety net in case you print a little bit more" (Q20) | 1 Sep | `TONER_BUFFER = 3` (see §5.2) |
+| Print-shop toner: consumption plus a spare | "order 3 toners over their consumption amount … a safety net in case you print a little bit more" (Q20) | 1 Sep | `orderQuantity` toner branch |
+| The spare is 3 at home, 4 long-haul | "USA ships have a 3+ rule and international ships have a 4+ rule, if a ship is leaving the USA, you will normally start processing their international orders -3 months in advance, which already has to have the 4+ rule. if the ship is returning to USA, the 3+ rule will come into play when they do their first order here, allowing them to adjust to new consumption." | 15 Oct | `tonerSpare()`, from the order's loading port and the next one |
+| "International" means long-haul, not the flag | "Vancouver is considered international but since its next to the USA, it gets delivered within the month. ST MAARTEN, ORANJESTAD, FREEPORT, PUNTARENAS is also considered international but again nearby so the delivery once a month works. Canada, Caribbean Islands deliver on a shorter timeframe than other international sectors." | 7 Sep | `deliveryClass()`: US, Canada, Caribbean +3; Europe, Asia, Australia, South America +4 |
+| The last US order before leaving takes +4 | "The last US order before the ship goes international takes +4; the first order on return to the US takes +3" (Sep spec, recJFeQFxD78KCbaX) | 8 Sep | `tonerSpare()`: +4 when the next loading is long-haul |
+| Azamara toner spare is a flat +3 | "+3 Azamara (exception cruise line, flat)" (Sep spec) | 8 Sep | `tonerSpare()` Azamara branch; not re-confirmed on 15 Oct |
+| HON plans on last month too; the average is for dry dock and quiet months | "for the HON, i would recommend using the last month number only and guide the adjustments for the future based on that. the average should be viewed more for dry dock or quite months as the usage can pickup at any time" | 15 Oct | cims-hon to change; the email already shows the average beside last month and plans on it when last month is zero |
 | Waste box (C4070): par 12, 24 on high volume | "the exact order is 12 pieces per ship from all brands" (Q7); "12 base, 24 permitted on high volume" | 4 Sep | `WASTE_BOX_PAR = 12`, a top-up |
 | MFD toner and bottles: top up to the OBP par | "they have a par level assigned on OBP, we follow this par level and replenish only as needed" (Q1) | 4 Sep | MFD branch of `orderQuantity` |
 | Azamara holds little by design; top-ups as needed | "inventory cost goes up and some products move very slowly" | 24 Sep | top-ups appear as in-transit lines outside the schedule |
@@ -133,15 +139,26 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 
 ## 5. Contradictions the Brain still carries — for Miguel to settle
 
-1. **Usage rule.** The weekly email: last month (Ray, 12 Oct, in writing).
-   The HON monthly-orders spec (Brain recJFeQFxD78KCbaX) and an earlier Ray
-   quote ("you have to use the 11.7 over the last six months", Brain
-   recvHp3MQe8xYaHdq) say the greater of last month and a trailing average.
-   Those were about HON's projection, not this email. Should HON change too?
-2. **Toner buffer.** Brain 7 Sep: "+3 at every open port, not a nationality
-   rule" (recN47v4lrTkjQNpO). Ray, 13 Oct, on Infinity: "orders of 3 pieces
-   per month … plus 4 for being international." The code uses +3 everywhere.
-   One question to Ray with Infinity as the case.
+1. **Usage rule — SETTLED 15 Oct.** Ray: "for the HON, i would recommend
+   using the last month number only and guide the adjustments for the future
+   based on that. the average should be viewed more for dry dock or quite
+   months as the usage can pickup at any time." HON's "greater of last month
+   and the 3-month average" (recJFeQFxD78KCbaX) is retired; cims-hon owns the
+   change. The email needed none: it plans on last month, prints the average
+   beside it, and plans on the average when last month is zero (a dry-dock
+   month). A numeric "quiet month" switch was measured and NOT built: last
+   month below half the average → the average would add 3 rows to the 12 Oct
+   replay, one of them Spectrum cyan, which Ray struck on 13 Oct because its
+   average is inflated by an emergency top-up.
+2. **Toner buffer — SETTLED 15 Oct.** Ray: "USA ships have a 3+ rule and
+   international ships have a 4+ rule". Read with his 7 Sep answer on the five
+   ports, "international" means long-haul: Vancouver, St Maarten, Oranjestad,
+   Freeport, Puntarenas are international but delivered within the month and
+   stay +3. The 7 Sep correction (recO6GtPOyx4uTxYM, recN47v4lrTkjQNpO) was
+   right about the principle (delivery frequency) and waited only for the
+   ports to be on file; the +3-everywhere code was that wait, not a rule.
+   Built 15 Oct from `schedule_order.loading_port` (364 of 366 future orders
+   carry one; 38 spellings, all classified).
 3. **His own marks.** Legend Y (+40) is a month-end-spare decision; the 24 N
    reject that method; Infinity Y on 13 Oct, "okay with current projected
    orders" on 14 Oct. Treat his marks as judgement, not as a rule set.
@@ -160,7 +177,8 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
   check-in, one line back to him only if it has not moved.
 - Silhouette radiant white: with IT on his side. Nothing to ask until IT
   answers; the engine plans on OBP's 1, which matches his own judgement.
-- The toner buffer: +3 everywhere, or +4 international (§5.2)?
+- Azamara's toner spare: the September spec says a flat +3; his 15 Oct answer
+  did not mention Azamara. Ask only if an Azamara toner quantity is disputed.
 - Azamara paper tolerance (ask only when a paper gap on Azamara is called fine).
 
 Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
@@ -187,7 +205,8 @@ with the greater-of usage rule, asserted as fact. Written the same day:
 |---|---|---|
 | master (linked to Ray, OBP, Azamara, Quest, Explorer, Legend, Silhouette, MLS) | recgdbUC2oXqQD3Nl | the 21 rules with Ray's words verbatim and the WHY of each; §3–§7 of this file |
 | Ray Guerra | recos9rpgrWV2vKIo | usage = last month (12 Oct), zero → average |
-| Ray Guerra | recHQ7zBmxgex5JU4 | toner buffer and usage base: what runs (+3, last month), what the HON spec says, why it is contested, who settles it |
+| Ray Guerra | recHQ7zBmxgex5JU4 | toner buffer and usage base as contested on 15 Oct morning (superseded the same day) |
+| Ray Guerra | written 15 Oct | his answers: HON on last month only; +3 home, +4 long-haul, which order carries it |
 | Ray Guerra | recA7ZeRI6XXhmk7f | his 14 Oct evening reply, as a log |
 | Ray Guerra | rec9FKkMs0RASmUgZ, recLgXfvZjZTvxcNp | 13 Oct marks; Quest and Explorer answers |
 | OBP | reczif0KBkKahwxUp | September export, the 49 sheet codes |

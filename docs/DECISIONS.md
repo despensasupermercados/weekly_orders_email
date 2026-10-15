@@ -7,6 +7,35 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **15 Oct — print-shop toner spare: +3 at home, +4 long-haul (Ray).** Asked
+  whether the spare is 3 everywhere, Ray: "USA ships have a 3+ rule and
+  international ships have a 4+ rule, if a ship is leaving the USA, you will
+  normally start processing their international orders -3 months in advance,
+  which already has to have the 4+ rule. if the ship is returning to USA, the
+  3+ rule will come into play when they do their first order here." With his
+  7 Sep answer (Vancouver, St Maarten, Oranjestad, Freeport, Puntarenas are
+  "international" but delivered within the month), the line is delivery
+  frequency: US, Canada, Caribbean islands +3; Europe, Asia, Australia, South
+  America +4. Which order: +4 when the open order loads at a long-haul port or
+  the next loading does (the September spec: "the last US order before the
+  ship goes international takes +4"); the first order back in the USA with a
+  US loading after it is +3. Azamara stays a flat +3 (September spec, not
+  re-confirmed). A port on neither list gets +3 and the email line names it as
+  not on file. Source: `schedule_order.loading_port`, 364 of 366 future orders,
+  38 spellings, all classified. Today the +4 applies to Anthem, Edge, Equinox,
+  Infinity, Millennium, Navigator, Quantum and Spectrum. The 12 Oct replay has
+  no print-shop toner row, so that email would not have changed. Seven fault
+  injections each caught. Supersedes "+3 at every open port" (7 Sep), which
+  was a wait for the port data, not a rule.
+- **15 Oct — usage: last month, for HON too (Ray).** "for the HON, i would
+  recommend using the last month number only and guide the adjustments for
+  the future based on that. the average should be viewed more for dry dock or
+  quite months as the usage can pickup at any time." The email already does
+  this. A numeric quiet-month switch (last month under half the average →
+  plan on the average) was measured on the 12 Oct replay and rejected: +3
+  rows, one of them Spectrum cyan, which Ray struck on 13 Oct. HON's
+  greater-of rule is retired; the change is cims-hon's to make.
+
 - **14 Oct — OBP's own monthly usage is the figure we plan on (PR #40).**
   Ray exported September's Consumption Statistic (Azamara / ROYAL / CEL Sept
   OBP.xlsx, one sheet per ship by two-letter code; all 49 codes mapped by

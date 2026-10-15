@@ -8,12 +8,13 @@
 // source is the exact failure the Brain's corrections layer exists for.
 
 import assert from 'node:assert';
-import { orderQuantity, withQuantity, TONER_BUFFER, WASTE_BOX_PAR, PAPER_PALLET, RADIANT_MIN } from '../src/lib/runway.js';
+import { orderQuantity, withQuantity, TONER_BUFFER, TONER_BUFFER_LONG_HAUL, WASTE_BOX_PAR, PAPER_PALLET, RADIANT_MIN, deliveryClass, tonerSpare } from '../src/lib/runway.js';
 
 const q = (o) => orderQuantity(o);
 
-// Ray Q20: "order 3 toners over their consumption amount". +3 everywhere -
-// the Brain corrected the nationality version on 7 Sep (recN47v4lrTkjQNpO).
+// Ray Q20: "order 3 toners over their consumption amount". +3 where delivery
+// comes within the month; +4 long-haul (Ray, 15 Oct; block at the end). With
+// no port given, the +3 floor.
 assert.equal(TONER_BUFFER, 3);
 assert.deepEqual(q({ item: 'TN619M MAGENTA TONER', brand: 'Royal', rate: 14, inTransit: 0, cycleDays: 30 }),
   { qty: 17, basis: '14 used in 30 days + 3 spare' });
@@ -93,3 +94,58 @@ assert.equal(d.add_qty, 5);
 
 console.log("ok - quantities: every branch is one of Ray's written rules - +3 toner, 12 waste");
 console.log('     boxes, 40-case pallets, 10-case Radiant minimum, Azamara to consumption or OBP par');
+
+// THE TONER SPARE FOLLOWS DELIVERY FREQUENCY (Ray, 15 Oct 2026): "USA ships
+// have a 3+ rule and international ships have a 4+ rule"; read with his 7 Sep
+// answer that Vancouver, St Maarten, Oranjestad, Freeport and Puntarenas are
+// "considered international" but delivered within the month, so +3.
+{
+  assert.equal(TONER_BUFFER_LONG_HAUL, 4);
+  // Every loading port in the live schedule on 15 Oct 2026 (366 future orders,
+  // 38 spellings) is on one list or the other. A new port shows as not on file.
+  const live = {
+    monthly: ['PORT EVERGLADES', 'PORTEVERGLADES', 'MIAMI', 'Miami', 'PORT CANAVERAL', 'TAMPA', 'LOS ANGELES',
+      'GALVESTON', 'SAN DIEGO', 'SAN JUAN', 'San Juan', 'ORANJESTAD', 'NEW ORLEANS', 'BAYONNE', 'FREEPORT',
+      'Victoria', 'Seattle', 'San Francisco', 'ST MAARTEN'],
+    'long-haul': ['CIVITAVECCHIA', 'SINGAPORE', 'Singapore', 'BRISBANE', 'SYDNEY', 'MONTEVIDEO', 'Montevideo',
+      'BARCELONA', 'VENICE (RAVENNA)', 'Busan', 'BUSAN', 'TAURANGA', 'Soul', 'San Antonio', 'OSAKA', 'NAGASAKI',
+      'Lisbon', 'BUENOS AIRES', 'Auckland'],
+  };
+  for (const [cls, ports] of Object.entries(live)) for (const port of ports) assert.equal(deliveryClass(port), cls, port);
+  for (const port of ['Vancouver', 'ST MAARTEN', 'ORANJESTAD', 'FREEPORT', 'PUNTARENAS'])
+    assert.equal(tonerSpare({ brand: 'Royal', port, nextPort: 'MIAMI' }).spare, 3, `${port}: Ray 7 Sep, delivered within the month`);
+  assert.equal(deliveryClass(null), null);
+  assert.equal(deliveryClass('ENSENADA'), null, 'a port on neither list is not guessed');
+
+  // The four moments of an itinerary.
+  assert.deepEqual(tonerSpare({ brand: 'Celebrity', port: 'PORT EVERGLADES', nextPort: 'PORT EVERGLADES' }), { spare: 3, note: '' },
+    'a US order with a US loading after it: +3');
+  assert.deepEqual(tonerSpare({ brand: 'Celebrity', port: 'PORT EVERGLADES', nextPort: 'CIVITAVECCHIA' }),
+    { spare: 4, note: 'next loading Civitavecchia is long-haul' },
+    'the last US order before the ship leaves: +4 (the Sep spec, "the last US order before the ship goes international takes +4")');
+  assert.deepEqual(tonerSpare({ brand: 'Celebrity', port: 'BARCELONA', nextPort: 'BARCELONA' }),
+    { spare: 4, note: 'long-haul delivery, Barcelona' }, 'an order loading abroad: +4');
+  assert.equal(tonerSpare({ brand: 'Celebrity', port: 'VENICE (RAVENNA)', nextPort: 'PORT EVERGLADES' }).spare, 4,
+    'the last order loaded abroad is still used abroad: +4');
+  assert.equal(tonerSpare({ brand: 'Celebrity', port: 'PORT EVERGLADES', nextPort: 'MIAMI' }).spare, 3,
+    'Ray: "the 3+ rule will come into play when they do their first order here"');
+  // Azamara is "exception cruise line, flat" +3 in the September spec; Ray's
+  // 15 Oct answer did not touch it.
+  assert.deepEqual(tonerSpare({ brand: 'Azamara', port: 'Singapore', nextPort: 'Busan' }), { spare: 3, note: '' });
+  // Not on file: the +3 floor, and the line says so rather than guessing.
+  assert.deepEqual(tonerSpare({ brand: 'Royal', port: 'ENSENADA', nextPort: 'LOS ANGELES' }),
+    { spare: 3, note: 'delivery frequency for Ensenada not on file' });
+  assert.equal(tonerSpare({ brand: 'Royal' }).spare, 3, 'no order, no port: the floor, silently');
+
+  // Infinity's yellow, the case Ray answered on: 8 a month, loading in Barcelona.
+  assert.deepEqual(q({ item: 'TN619Y YELLOW TONER', brand: 'Celebrity', rate: 8, cycleDays: 30, port: 'BARCELONA', nextPort: 'BARCELONA' }),
+    { qty: 12, basis: '8 used in 30 days + 4 spare (long-haul delivery, Barcelona)' });
+  // The port reaches the rule through withQuantity, as runwayDb passes it.
+  const w = withQuantity({ ship: 'Ascent', item: 'TN619C CYAN TONER', description: 'TN619C CYAN TONER', rate: 15, on_hand: 0 },
+    { brand: 'Celebrity', parQty: 10, due: '2026-10-22', lands: '2026-11-20', until: '2026-12-20', port: 'PORT EVERGLADES', nextPort: 'CIVITAVECCHIA', today: '2026-10-15' });
+  assert.equal(w.add_qty, 19, '15 a month over 30 days, plus 4: the last order before Europe');
+  // Waste boxes and MFD toner are outside the spare rule.
+  assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, port: 'BARCELONA' }).qty, 12);
+  console.log('ok - quantities: the toner spare is +3 where delivery comes within the month and +4 long-haul,');
+  console.log('     including the last order before a ship leaves; Azamara flat +3; an unknown port is named');
+}
