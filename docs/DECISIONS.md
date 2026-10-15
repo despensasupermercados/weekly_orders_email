@@ -26,7 +26,7 @@ connector. Newest at the top of each list. Dates are 2026.
   Infinity, Millennium, Navigator, Quantum and Spectrum. The 12 Oct replay has
   no print-shop toner row, so that email would not have changed. Seven fault
   injections each caught. Supersedes "+3 at every open port" (7 Sep), which
-  was a wait for the port data, not a rule.
+  was a wait for the port data, not a rule. PR #46; Brain recaGgsFr06d19lkW.
 - **15 Oct — usage: last month, for HON too (Ray).** "for the HON, i would
   recommend using the last month number only and guide the adjustments for
   the future based on that. the average should be viewed more for dry dock or
