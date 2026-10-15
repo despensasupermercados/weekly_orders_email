@@ -61,6 +61,10 @@ export async function fleetRunway(hon, today, opts = {}) {
     const probe = await require_(hon, table, cols);
     if (!probe.ok) return { ran: false, reason: probe.reason, findings: [], measured: 0 };
   }
+  // The loading port sets the print-shop toner spare (+3 or +4, runway.js
+  // tonerSpare). Without the column every order gets the +3 floor; the run
+  // itself does not depend on it.
+  const hasPort = Boolean((await columnsOf(hon, 'schedule_order'))?.has('loading_port'));
 
   // MONTH ARITHMETIC ON INTEGERS, NOT ON A DATE. setUTCMonth(-1) on the 31st
   // rolls forward into the same month (31 Mar - 1 -> 3 Mar), so on a month-end
@@ -165,7 +169,7 @@ export async function fleetRunway(hon, today, opts = {}) {
     -- or missed, so this is the earliest due date on or after today, and the
     -- date that order is on board. Same eligibility as due.js.
     open_order AS (
-      SELECT ship, due_date, loading_delivery_date,
+      SELECT ship, due_date, loading_delivery_date, ${hasPort ? 's.loading_port' : 'NULL'} loading_port,
              ROW_NUMBER() OVER (PARTITION BY ship ORDER BY due_date, loading_delivery_date) rn
         FROM schedule_order s
        WHERE ${eligible('s')}
@@ -205,6 +209,13 @@ export async function fleetRunway(hon, today, opts = {}) {
                AND x.land >= ?4) all_landings,
            o.due_date order_due,
            o.loading_delivery_date order_lands,
+           o.loading_port order_port,
+           -- where the ship loads next: a long-haul port there makes this the
+           -- last order before it leaves, which takes the +4 (tonerSpare)
+           ${hasPort ? `(SELECT s.loading_port FROM schedule_order s
+             WHERE s.ship = a.ship AND ${eligible('s')}
+               AND s.loading_delivery_date > o.loading_delivery_date
+             ORDER BY s.loading_delivery_date LIMIT 1)` : 'NULL'} order_next_port,
            COALESCE((SELECT SUM(x.qty) FROM transit x
                       WHERE x.ship = a.ship AND x.part_number = a.part_number
                         AND x.land = o.loading_delivery_date), 0) on_order,
@@ -274,6 +285,8 @@ export async function fleetRunway(hon, today, opts = {}) {
         due: r.order_due || null,
         lands: r.order_lands || null,
         until: r.order_until || null,
+        port: r.order_port || null,
+        nextPort: r.order_next_port || null,
         coming: Number(r.on_order) || 0,
         today,
         arrivals,

@@ -23,10 +23,10 @@
 //     in days, and the buffer follows DELIVERY FREQUENCY and transit time, not
 //     which country the port is in - all five open ports are +3 regardless of
 //     nationality [recDYPEyS01bhp6vR, recO6GtPOyx4uTxYM "THE TONER BUFFER
-//     FOLLOWS DELIVERY FREQUENCY, NOT NATIONALITY", Resolved]. A buffer rule
-//     built on nationality would be wrong on its face, so it is not implemented
-//     here at all. It needs the per-port transit table out of the MLS, which is
-//     still unparsed in R2 [recURyIyYDn8O3yHh, Open].
+//     FOLLOWS DELIVERY FREQUENCY, NOT NATIONALITY", Resolved]. This module
+//     does not size quantities. The spare is built in runway.js tonerSpare()
+//     since 15 Oct 2026, from the schedule's loading ports (Ray: +3 within
+//     the month, +4 long-haul).
 //
 //  2. "WASTE BOX 12" IS A PAR, NOT AN ORDER QUANTITY. Ray confirmed the figure
 //     - 12 base, 24 permitted on high volume [recGzzU4LphovQ1ne, recarBWzogzbK7BFO,

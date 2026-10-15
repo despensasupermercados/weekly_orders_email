@@ -415,3 +415,73 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.equal(h.rate, 3); assert.equal(h.rate_source, 'obp'); assert.equal(h.rate_avg, null); assert.equal(h.rate_avg_months, 0);
   console.log('ok - runwayDb: OBP\'s own monthly usage is last month\'s figure where it exists; computed otherwise; the email can say which');
 }
+
+// THE TONER SPARE FROM THE SCHEDULE'S LOADING PORTS (Ray, 15 Oct 2026). Three
+// hulls with Edge's figures: 18 on board, 16 a month, 8 landing 14 Nov, the
+// open order landing 20 Nov and the next loading 8 Dec, so 10 used over the
+// 18 days. Only the ports differ.
+//   Ascent   - loads at Port Everglades, next at Civitavecchia: the last order
+//              before Europe, +4 -> 14.
+//   Eclipse  - Port Everglades both times: +3 -> 13.
+//   Infinity - Barcelona both times: +4 -> 14.
+{
+  const gdb = new DatabaseSync(':memory:');
+  gdb.exec(`
+    CREATE TABLE consumption_snapshot (ship TEXT, part_number TEXT, month TEXT, on_hand INTEGER, receipts INTEGER);
+    CREATE TABLE obp_inventory (ship TEXT, part_number TEXT, on_hand INTEGER, snapshot_date TEXT);
+    CREATE TABLE obp_intransit (ship TEXT, part_number TEXT, eta TEXT, qty INTEGER, snapshot_date TEXT);
+    CREATE TABLE par (scope TEXT, ship TEXT, brand TEXT, part_number TEXT, description TEXT, category TEXT, model TEXT, par_qty INTEGER, sku TEXT, source TEXT);
+    CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT, cadence TEXT,
+      loading_port TEXT, loading_delivery_date TEXT, total_lead_days INTEGER, due_date TEXT, must_be_in_ct_by TEXT,
+      status TEXT, source TEXT, po_number TEXT, po_state TEXT, date_changed INTEGER);`);
+  const put = (sql, rows) => { const st = gdb.prepare(sql); for (const r of rows) st.run(...r); };
+  const T = '2026-10-12';
+  const ports = { Ascent: ['PORT EVERGLADES', 'CIVITAVECCHIA'], Eclipse: ['PORT EVERGLADES', 'PORT EVERGLADES'], Infinity: ['BARCELONA', 'BARCELONA'] };
+  for (const [ship, [here, next]] of Object.entries(ports)) {
+    put('INSERT INTO consumption_snapshot VALUES (?,?,?,?,?)', [
+      [ship, 'TN619Y', '2026-06', 15, 9], [ship, 'TN619Y', '2026-07', 16, 9],
+      [ship, 'TN619Y', '2026-08', 12, 4], [ship, 'TN619Y', '2026-09', 12, 16]]);
+    put('INSERT INTO obp_inventory VALUES (?,?,?,?)', [[ship, 'TN619Y', 18, T]]);
+    put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [['ship', ship, 'Celebrity', 'TN619Y', 'TN619Y YELLOW TONER', 'Parts', 'C4070', 10, null, 'SPAR']]);
+    put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [
+      [ship, 'TN619Y', serial('2026-11-14'), 8, T], [ship, 'TN619Y', serial('2026-12-08'), 8, T], [ship, 'TN619Y', serial('2027-01-02'), 8, T]]);
+    // the LATER Miami loading is written first, so a query that takes rows in
+    // insertion order instead of by date would read Miami as the next port
+    put('INSERT INTO schedule_order (ship, voyage, mot, loading_port, loading_delivery_date, due_date) VALUES (?,?,?,?,?,?)', [
+      [ship, null, 'HOTEL BIWEEKLY HOTEL', 'MIAMI', '2027-01-20', '2026-11-20'],
+      [ship, null, 'HOTEL BIWEEKLY HOTEL', next, '2026-12-08', '2026-10-29'],
+      [ship, null, 'HOTEL BIWEEKLY HOTEL', here, '2026-11-20', '2026-10-22']]);
+  }
+  const got = (await fleetRunway(d1(gdb), T)).findings;
+  const by = (ship) => got.find((f) => f.ship === ship);
+  for (const ship of Object.keys(ports)) {
+    assert.ok(by(ship), `${ship}: the Edge case, a finding`);
+    assert.equal(by(ship).order_lands, '2026-11-20');
+    assert.equal(by(ship).cycle_days, 18);
+  }
+  assert.equal(by('Ascent').add_qty, 14, 'the last order before Europe carries +4');
+  assert.match(by('Ascent').add_basis, /\+ 4 spare \(next loading Civitavecchia is long-haul\)/);
+  assert.equal(by('Eclipse').add_qty, 13, 'a US order with a US loading after it: +3');
+  assert.equal(by('Eclipse').add_basis, '10 used in 18 days + 3 spare');
+  assert.equal(by('Infinity').add_qty, 14);
+  assert.match(by('Infinity').add_basis, /long-haul delivery, Barcelona/);
+
+  // A schedule without the port column still runs, on the +3 floor.
+  const old = new DatabaseSync(':memory:');
+  old.exec(gdb.prepare("SELECT group_concat(sql, ';') s FROM sqlite_master WHERE type = 'table' AND name != 'schedule_order' AND name NOT LIKE 'sqlite_%'").get().s);
+  old.exec(`CREATE TABLE schedule_order (id INTEGER PRIMARY KEY AUTOINCREMENT, ship TEXT, voyage TEXT, mot TEXT,
+    loading_delivery_date TEXT, due_date TEXT, source TEXT)`);
+  for (const t of ['consumption_snapshot', 'obp_inventory', 'obp_intransit', 'par']) {
+    const rows = gdb.prepare(`SELECT * FROM ${t}`).all();
+    const cols = Object.keys(rows[0]);
+    const st = old.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`);
+    for (const r of rows) st.run(...cols.map((c) => r[c]));
+  }
+  for (const r of gdb.prepare('SELECT ship, voyage, mot, loading_delivery_date, due_date FROM schedule_order').all())
+    old.prepare('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)').run(r.ship, r.voyage, r.mot, r.loading_delivery_date, r.due_date);
+  const floor = (await fleetRunway(d1(old), T)).findings;
+  assert.equal(floor.length, 3, 'no port column: the same three findings');
+  assert.ok(floor.every((f) => f.add_qty === 13), 'and every one on the +3 floor');
+  console.log('ok - runwayDb: the toner spare comes from the open order\'s loading port and the next one: +4 for the');
+  console.log('     last order before Europe and for an order loading abroad, +3 at home; no port column, +3');
+}
