@@ -10,8 +10,9 @@ emails of 24–25 Sep; his review of the 12 Oct email (`email stats
 10122026.xlsx`); his marked sample of 13 Oct (`Ray method sample 12 Oct 2026
 RG.xlsx`, 2 Y / 24 N, Q1–Q5); his September OBP export of 14 Oct; his email
 answers of 14 Oct, and his evening reply the same day with the October-to-date
-files (Brain recg5ns8T9RAGYj0G on OBP, recA7ZeRI6XXhmk7f on Ray). Every quote
-below is verbatim.
+files. Every quote below is verbatim. Where each piece lives in the Brain is
+in §8; the master record there carries the same rules with the WHY behind
+each, so another app asking the Brain gets the reason, not only the rule.
 
 ## 1. The logic, in one paragraph
 
@@ -174,3 +175,31 @@ Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
   not a third email.
 - Measure his method on real data before building it; the sample workbook
   (26 rows, Y/N) got a clear answer in a day.
+
+## 8. Where this lives in the Brain (Airtable base app2OLcIjn8LgYWW9)
+
+Audited 15 Oct by asking the Brain eight questions another app would ask.
+Five came back right, Explorer misrouted, Quest's December dates were absent,
+and the toner buffer came back as the HON spec's "+3 USA / +4 international"
+with the greater-of usage rule, asserted as fact. Written the same day:
+
+| Subject | Record | Holds |
+|---|---|---|
+| master (linked to Ray, OBP, Azamara, Quest, Explorer, Legend, Silhouette, MLS) | recgdbUC2oXqQD3Nl | the 21 rules with Ray's words verbatim and the WHY of each; §3–§7 of this file |
+| Ray Guerra | recos9rpgrWV2vKIo | usage = last month (12 Oct), zero → average |
+| Ray Guerra | recHQ7zBmxgex5JU4 | toner buffer and usage base: what runs (+3, last month), what the HON spec says, why it is contested, who settles it |
+| Ray Guerra | recA7ZeRI6XXhmk7f | his 14 Oct evening reply, as a log |
+| Ray Guerra | rec9FKkMs0RASmUgZ, recLgXfvZjZTvxcNp | 13 Oct marks; Quest and Explorer answers |
+| OBP | reczif0KBkKahwxUp | September export, the 49 sheet codes |
+| OBP | recg5ns8T9RAGYj0G | usage excludes transfers out; "Nov start" = October to date; lost rows |
+| Azamara | recWvxaA9Chii3qlu | lean by design (why), toner tolerance 0 days, the 25 Sep par table, paper tolerance still open |
+| Azamara Quest | recY1rlEU9cVTInyV | December dates, ETA = due date, Ray's update |
+| Explorer of the Seas | recKGZhsIIfAE56a0 | the 12 waste boxes with Hellmann |
+| Legend of the Seas | rec0HBisVxVVkIxN2 | October paper, transfers received, why not a new emergency |
+| Celebrity Silhouette | recRwSUI7xXaDDc6g | radiant white: three figures, with IT |
+| Grandeur of the Seas, Celebrity Millennium | recBoCAtqmZydti1P, rec02Gc19laa6jEfF | lost rows in the statistic |
+
+Rule for the next session: when Ray teaches something, write it on the
+SUBJECT it is about (the ship, OBP, Azamara), in his words, with the why, and
+add the record to this table and to §8 of the master record. A fact that only
+lives in a log on Ray's record is not found when a ship is asked about.
