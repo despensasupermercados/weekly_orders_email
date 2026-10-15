@@ -192,7 +192,7 @@ with the greater-of usage rule, asserted as fact. Written the same day:
 | Ray Guerra | rec9FKkMs0RASmUgZ, recLgXfvZjZTvxcNp | 13 Oct marks; Quest and Explorer answers |
 | OBP | reczif0KBkKahwxUp | September export, the 49 sheet codes |
 | OBP | recg5ns8T9RAGYj0G | usage excludes transfers out; "Nov start" = October to date; lost rows |
-| Azamara | written 15 Oct | lean by design (why), toner tolerance 0 days, the 25 Sep par table, paper tolerance still open |
+| Azamara | recWvxaA9Chii3qlu | lean by design (why), toner tolerance 0 days, the 25 Sep par table, paper tolerance still open |
 | Azamara Quest | recY1rlEU9cVTInyV | December dates, ETA = due date, Ray's update |
 | Explorer of the Seas | recKGZhsIIfAE56a0 | the 12 waste boxes with Hellmann |
 | Legend of the Seas | rec0HBisVxVVkIxN2 | October paper, transfers received, why not a new emergency |
