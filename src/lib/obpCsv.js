@@ -160,7 +160,33 @@ export const num = (v) => {
 // ignored.
 export function isObpCsvMail(names, _subject = '') {
   const n = String(names || '').toLowerCase();
-  return Object.values(CSV_FILES).some((f) => n.includes(f));
+  return Object.values(CSV_FILES).some((f) => n.includes(f)) || /click[^ ]*\.csv/.test(n);
+}
+
+// THE CLICKS FILE (Miguel, 15 Oct 2026: "task the system to send a daily click table, mono and color, month-to-date, to
+// obp-csv@cims.work every night"). Jerwin is adding it; its exact name and columns are not known yet, so it is KEPT
+// WHOLE, never parsed here, until the first real file is read and a reader is written against it. Without this the
+// first deliveries would be dropped: the route above keeps its three files only. The HR console's Score Card reads mono
+// from it later (mono share of PRESS clicks over a contract).
+export const CLICKS_RAW = 'weekly_obp_clicks_raw';
+export const CLICKS_MAX_CHARS = 1500000; // under D1's row ceiling; a longer file is kept cut and says so
+export const isClicksFile = (name) => /click/i.test(String(name || '')) && /\.csv$/i.test(String(name || ''));
+export async function keepClicks(hon, attachments, receivedAt) {
+  const files = (attachments || []).filter((a) => isClicksFile(a.filename));
+  if (!files.length) return { kept: [] };
+  await hon.prepare(`CREATE TABLE IF NOT EXISTS ${CLICKS_RAW} (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, filename TEXT NOT NULL, chars INTEGER NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, header TEXT, line_count INTEGER, text TEXT NOT NULL)`).run();
+  const kept = [];
+  for (const a of files) {
+    const t = textOf(a);
+    const cut = t.length > CLICKS_MAX_CHARS;
+    const body = cut ? t.slice(0, CLICKS_MAX_CHARS) : t;
+    const header = (t.split(/\r?\n/, 1)[0] || '').slice(0, 1000);
+    const lines = t ? t.split(/\r?\n/).filter((l) => l.trim()).length : 0;
+    await hon.prepare(`INSERT INTO ${CLICKS_RAW} (received_at, filename, chars, truncated, header, line_count, text) VALUES (?,?,?,?,?,?,?)`)
+      .bind(receivedAt, String(a.filename), t.length, cut ? 1 : 0, header, lines, body).run();
+    kept.push({ filename: a.filename, lines, chars: t.length, truncated: cut, header });
+  }
+  return { kept };
 }
 
 export function mapInventory(rows, snapshotDate) {

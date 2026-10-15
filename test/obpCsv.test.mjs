@@ -428,3 +428,24 @@ console.log('ok - obp csv: a truncated file is refused, and a newer mirror snaps
   assert.equal(odb.prepare(`SELECT COUNT(*) n FROM sqlite_master WHERE name='obp_order'`).get().n, 0);
   console.log('ok - obp csv: receipts land in weekly_obp_order (ISO dates, batched, deduped, pruned), never in obp_order');
 }
+
+// THE CLICKS FILE (15 Oct 2026): kept whole on arrival, whatever its columns, so the first deliveries are not lost
+// before a reader exists. Never parsed here, never written into the three weekly_obp_* tables.
+{
+  const { keepClicks, isClicksFile, CLICKS_RAW, CLICKS_MAX_CHARS } = await import('../src/lib/obpCsv.js');
+  const cdb = new DatabaseSync(':memory:');
+  const ch = d1(cdb);
+  assert.ok(isObpCsvMail('daily_clicks_mtd.csv', ''), 'a clicks-only mail is the OBP CSV route');
+  assert.ok(isClicksFile('Clicks_MTD_2026-10-15.CSV') && !isClicksFile('clicks.xlsx') && !isClicksFile('onboardinventory.csv'));
+  const csv = 'ShipName,MachineSerial,ClicksDate,Color,Mono,IsMfd\nQuantum,AC58011021001,10/14/2026,51234,3120,False\nQuantum,A0ED021000123,10/14/2026,12,8800,True\n';
+  const r = await keepClicks(ch, [{ filename: 'daily_clicks_mtd.csv', content: csv }, { filename: 'onboardinventory.csv', content: 'x' }], '2026-10-15T05:00:00Z');
+  assert.equal(r.kept.length, 1);
+  assert.equal(r.kept[0].lines, 3);
+  const row = cdb.prepare(`SELECT filename, header, line_count, truncated, text FROM ${CLICKS_RAW}`).get();
+  assert.equal(row.header, 'ShipName,MachineSerial,ClicksDate,Color,Mono,IsMfd');
+  assert.equal(row.text, csv, 'kept byte for byte');
+  const big = await keepClicks(ch, [{ filename: 'clicks.csv', content: 'a'.repeat(CLICKS_MAX_CHARS + 10) }], '2026-10-16T05:00:00Z');
+  assert.equal(big.kept[0].truncated, true, 'a file over the ceiling is kept cut and says so');
+  assert.deepEqual((await keepClicks(ch, [{ filename: 'onboardinventory.csv', content: 'x' }], 'x')).kept, []);
+  console.log('ok - obp csv: the clicks file is kept whole on arrival, ahead of any reader');
+}
