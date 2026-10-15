@@ -19,7 +19,7 @@ import { renderWeekly } from './lib/email.js';
 import { runWatchdog, rememberFindings, markMailed, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderChase, chaseSubject, CHASE_TEMPLATE } from './lib/chaseEmail.js';
 import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
-import { isObpCsvMail, ingestObpCsv } from './lib/obpCsv.js';
+import { isObpCsvMail, ingestObpCsv, keepClicks, CSV_FILES } from './lib/obpCsv.js';
 import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 import { fleetCoverage } from './lib/coverage.js';
@@ -434,6 +434,17 @@ async function ingestEmail(message, env) {
     // of them and stalls (see obpSource.js). Written to this Worker's own
     // weekly_obp_* tables; the obp_* mirror is never touched.
     if (isObpCsvMail(names, subject)) {
+      // The clicks file (15 Oct 2026) is kept whole first, so a failure below can never cost it.
+      let clicks = { kept: [] };
+      try { clicks = await keepClicks(env.HON, attachments, new Date().toISOString()); }
+      catch (e) { clicks = { kept: [], error: String((e && e.message) || e).slice(0, 160) }; }
+      const clickNote = clicks.error ? ` | CLICKS NOT KEPT: ${clicks.error}`
+        : clicks.kept.length ? ` | clicks kept: ${clicks.kept.map((k) => `${k.filename} ${k.lines} lines${k.truncated ? ' (CUT)' : ''}`).join(', ')}` : '';
+      const lower = names.toLowerCase();
+      if (!Object.values(CSV_FILES).some((f) => lower.includes(f))) {
+        await logIngest(env, message.from, `OBP CSV: clicks only${clickNote} | files: ${names.slice(0, 200)}`);
+        return;
+      }
       const r = await ingestObpCsv(env.HON, attachments, iso(new Date()));
       await logIngest(env, message.from,
         `OBP CSV: inventory ${r.inventory} rows` +
@@ -443,7 +454,7 @@ async function ingestEmail(message, env) {
         (r.orders_unchanged ? ' (unchanged since the earlier mail, not rewritten)' : '') +
         (r.orders_newest_received ? `, newest ReceivedDate ${r.orders_newest_received}` : '') +
         (r.month_open ? ` | ${r.month_open} rows kept as this month's opening count` : '') +
-        (r.refused.length ? ` | REFUSED: ${r.refused.join('; ')}` : '') +
+        (r.refused.length ? ` | REFUSED: ${r.refused.join('; ')}` : '') + clickNote +
         ` | files: ${r.seen.join(', ')}`);
       return;
     }
