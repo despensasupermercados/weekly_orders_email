@@ -221,7 +221,10 @@ with the greater-of usage rule, asserted as fact. Written the same day:
 | master (linked to Ray, OBP, Azamara, Quest, Explorer, Legend, Silhouette, MLS) | recgdbUC2oXqQD3Nl | the 21 rules with Ray's words verbatim and the WHY of each; §3–§7 of this file |
 | Ray Guerra | recos9rpgrWV2vKIo | usage = last month (12 Oct), zero → average |
 | Ray Guerra | recaGgsFr06d19lkW | his 15 Oct answers, verbatim: HON on last month only; +3 home, +4 long-haul, which order carries it, why; supersedes recHQ7zBmxgex5JU4 |
-| HON App | rec5oo0n9yYhLNV8O | the two HON rules Ray changed on 15 Oct, for cims-hon to build |
+| HON App | recEIkmG8f2bUtmlx | the two HON rules Ray changed, how HON must read `weekly_ordering_rules`, not built yet; supersedes rec5oo0n9yYhLNV8O |
+| CIMS Inventory Ordering Logic | recqc78LiXJVT7q9C | every rule in force on 16 Oct, Azamara flat +3 and why, which app runs what |
+| Azamara | rec1SHsMoq28vNZoY | the flat +3 toner spare, why, and that Ray has not re-confirmed it |
+| Master Loading Schedule (MLS) | recclKCEU98iyK6ey | the loading port sets the spare; port spellings; where to add a new port |
 | CIMS Inventory Reporting | recb4DTsdbDHjoYZW | the +4 the 7 Sep records waited for is built (PR #46) |
 | Ray Guerra | recA7ZeRI6XXhmk7f | his 14 Oct evening reply, as a log |
 | Ray Guerra | rec9FKkMs0RASmUgZ, recLgXfvZjZTvxcNp | 13 Oct marks; Quest and Explorer answers |

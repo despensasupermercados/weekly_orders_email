@@ -114,8 +114,9 @@ source, the date, and what it supersedes.
 - `docs/RAY-LOGIC.md` (rules table and section 5), `docs/DECISIONS.md` (15 Oct
   entries), `src/lib/runway.js` (`deliveryClass`, `tonerSpare`),
   `src/lib/orderingRules.js` (the published table).
-- Brain: recaGgsFr06d19lkW (Ray's answers), rec5oo0n9yYhLNV8O and the 16 Oct
-  record on HON App, recgdbUC2oXqQD3Nl (master model, rules 1 and 10).
+- Brain: recaGgsFr06d19lkW (Ray's answers), recEIkmG8f2bUtmlx (HON App, this
+  change), recqc78LiXJVT7q9C (rules in force), rec1SHsMoq28vNZoY (Azamara flat
+  +3), recclKCEU98iyK6ey (loading ports), recgdbUC2oXqQD3Nl (master model).
 
 ## Prompt to paste into a cims-hon session
 
