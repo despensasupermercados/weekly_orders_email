@@ -183,6 +183,21 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 
 Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
 
+### Shared with other apps (16 Oct)
+
+Miguel, 16 Oct: the settled rules "should be cross pollinated to the Brain and
+across the apps that use it". The weekly email now publishes them every night
+into `weekly_ordering_rules` in the shared D1 database (`src/lib/orderingRules.js`):
+usage basis, the toner spare (+3, +4, leaving and returning, Azamara flat +3,
+unknown port), paper, radiant white, waste box, MFD par, and every port with
+its delivery class. Values come from the same functions the email runs, so the
+table cannot disagree with the email. Other apps read it; none keeps a copy.
+
+HON (cims-hon) still runs the old usage and buffer. Push access to cims-hon was
+refused on 16 Oct, so the change is written as a brief with a paste-in prompt:
+`docs/cims-hon-ordering-rules-handoff-2026-10-16.md`. The INV_04 and INV_06
+canonical docs need the same update; they sit with cims-hon.
+
 ## 7. How to work with Ray (standing rules, learned the hard way)
 
 - Nothing goes to Ray that our own data can answer (Brain recZfDnmkCrqfODd3).

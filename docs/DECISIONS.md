@@ -7,6 +7,24 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **16 Oct — the ordering rules are published for every app (Miguel).** "should
+  be cross pollinated to the Brain and across the apps that use it .. coz is
+  very important." A second copy of the port lists in cims-hon would be a
+  second definition that drifts, so the definition stays in this repo and
+  `src/lib/orderingRules.js` writes it each night (06:00 UTC cron, before the
+  night check) into `weekly_ordering_rules` in D1: usage, toner spare, paper,
+  radiant, waste box, MFD par, 113 port classes; 133 rows. Values are
+  generated from `tonerSpare()`, `deliveryClass()` and the constants, never
+  retyped. Rows from an earlier night are removed only after every write that
+  night succeeded, so the table is never empty. A failure is logged and never
+  stops the night check. First load done by hand on 16 Oct (133 rows). Four
+  fault injections, each caught.
+- **16 Oct — HON's change is written, not made.** Push access to cims-hon was
+  refused by the session's permission check. The brief and a paste-in prompt
+  are in `docs/cims-hon-ordering-rules-handoff-2026-10-16.md`: last-month
+  usage, the +3/+4 spare read from `weekly_ordering_rules`, Azamara flat +3,
+  seven acceptance cases, and the INV_04 / INV_06 update.
+
 - **15 Oct — print-shop toner spare: +3 at home, +4 long-haul (Ray).** Asked
   whether the spare is 3 everywhere, Ray: "USA ships have a 3+ rule and
   international ships have a 4+ rule, if a ship is leaving the USA, you will
