@@ -14,6 +14,7 @@ import { quantityFindings, rulesFrom } from './lib/quantity.js';
 import { anomalyFindings } from './lib/anomaly.js';
 import { unscheduledGaps } from './lib/fallback.js';
 import { fleetRunway } from './lib/runwayDb.js';
+import { publishOrderingRules } from './lib/orderingRules.js';
 import { inService } from './lib/fleetStatus.js';
 import { renderWeekly } from './lib/email.js';
 import { runWatchdog, rememberFindings, markMailed, INGEST_SOURCE } from './lib/watchdog.js';
@@ -567,6 +568,13 @@ export default {
     }
 
     if (event.cron === NIGHTLY_CRON) {
+      // Publish the ordering rules for HON and the Brain to read (orderingRules.js).
+      // Silent when it works; a failure is logged and never stops the night check.
+      try {
+        await publishOrderingRules(env.HON, today);
+      } catch (e) {
+        await logIngest(env, 'cron', `ordering rules not published: ${String((e && e.message) || e)}`);
+      }
       const report = await runWatchdog(env, today, { repair: true });
       // "ADMIN_KEY set/unset" is presence only, never the value. A session
       // cannot reach this Worker's HTTP surface, so this line is the only way

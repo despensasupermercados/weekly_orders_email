@@ -283,8 +283,8 @@ const ceil = (n) => Math.max(0, Math.ceil(n - 1e-9));
 // not on file, so the list is extended by a person rather than guessed by code.
 // Names are compared on letters only: the schedule writes "PORTEVERGLADES",
 // "Miami" and "VENICE (RAVENNA)".
-const portKey = (p) => String(p || '').toUpperCase().replace(/[^A-Z]/g, '');
-const MONTHLY_PORTS = new Set([
+export const portKey = (p) => String(p || '').toUpperCase().replace(/[^A-Z]/g, '');
+export const MONTHLY_PORTS = new Set([
   // USA, Puerto Rico and the US Virgin Islands
   'MIAMI', 'PORTMIAMI', 'PORTEVERGLADES', 'FORTLAUDERDALE', 'PORTCANAVERAL', 'CAPECANAVERAL',
   'TAMPA', 'GALVESTON', 'NEWORLEANS', 'BAYONNE', 'CAPELIBERTY', 'NEWYORK', 'BROOKLYN', 'BOSTON',
@@ -298,7 +298,7 @@ const MONTHLY_PORTS = new Set([
   'NASSAU', 'WILLEMSTAD', 'CURACAO', 'BRIDGETOWN', 'BARBADOS', 'CASTRIES', 'BASSETERRE',
   'STJOHNS', 'FORTDEFRANCE', 'POINTEAPITRE',
 ]);
-const LONG_HAUL_PORTS = new Set([
+export const LONG_HAUL_PORTS = new Set([
   // Europe
   'CIVITAVECCHIA', 'ROME', 'BARCELONA', 'VENICE', 'RAVENNA', 'VENICERAVENNA', 'LISBON',
   'SOUTHAMPTON', 'DOVER', 'COPENHAGEN', 'AMSTERDAM', 'ROTTERDAM', 'PIRAEUS', 'ATHENS', 'ISTANBUL',
