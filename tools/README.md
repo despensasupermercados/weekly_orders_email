@@ -16,15 +16,20 @@ Only this Worker's own `weekly_*` tables are ever written that way.
 The email plans on LAST MONTH's usage (Ray, 12 Oct 2026), from Ray's export
 when it is loaded, otherwise from our own counts. Each month:
 
-1. **Confirm the month-open was kept.** The 06:00 UTC cron copies OBP's count
-   on the 1st into `weekly_obp_month_open`:
-   `SELECT COUNT(*) FROM weekly_obp_month_open WHERE snapshot_date = '2026-11-01'`
-   (about 3,550 rows, 51 ships).
+1. **Confirm the month-open was kept.** The OBP CSV ingest copies the first
+   export of each month into `weekly_obp_month_open` (`keepMonthOpen`,
+   `src/lib/obpCsv.js`):
+   `SELECT snapshot_date, COUNT(*), COUNT(DISTINCT ship) FROM weekly_obp_month_open WHERE substr(snapshot_date, 1, 7) = '2026-11' GROUP BY 1`
+   (about 3,550 rows, 51 ships). It is normally dated the 1st. If the 1st's
+   export did not arrive, it is the first day that did, say the 2nd. Use that
+   date in step 3 and say so in the report. A count taken a day late carries a
+   day of usage, so a few more Endings will fail to match.
 2. **Find Ray's export.** It comes as three workbooks, Azamara, Royal and
    Celebrity, with one sheet per ship named by a two-letter code. His file names are loose.
    On 14 Oct he sent "Nov start OBP.xlsx", which covered 1 to 14 October.
    Put the three files in an empty folder of their own.
-3. **Save the month-open as JSON**, the 1st AFTER the month being loaded:
+3. **Save the month-open as JSON**, the one AFTER the month being loaded
+   (the date step 1 found):
    `SELECT ship, part_number, on_hand FROM weekly_obp_month_open WHERE snapshot_date = '2026-11-01'`.
    The D1 tool saves a large result to a file. That file can be used as it is.
 4. **Run the loader:**
@@ -44,7 +49,8 @@ when it is loaded, otherwise from our own counts. Each month:
 **If the export has not come by the 1st**, load our own figure so Monday plans
 on the month that ended. Then ask Ray for the file; when it arrives, step 4
 replaces these rows (same key, source `ray-export`).
-Preview with the SELECT alone, then run the whole statement:
+Preview with the SELECT alone, then run the whole statement. The two dates are
+the month-opens step 1 finds for October and November:
 
 ```sql
 INSERT OR REPLACE INTO weekly_obp_consumption
