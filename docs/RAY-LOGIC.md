@@ -80,6 +80,16 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 - **Our print-shop toner quantity** (one cycle + 3, ignoring stock aboard at
   landing). Freedom yellow: we said 6, he said 0 with 14 aboard. Spectrum: we
   said 21, his method 9. The +3 is his; the base is not yet his. Open.
+- **Planning floor-model toner on last month (19 Oct, spot check).** Asked to
+  check five ships of the 19 Oct email, he called 14 Azamara floor-model rows
+  okay ("consumption is okay"; Quest "vessel will be USA in December, to be
+  restocked if required"). His "Average usage" column reads about 1 a month
+  per item; the email had planned on OBP's last month, 2 to 5. He confirmed
+  the five real gaps the email had (Pursuit TNP75, TN324BK at more than 2 a
+  month; Onward waste box, TN-328C, TN-328M) and added none: "Based on
+  consumption changes, we may need to order some floor model toners for 2
+  ships, we can target that at end of month based on final usage." Not a
+  rejection of rule 1 in words; it is open (§5.5).
 
 ## 4. Data facts about OBP and the MLS, each proven on data
 
@@ -136,6 +146,19 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 12. **The engine's Legend call held.** 12 Oct email: Legend 8.5x11, 2 cases,
     44 a month, dry 14 Oct, 40 landing 22 Oct. OBP's statistic on 14 Oct:
     Beginning 23, Ending 0, Usage 23; live count 1.
+13. **On floor-model toner, OBP's month figure and the counts can disagree.**
+    Quest TN324BK, September: OBP's export says 4 used; the counts say 1
+    (4 aboard end of August + 2 received − 5 aboard end of September). At 1
+    or 2 a month one such month is the whole signal. Found on 19 Oct; not
+    asked yet — it rides on the §5.5 question.
+14. **Ray's "Oct-26" column is stock already received.** 19 Oct spot check,
+    Onward: TNP75 2, TN-328K 3, 11x17 20, 8.5x11 17 were received on 6 Oct
+    (`weekly_obp_order`) and are inside the 19 Oct counts (TNP75 on hand 2).
+    Added on top, Onward's TNP75 reads 4 instead of 2. Put to him in the
+    19 Oct draft.
+15. **The 19 Oct replay matches production.** The repo's `fleetRunway` on the
+    19 Oct data gives 26 rows; the email's subject said "27 to fix" (26 + 1
+    with no schedule).
 
 ## 5. Contradictions the Brain still carries — for Miguel to settle
 
@@ -166,15 +189,44 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    recDbvRjsKBigZeoJ ("3-month rolling average, +25%") describes HON's
    engine. OBP's statistic is a reported figure per ship and month. Do not
    conflate them.
+5. **Floor-model toner usage — OPEN 19 Oct.** Rule 1 says last month (12 Oct;
+   for HON 15 Oct, "last month number only"). His 19 Oct spot check plans
+   Azamara floor-model toner on an average of about 1 (Brain
+   recE26GAvkxgfOsbk). Measured the same day with the repo's engine on the
+   19 Oct data, changing one thing — floor-model toner and bottles planned on
+   the last 6 months (start count + receipts − end count, ÷ 6), paper and
+   C4070 toner unchanged:
 
-## 6. Open with Ray (14 Oct, evening)
+   | | now (last month) | 6-month, floor-model only |
+   |---|---|---|
+   | rows in the email | 26 | 18 |
+   | Ray's 5 gaps shown | 5 | 5 |
+   | rows Ray called okay, still listed | 20 | 12 |
+   | new rows anywhere in the fleet | — | 0 |
+
+   Gone: Quest TN324BK, TN324C, TN324M, TN514C, TN514M, TN514Y; Onward
+   TN-328K; Pursuit TN324M. Still listed against his "okay": Quest TNP75 (dry
+   10 Dec, delivery 18 Dec), Onward TNP75 and TNP79K, and the WX-103 rows,
+   which have only four months of counts, so the 6-month figure cannot form
+   yet and they stay on the current rule. Planning on his flat 1 instead
+   would miss two of his own five gaps (Onward TN-328C, TN-328M), which he
+   flagged on the August–September jump; a 6-month window still sees it.
+   One sample, 25 rows, one week: a replay of 12 Oct is the second check
+   before anything is built. Question drafted for Miguel to send; nothing
+   changed in code.
+
+## 6. Open with Ray (14 Oct, evening; updated 19 Oct)
+
+- Floor-model toner and bottles (TN324, TN514, TNP75, TNP79, TN-328, WX-103):
+  plan on the 6-month average instead of last month, with paper and C4070
+  toner staying on last month (§5.5)? Drafted 19 Oct for Miguel to send, with
+  the Onward "Oct-26" check (§4.14).
 
 - The complete October export in the first week of November. He sent October
   to date on 14 Oct under the name "Nov start" (§4.10); the ask is re-stated
   in the reply drafted the same evening.
 - Quest's 11 lines (70 units, ordered 8 Oct): "order is updated to
-  12/18/2026". The 14 Oct CSV still carries 8 Dec; verify at the 19 Oct
-  check-in, one line back to him only if it has not moved.
+  12/18/2026". DONE 19 Oct: the export reads 18 Dec (Brain reckf7iZlrCvHgXrc).
 - Silhouette radiant white: with IT on his side. Nothing to ask until IT
   answers; the engine plans on OBP's 1, which matches his own judgement.
 - Azamara's toner spare: the September spec says a flat +3; his 15 Oct answer
@@ -231,7 +283,13 @@ with the greater-of usage rule, asserted as fact. Written the same day:
 | OBP | reczif0KBkKahwxUp | September export, the 49 sheet codes |
 | OBP | recg5ns8T9RAGYj0G | usage excludes transfers out; "Nov start" = October to date; lost rows |
 | Azamara | recWvxaA9Chii3qlu | lean by design (why), toner tolerance 0 days, the 25 Sep par table, paper tolerance still open |
+| Azamara | recE26GAvkxgfOsbk | 19 Oct spot check: floor-model usage about 1, gaps ordered at month end "based on final usage", the 6-month measurement, NOT a rule yet |
 | Azamara Quest | recY1rlEU9cVTInyV | December dates, ETA = due date, Ray's update |
+| Azamara Quest | reckf7iZlrCvHgXrc | the 11 lines read 18 Dec (19 Oct) |
+| Azamara Quest | recvgLzaIhBHDVtUZ | 19 Oct: okay until its December–January USA calls; the two risks he names (OBP not updated daily, C4070 down) |
+| Azamara Onward | recTCdb4khMZPl5Mw | 19 Oct: waste box, TN-328C, TN-328M need an order; the "Oct-26" column already received (log) |
+| Azamara Pursuit | recuSBO6AOyVhi3Ok | 19 Oct: TNP75 needs an order; TN324BK okay only at 2 a month (log) |
+| Legend of the Seas | recJj6S7PV15K9mip | 19 Oct: okay, paper alignment starts 22 Oct (log) |
 | Explorer of the Seas | recKGZhsIIfAE56a0 | the 12 waste boxes with Hellmann |
 | Legend of the Seas | rec0HBisVxVVkIxN2 | October paper, transfers received, why not a new emergency |
 | Celebrity Silhouette | recRwSUI7xXaDDc6g | radiant white: three figures, with IT |

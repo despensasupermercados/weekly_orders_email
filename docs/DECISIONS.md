@@ -7,6 +7,19 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **19 Oct — floor-model toner stays on last month until Ray answers
+  (measured, not built).** Ray spot-checked five ships of the 19 Oct email.
+  He confirmed all five real gaps it listed and added none, but called 14
+  Azamara floor-model rows okay, at about 1 a month against the email's 2 to
+  5 (OBP last month). Re-running the repo's engine on the 19 Oct data with
+  floor-model toner and bottles on a 6-month count-based average (paper and
+  C4070 unchanged): 26 rows → 18, his 5 gaps kept, 8 of his "okay" rows gone,
+  no new row in the fleet. His flat 1 would have missed two of his own gaps.
+  Not built because it departs from his written rule ("last month", 12 and
+  15 Oct) on one week of evidence: one question to him first, drafted for
+  Miguel, then a 12 Oct replay as the second check. Detail in
+  `docs/RAY-LOGIC.md` §5.5; Brain recE26GAvkxgfOsbk.
+
 - **16 Oct — the ordering rules are published for every app (Miguel).** "should
   be cross pollinated to the Brain and across the apps that use it .. coz is
   very important." A second copy of the port lists in cims-hon would be a
