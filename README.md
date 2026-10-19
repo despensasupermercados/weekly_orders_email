@@ -15,10 +15,18 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 ## What Miguel has to do
 
-Nothing, as of 25 Sep 2026. All three are done. Decisions, lessons and the backlog that was
-left unbuilt on purpose are in [`docs/DECISIONS.md`](docs/DECISIONS.md); the two documents
-handed to the `cims-hon` session (the store-then-process spec for `obp@cims.work`, and the
-SL/AT sender-code and frozen-workbook handoff) are beside it.
+As of 19 Oct 2026, two things:
+- Send Ray the floor-model toner question drafted on 19 Oct
+  ([`docs/RAY-LOGIC.md`](docs/RAY-LOGIC.md) §5.5 and §6).
+- Get HON's change made by a `cims-hon` session. This repo's sessions were refused push
+  access to cims-hon on 16 Oct. The brief and a prompt to paste are in
+  [`docs/cims-hon-ordering-rules-handoff-2026-10-16.md`](docs/cims-hon-ordering-rules-handoff-2026-10-16.md).
+
+The three setup steps below are done. How Ray decides what a ship orders, with his words and
+the reasons, is in [`docs/RAY-LOGIC.md`](docs/RAY-LOGIC.md). Decisions, lessons and the
+backlog left unbuilt on purpose are in [`docs/DECISIONS.md`](docs/DECISIONS.md). The monthly
+usage load and the replay harness are in [`tools/README.md`](tools/README.md). The documents
+handed to the `cims-hon` session are in `docs/`.
 
 1. ~~Set `ADMIN_KEY` as a Worker secret~~ **Done, verified 17 Sep**: every 06:00Z night-check
    line in `ingest_log` ends `| ADMIN_KEY set` (presence only, never the value). Until it is
