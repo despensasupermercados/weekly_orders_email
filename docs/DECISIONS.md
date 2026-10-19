@@ -262,6 +262,10 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Standing rules for anyone touching this repo
 
+- Ray's monthly export is loaded with `tools/ray-export.mjs`, never by hand;
+  it refuses a month in progress. A rule change is proven with
+  `tools/replay.mjs` on the fleet's own data before it ships. Both, and the
+  fallback SQL for a month Ray has not sent, are in `tools/README.md`.
 - Develop on `claude/tender-cannon-jpjazq`; every PR merged to `main` deploys
   through Workers Builds. Create and merge your own PRs (Miguel's standing
   instruction) once tests pass and the deploy is verified.
@@ -355,6 +359,18 @@ Read the live log before the code, then the code with a fault injected.
 
 ## Backlog — not built, on purpose
 
+- **The average drops a negative month and keeps its inflated neighbour
+  (found 19 Oct).** A receipt booked in one month and counted on the shelf in
+  the next (§4.4 of RAY-LOGIC.md) shows as one high month and one negative
+  one; `runwayDb.js` drops the negative as a typo and averages the high one.
+  Quest TNP75 on 19 Oct: August 6, September −3 (dropped), so the email
+  printed "5 average of 2 months"; the counts over the same three months say
+  2 a month (3 aboard end of June + 6 received − 3 aboard end of September).
+  It matters wherever the email plans on the average, which is when last
+  month reads zero (Quest TN514Y: average 3, counts 1.3). The cure is the
+  count-based window measured in RAY-LOGIC.md §5.5 (start count + receipts −
+  end count), so it waits on Ray's answer to that question rather than
+  being fixed twice. Fleet-wide impact not measured.
 - Fleet-wide toner wording. "If you cannot wait" is softer than Ray's
   zero-tolerance for toner. A possible line: "Toner cannot reach zero. Tell
   your Inventory Manager today." Needs Miguel's yes; not a bug.
