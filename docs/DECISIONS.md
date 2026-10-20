@@ -7,6 +7,22 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **20 Oct — the clicks file is READ, not kept as text.** Jerwin's daily
+  `clicks.csv` (Miguel's 15 Oct ask) first came on 19 Oct, 12:27 UTC: 44,559
+  lines, 2.48 MB, `ShipID,EquipmentID,ClicksDate,Color,Mono,TotalColor,
+  TotalMono,is_mfd`, every machine every day from 1 Jan 2026 (year to date,
+  not month to date). Color / Mono are the day's clicks (they equal the day's
+  meter change); is_mfd 0 = press. `keepClicks` had cut it at 1.5 MB (24 Jun)
+  and would have kept a cut 1.5 MB copy every day. `src/lib/obpClicks.js`
+  reads the whole attachment into `weekly_obp_clicks` (one row per machine per
+  day, every column, MFDs too; first load everything, then the last 31 days
+  before the newest held); the raw table keeps a receipt only, or the text of a
+  file it refuses. The file names ships by OBP's ShipID only: `obpShips.js` is
+  OBP's own tblShips (IT's 9 Jul extract, SharePoint `5. IT/Data extract
+  request/ships.csv`, Royal + Celebrity). ShipIDs 1, 2, 3 and 50 are not in it
+  (likely the Azamara hulls, not given) and are kept with ship NULL, never
+  guessed. Reader: the HR console's Score Card mono factor (presses only).
+
 - **19 Oct — floor-model toner stays on last month until Ray answers
   (measured, not built).** Ray spot-checked five ships of the 19 Oct email.
   He confirmed all five real gaps it listed and added none, but called 14

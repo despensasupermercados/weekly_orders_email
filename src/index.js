@@ -20,7 +20,8 @@ import { renderWeekly } from './lib/email.js';
 import { runWatchdog, rememberFindings, markMailed, INGEST_SOURCE } from './lib/watchdog.js';
 import { renderChase, chaseSubject, CHASE_TEMPLATE } from './lib/chaseEmail.js';
 import { scheduleStatuses, needsSchedule } from './lib/scheduleStatus.js';
-import { isObpCsvMail, ingestObpCsv, keepClicks, CSV_FILES } from './lib/obpCsv.js';
+import { isObpCsvMail, ingestObpCsv, CSV_FILES } from './lib/obpCsv.js';
+import { ingestClicks, clicksNote } from './lib/obpClicks.js';
 import { obpSource } from './lib/obpSource.js';
 import { renderWatchdog } from './lib/watchdogEmail.js';
 import { fleetCoverage } from './lib/coverage.js';
@@ -435,12 +436,11 @@ async function ingestEmail(message, env) {
     // of them and stalls (see obpSource.js). Written to this Worker's own
     // weekly_obp_* tables; the obp_* mirror is never touched.
     if (isObpCsvMail(names, subject)) {
-      // The clicks file (15 Oct 2026) is kept whole first, so a failure below can never cost it.
-      let clicks = { kept: [] };
-      try { clicks = await keepClicks(env.HON, attachments, new Date().toISOString()); }
-      catch (e) { clicks = { kept: [], error: String((e && e.message) || e).slice(0, 160) }; }
-      const clickNote = clicks.error ? ` | CLICKS NOT KEPT: ${clicks.error}`
-        : clicks.kept.length ? ` | clicks kept: ${clicks.kept.map((k) => `${k.filename} ${k.lines} lines${k.truncated ? ' (CUT)' : ''}`).join(', ')}` : '';
+      // The clicks file (15 Oct 2026; read into weekly_obp_clicks since 20 Oct, obpClicks.js) goes first, so a
+      // failure below can never cost it.
+      let clickNote = '';
+      try { clickNote = clicksNote(await ingestClicks(env.HON, attachments, new Date().toISOString())); }
+      catch (e) { clickNote = ` | CLICKS NOT READ: ${String((e && e.message) || e).slice(0, 160)}`; }
       const lower = names.toLowerCase();
       if (!Object.values(CSV_FILES).some((f) => lower.includes(f))) {
         await logIngest(env, message.from, `OBP CSV: clicks only${clickNote} | files: ${names.slice(0, 200)}`);

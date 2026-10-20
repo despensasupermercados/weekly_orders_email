@@ -164,17 +164,18 @@ export function isObpCsvMail(names, _subject = '') {
 }
 
 // THE CLICKS FILE (Miguel, 15 Oct 2026: "task the system to send a daily click table, mono and color, month-to-date, to
-// obp-csv@cims.work every night"). Jerwin is adding it; its exact name and columns are not known yet, so it is KEPT
-// WHOLE, never parsed here, until the first real file is read and a reader is written against it. Without this the
-// first deliveries would be dropped: the route above keeps its three files only. The HR console's Score Card reads mono
-// from it later (mono share of PRESS clicks over a contract).
+// obp-csv@cims.work every night"). Until the first real file arrived (19 Oct 2026) its columns were unknown, so it was
+// KEPT as text here. It is now READ by obpClicks.js into weekly_obp_clicks; keepClicks is what keeps a file the reader
+// refuses (a changed format), so it can be read and the reader fixed. The HR console's Score Card reads mono from the
+// table (mono share of PRESS clicks over a contract).
 export const CLICKS_RAW = 'weekly_obp_clicks_raw';
 export const CLICKS_MAX_CHARS = 1500000; // under D1's row ceiling; a longer file is kept cut and says so
 export const isClicksFile = (name) => /click/i.test(String(name || '')) && /\.csv$/i.test(String(name || ''));
+export const CLICKS_RAW_DDL = `CREATE TABLE IF NOT EXISTS ${CLICKS_RAW} (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, filename TEXT NOT NULL, chars INTEGER NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, header TEXT, line_count INTEGER, text TEXT NOT NULL)`;
 export async function keepClicks(hon, attachments, receivedAt) {
   const files = (attachments || []).filter((a) => isClicksFile(a.filename));
   if (!files.length) return { kept: [] };
-  await hon.prepare(`CREATE TABLE IF NOT EXISTS ${CLICKS_RAW} (id INTEGER PRIMARY KEY AUTOINCREMENT, received_at TEXT NOT NULL, filename TEXT NOT NULL, chars INTEGER NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, header TEXT, line_count INTEGER, text TEXT NOT NULL)`).run();
+  await hon.prepare(CLICKS_RAW_DDL).run();
   const kept = [];
   for (const a of files) {
     const t = textOf(a);
@@ -423,7 +424,7 @@ export async function fillFromMirror(hon, snapshotDate, wrote = { inventory: tru
   return { inventory: n(inv), intransit: n(tr) };
 }
 
-const textOf = (a) => {
+export const textOf = (a) => {
   if (a.content && a.content.length) return a.content;
   if (a.bytes) return new TextDecoder('utf-8').decode(a.bytes);
   return '';
