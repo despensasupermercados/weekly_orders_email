@@ -7,6 +7,24 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **22 Oct — floor-model toner plans on six months (Ray).** Asked whether
+  floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79, TN-328,
+  WX-103) should plan on the 6-month average while paper and C4070 toner stay
+  on last month: "yes. six month average would work better for the floor models toners." Built in
+  `runwayDb.js`: (count at the end of the month before the six + every receipt
+  − count at the end of last month) ÷ 6, from `consumption_snapshot`. Counts at
+  both ends cancel a receipt booked in one month and shelved in the next. An
+  item without all seven month-end counts, or whose window nets to zero or
+  less, stays on last month. Which items: `isFloorModel()` in `runway.js`, the
+  same test the par top-up uses. The email prints "1.2 a month over 6 months ·
+  3 last month (OBP) · we plan on the 6-month average", and the headline keeps
+  the decimal. Published in `weekly_ordering_rules` (usage /
+  floor_model_*). Replays before merging: 19 Oct identical to the measurement
+  (18 rows); 12 Oct 28 → 21 and 22 Oct 29 → 21, no new rows, only Azamara
+  floor-model rows change, his five confirmed gaps kept. 14 fault injections
+  caught (`test/floorModelRate.test.mjs`). Also answered: his month columns
+  are deliveries beside the day's count; nothing was double-counted
+  (RAY-LOGIC.md §4.14).
 - **20 Oct — the clicks file is READ, not kept as text.** Jerwin's daily
   `clicks.csv` (Miguel's 15 Oct ask) first came on 19 Oct, 12:27 UTC: 44,559
   lines, 2.48 MB, `ShipID,EquipmentID,ClicksDate,Color,Mono,TotalColor,
@@ -24,7 +42,7 @@ connector. Newest at the top of each list. Dates are 2026.
   guessed. Reader: the HR console's Score Card mono factor (presses only).
 
 - **19 Oct — floor-model toner stays on last month until Ray answers
-  (measured, not built).** Ray spot-checked five ships of the 19 Oct email.
+  (measured, not built).** SUPERSEDED 22 Oct (above): he said yes. Ray spot-checked five ships of the 19 Oct email.
   He confirmed all five real gaps it listed and added none, but called 14
   Azamara floor-model rows okay, at about 1 a month against the email's 2 to
   5 (OBP last month). Re-running the repo's engine on the 19 Oct data with
@@ -383,10 +401,10 @@ Read the live log before the code, then the code with a fault injected.
   printed "5 average of 2 months"; the counts over the same three months say
   2 a month (3 aboard end of June + 6 received − 3 aboard end of September).
   It matters wherever the email plans on the average, which is when last
-  month reads zero (Quest TN514Y: average 3, counts 1.3). The cure is the
-  count-based window measured in RAY-LOGIC.md §5.5 (start count + receipts −
-  end count), so it waits on Ray's answer to that question rather than
-  being fixed twice. Fleet-wide impact not measured.
+  month reads zero (Quest TN514Y: average 3, counts 1.3). Since 22 Oct
+  floor-model items plan on the count-based six-month window, which cannot
+  do this; it remains for paper, radiant and print-shop toner when last
+  month reads zero. Fleet-wide impact on those not measured.
 - Fleet-wide toner wording. "If you cannot wait" is softer than Ray's
   zero-tolerance for toner. A possible line: "Toner cannot reach zero. Tell
   your Inventory Manager today." Needs Miguel's yes; not a bug.

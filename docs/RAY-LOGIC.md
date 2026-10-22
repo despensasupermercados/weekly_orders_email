@@ -35,8 +35,9 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 
 | Rule | Ray's words | When | Code |
 |---|---|---|---|
-| Usage = last month's consumption | "the usage used was from last month, then the statistics shows what is expected to be ordered in the coming months. subject to change based on actual consumption." | 12 Oct | `runwayDb.js` `RATE`; email "we plan on last month" |
+| Usage = last month's consumption (paper, radiant, print-shop toner) | "the usage used was from last month, then the statistics shows what is expected to be ordered in the coming months. subject to change based on actual consumption." | 12 Oct | `runwayDb.js` `RATE`; email "we plan on last month" |
 | A zero month → plan on the average | "correct" (Q3, Quest WX-103: 2, 2, then 0) | 13 Oct | `RATE` = `COALESCE(NULLIF(lastm,0), avg)` |
+| Floor-model toner and waste bottles plan on six months | asked whether TN324, TN514, TNP75, TNP79, TN-328 and WX-103 should plan on the 6-month average while paper and C4070 toner stay on last month: "yes. six month average would work better for the floor models toners." | 22 Oct | `runwayDb.js` six-month window (`FLOOR_MODEL_MONTHS`, `isFloorModel`); email "we plan on the 6-month average"; falls back to last month without seven month-end counts |
 | OBP's usage figure over our computed one | the September export, one sheet per ship | 14 Oct | `weekly_obp_consumption`; email "(OBP)" |
 | Every ordered delivery counts, late ones too | Oasis, 40 cases due 11 Oct still in transit: "no paper order required" | 12 Oct | `transit` CTE, late = today; email "overdue since" |
 | Act when the shelf empties before the next delivery the open order could beat | Q4 above | 13 Oct | `runsOutFirst` (PR #35, #39) |
@@ -88,8 +89,8 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
   the five real gaps the email had (Pursuit TNP75, TN324BK at more than 2 a
   month; Onward waste box, TN-328C, TN-328M) and added none: "Based on
   consumption changes, we may need to order some floor model toners for 2
-  ships, we can target that at end of month based on final usage." Not a
-  rejection of rule 1 in words; it is open (§5.5).
+  ships, we can target that at end of month based on final usage." Settled
+  22 Oct (§5.5): floor-model toner now plans on six months.
 
 ## 4. Data facts about OBP and the MLS, each proven on data
 
@@ -149,13 +150,17 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 13. **On floor-model toner, OBP's month figure and the counts can disagree.**
     Quest TN324BK, September: OBP's export says 4 used; the counts say 1
     (4 aboard end of August + 2 received − 5 aboard end of September). At 1
-    or 2 a month one such month is the whole signal. Found on 19 Oct; not
-    asked yet — it rides on the §5.5 question.
-14. **Ray's "Oct-26" column is stock already received.** 19 Oct spot check,
-    Onward: TNP75 2, TN-328K 3, 11x17 20, 8.5x11 17 were received on 6 Oct
-    (`weekly_obp_order`) and are inside the 19 Oct counts (TNP75 on hand 2).
-    Added on top, Onward's TNP75 reads 4 instead of 2. Put to him in the
-    19 Oct draft.
+    or 2 a month one such month is the whole signal. Found on 19 Oct;
+    settled with §5.5 on 22 Oct: floor-model items plan on six months of
+    counts, where one such month cannot dominate.
+14. **Ray's month columns are deliveries beside the day's count, not stock
+    added to it.** 19 Oct spot check, Onward: his "Oct-26" column (TNP75 2,
+    TN-328K 3, 11x17 20, 8.5x11 17) was received on 6 Oct and is inside the
+    19 Oct counts. Asked whether he had added it on top, 22 Oct: "the count
+    was never 4, the count was capture from that date and historical number
+    of deliveries for the upcoming months". His Current Inventory is the count
+    on the day; the month columns show the deliveries, past and coming, beside
+    it. Our concern was unfounded.
 15. **The 19 Oct replay matches production.** The repo's `fleetRunway` on the
     19 Oct data gives 26 rows; the email's subject said "27 to fix" (26 + 1
     with no schedule).
@@ -189,7 +194,7 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    recDbvRjsKBigZeoJ ("3-month rolling average, +25%") describes HON's
    engine. OBP's statistic is a reported figure per ship and month. Do not
    conflate them.
-5. **Floor-model toner usage — OPEN 19 Oct.** Rule 1 says last month (12 Oct;
+5. **Floor-model toner usage — SETTLED 22 Oct.** Rule 1 says last month (12 Oct;
    for HON 15 Oct, "last month number only"). His 19 Oct spot check plans
    Azamara floor-model toner on an average of about 1 (Brain
    recE26GAvkxgfOsbk). Measured the same day with the repo's engine on the
@@ -211,16 +216,27 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    yet and they stay on the current rule. Planning on his flat 1 instead
    would miss two of his own five gaps (Onward TN-328C, TN-328M), which he
    flagged on the August–September jump; a 6-month window still sees it.
-   One sample, 25 rows, one week: a replay of 12 Oct is the second check
-   before anything is built. Question drafted for Miguel to send; nothing
-   changed in code.
+   One sample, 25 rows, one week: a replay of 12 Oct was the second check
+   before building.
 
-## 6. Open with Ray (14 Oct, evening; updated 19 Oct)
+   Ray, 22 Oct, asked the question: "yes. six month average would work better for the floor models toners."
+   Built the same day: floor-model toner and bottles plan on the six-month
+   count figure, paper and C4070 toner stay on last month. Checked by replay
+   before merging:
+   - 19 Oct data: identical to the measurement above (18 rows).
+   - 12 Oct data: 28 rows → 21, no new row; the 7 that drop are all Azamara
+     floor-model rows he called okay on 19 Oct; every paper and C4070 row is
+     unchanged, so nothing he kept on 12 Oct is lost.
+   - 22 Oct live data (preview of Monday 26 Oct): 29 → 21, no new row; his 5
+     gaps all still show (Pursuit TNP75 more urgent: dry 9 Nov, not 22 Nov);
+     the 13 paper and C4070 rows unchanged.
+   Without seven month-end counts (WX-103 today) or when the window nets to
+   zero or less, an item stays on last month.
 
-- Floor-model toner and bottles (TN324, TN514, TNP75, TNP79, TN-328, WX-103):
-  plan on the 6-month average instead of last month, with paper and C4070
-  toner staying on last month (§5.5)? Drafted 19 Oct for Miguel to send, with
-  the Onward "Oct-26" check (§4.14).
+## 6. Open with Ray (14 Oct, evening; updated 22 Oct)
+
+Answered 22 Oct: floor-model toner on six months (§5.5, built); his month
+columns are deliveries beside the day's count (§4.14).
 
 - The complete October export in the first week of November. He sent October
   to date on 14 Oct under the name "Nov start" (§4.10); the ask is re-stated

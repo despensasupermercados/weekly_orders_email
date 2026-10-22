@@ -15,9 +15,7 @@ The purpose is narrow: stop paying emergency shipping because a printer forgot t
 
 ## What Miguel has to do
 
-As of 19 Oct 2026, two things:
-- Send Ray the floor-model toner question drafted on 19 Oct
-  ([`docs/RAY-LOGIC.md`](docs/RAY-LOGIC.md) §5.5 and §6).
+As of 22 Oct 2026, one thing (Ray answered the floor-model question on 22 Oct; it is built):
 - Get HON's change made by a `cims-hon` session. This repo's sessions were refused push
   access to cims-hon on 16 Oct. The brief and a prompt to paste are in
   [`docs/cims-hon-ordering-rules-handoff-2026-10-16.md`](docs/cims-hon-ordering-rules-handoff-2026-10-16.md).

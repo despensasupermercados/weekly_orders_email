@@ -246,6 +246,16 @@ const PAPER_20LB = /20 LBS .* PAPER/i;
 const RADIANT = /RADIANT/i;
 const AZAMARA_STOCK = /CARD STOCK|GLOSS TEXT/i;
 
+// Floor-model (MFD) toner and waste bottles: the items that top up to the OBP
+// par, and since 22 Oct 2026 the items planned on six months of usage
+// (runwayDb.js). One definition for both, so the quantity rule and the rate
+// rule can never disagree about which items they cover.
+export const FLOOR_MODEL_MONTHS = 6; // Ray 22 Oct 2026: "six month average would work better for the floor models toners"
+export const isFloorModel = (description) => {
+  const d = String(description || '');
+  return MFD_TONER.test(d) || MFD_WASTE.test(d);
+};
+
 const ceil = (n) => Math.max(0, Math.ceil(n - 1e-9));
 
 // ---------------------------------------------------------------------------
@@ -359,7 +369,7 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
     const { spare, note } = tonerSpare({ brand, port, nextPort });
     return { qty: Math.max(0, need + spare - coming), basis: `${need} used in ${cycleDays} days + ${spare} spare${note ? ` (${note})` : ''}` };
   }
-  if (MFD_TONER.test(desc) || MFD_WASTE.test(desc)) {
+  if (isFloorModel(desc)) {
     if (parQty == null) return null; // Ray: MFD lines follow the OBP par; no par, no number
     const par = Number(parQty);
     // A par below one cycle's usage is a par problem, not an ordering problem.
