@@ -20,7 +20,7 @@
 
 import {
   tonerSpare, deliveryClass, MONTHLY_PORTS, LONG_HAUL_PORTS,
-  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_PAR,
+  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_PAR, FLOOR_MODEL_MONTHS,
 } from './runway.js';
 
 export const RULES_TABLE = 'weekly_ordering_rules';
@@ -38,7 +38,11 @@ export function orderingRules() {
     ['meta', 'read_me', 'Published nightly by weekly_orders_email from the code the Monday email runs. Read it; do not copy it. docs/RAY-LOGIC.md has every rule with its source.', 'Miguel 16 Oct 2026: cross-pollinate to the Brain and every app that uses it'],
     ['meta', 'port_key', 'compare ports on uppercase letters only: "VENICE (RAVENNA)" -> VENICERAVENNA, "Port Everglades" -> PORTEVERGLADES', 'runway.js portKey'],
 
-    ['usage', 'plan_on', 'last_month', 'Ray 12 Oct 2026: "the usage used was from last month"; 15 Oct 2026, for HON: "using the last month number only and guide the adjustments for the future based on that"'],
+    ['usage', 'plan_on', 'last_month', 'Ray 12 Oct 2026: "the usage used was from last month"; 15 Oct 2026, for HON: "using the last month number only and guide the adjustments for the future based on that". Paper, radiant and print-shop toner; floor-model toner see floor_model_plan_on'],
+    ['usage', 'floor_model_plan_on', 'six_month_average', 'Ray 22 Oct 2026, asked whether floor-model toner and waste bottles should plan on the 6-month average while paper and C4070 toner stay on last month: "yes. six month average would work better for the floor models toners."'],
+    ['usage', 'floor_model_items', 'MFD toner TN324, TN514, TNP48, TNP75, TNP79, TN-328; MFD waste WX-103, WB-P05, waste toner bottles, "WASTE TONER BOX" without (DG3). Not the C4070 waste box, not TN619/TN634', 'runway.js isFloorModel'],
+    ['usage', 'floor_model_months', String(FLOOR_MODEL_MONTHS), 'Ray 22 Oct 2026'],
+    ['usage', 'floor_model_formula', `(count at the end of the month before the ${FLOOR_MODEL_MONTHS} + every receipt in them - count at the end of last month) / ${FLOOR_MODEL_MONTHS}, from consumption_snapshot. All ${FLOOR_MODEL_MONTHS + 1} month-end counts required, and the result must be above 0; otherwise the item plans on last month`, 'runwayDb.js; counts at both ends cancel a receipt booked in one month and shelved the next'],
     ['usage', 'zero_month', 'trailing_average', 'Ray 13 Oct 2026 (Q3, Quest WX-103 2, 2, then 0): "correct"'],
     ['usage', 'average_role', 'shown beside last month as a view for dry dock and quiet months; not a floor', 'Ray 15 Oct 2026: "the average should be viewed more for dry dock or quite months as the usage can pickup at any time"'],
     ['usage', 'last_month_source', 'OBP Consumption Statistic (weekly_obp_consumption) where Ray\'s export has the month, else month-open + receipts - next month-open', 'Ray 14 Oct 2026: OBP usage excludes transfers out ("10 cases transferred to Legend")'],

@@ -417,7 +417,30 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // number, printing it twice is noise on a line the crew has to read at the
 // start of a shift, and the pair carries no information the headline does not.
 // The whole point of the pair is the gap between them.
+//
+// FLOOR-MODEL TONER NAMES ITS OWN RULE. Since 22 Oct 2026 (Ray: "six month
+// average would work better for the floor models toners") those items plan on
+// six months of counts, so the pair is that figure and last month, and the
+// line says which one was used. Shown to one decimal under 10: at 1 or 2 a
+// month, "1.7" and "2" are different shelves by Christmas.
+// The headline figure. A six-month rate keeps its decimal under 10, the
+// same number the line below it prints; anything else rounds as it always
+// has. Rounded whole, a floor-model item at 0.3 a month would read "you use
+// 0 a month" beside an empty date.
+const shownRate = (f) => (f.rate_six != null && Number(f.rate_six) < 10
+  ? String(Math.round(Number(f.rate_six) * 10) / 10)
+  : String(Math.round(f.rate)));
+
 function rateBasis(f) {
+  if (f.rate_six != null) {
+    const six = Number(f.rate_six);
+    const sixText = shownRate(f);
+    const lastSix = f.rate_last == null ? null : Math.round(f.rate_last);
+    if (lastSix === Math.round(six) && Math.abs(six - lastSix) < 0.05) return '';
+    const lastSixText = f.rate_last == null ? 'no figure for last month' : `${lastSix} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
+    return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
+      + `${sixText} a month over 6 months &middot; ${lastSixText} &middot; we plan on the 6-month average</div>`;
+  }
   const last = f.rate_last == null ? null : Math.round(f.rate_last);
   const avg = f.rate_avg == null ? null : Math.round(f.rate_avg);
   if (avg == null || last === avg) return '';
@@ -547,7 +570,7 @@ ${tiles}
   <td style="font-family:${FB};font-size:13px;font-weight:600;color:${NAVY};">${who}</td>
   <td align="right"><span style="font-family:${FB};font-size:10px;font-weight:700;letter-spacing:.5px;color:${fg};background:${bg};padding:2px 6px;white-space:nowrap;">${label}</span></td>
   </tr></table>
-  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board${arriveFirst(f)} &middot; you use <strong>${Math.round(f.rate)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
+  <div style="font-family:${FB};font-size:12px;color:${BODY};padding-top:3px;"><strong>${f.on_hand}</strong> on board${arriveFirst(f)} &middot; you use <strong>${shownRate(f)}</strong> a month &middot; empty by <strong>${fmtDowFull(f.stockout)}</strong></div>
   ${rateBasis(f)}
   ${addLine(f, fg)}
 </td></tr></table>

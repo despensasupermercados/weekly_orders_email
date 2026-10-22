@@ -53,6 +53,17 @@ reach the ship, not the flag on the port.
    - A port on neither list: +3, and say the port is not on file.
 3. **Do not copy the port lists.** Read them (rule 4).
 
+**Added 22 Oct: floor-model toner plans on six months.** Ray, asked whether
+floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79, TN-328,
+WX-103) should plan on the 6-month average while paper and C4070 toner stay on
+last month: "yes. six month average would work better for the floor models toners." The weekly email does this
+from 22 Oct: (count at the end of the month before the six + every receipt −
+count at the end of last month) ÷ 6, and last month when the seven month-end
+counts are not all on file or the window nets to zero or less. If HON plans
+those items, it reads `usage / floor_model_plan_on`, `floor_model_items`,
+`floor_model_months` and `floor_model_formula` from `weekly_ordering_rules`
+rather than writing its own.
+
 ## 4. Read the rules from D1; never keep a second copy
 
 `weekly_orders_email` publishes the rules every night (06:00 UTC cron) into

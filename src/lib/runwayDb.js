@@ -8,7 +8,7 @@
 
 import { inService } from './fleetStatus.js';
 import { require_, columnsOf } from './schema.js';
-import { runsOutFirst, withQuantity, byDueDate } from './runway.js';
+import { runsOutFirst, withQuantity, byDueDate, isFloorModel, FLOOR_MODEL_MONTHS } from './runway.js';
 import { obpSource, CSV_CONSUMPTION } from './obpSource.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
@@ -38,6 +38,28 @@ export const HORIZON_DAYS = 120;
 // 12 Oct, used 2 in July, 2 in August, 0 in September. Planning on zero would
 // have removed it from the email when stock was lowest.
 const RATE = 'COALESCE(NULLIF(a.lastm, 0), a.avg3)';
+
+// FLOOR-MODEL TONER IS PLANNED ON SIX MONTHS, NOT ONE. Ray, 22 Oct 2026, asked
+// whether floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79,
+// TN-328, WX-103) should plan on the 6-month average while paper and C4070
+// toner stay on last month: "yes. six month average would work better for the
+// floor models toners."
+// Why: they move one or two a month, so one month is noise. His 19 Oct spot
+// check of the email called 14 such rows okay at about 1 a month where we had
+// planned on OBP's last month, 2 to 5. Quest TN324BK, September: OBP said 4
+// used, the counts said 1 (4 aboard + 2 received - 5 aboard).
+// The figure is the counts over the six complete months: the count at the end
+// of the month before them, plus every receipt, less the count at the end of
+// last month, over 6. Unlike an average of monthly figures it cannot be
+// inflated by a receipt booked in one month and shelved in the next: both
+// ends are counts, so the slip cancels. Measured on the 19 Oct data before it
+// was built: 26 rows became 18, all five gaps Ray confirmed still showed, and
+// no row appeared that was not there before.
+// It needs all seven month-end counts. Without them (an item new to the ship,
+// WX-103 with four months on file), or when the window nets to zero or less
+// (a miscount), the item stays on the rule above: a hole in the history is
+// never read as a ship that stopped printing.
+const SIX_MONTHS = FLOOR_MODEL_MONTHS;
 
 // Which schedule rows carry an order the ship can add to. The same three
 // clauses as due.js and fallback.js; `t` is the schedule_order alias.
@@ -145,6 +167,19 @@ export async function fleetRunway(hon, today, opts = {}) {
         FROM obpm m
        WHERE NOT EXISTS (SELECT 1 FROM agg0 a0 WHERE a0.ship = m.ship AND a0.part_number = m.part_number)
     )
+    -- Six months of counts for the floor-model rate (SIX_MONTHS above): the
+    -- count at the end of ?5, every receipt after it, the count at the end of
+    -- last month. Only when all seven month-end rows are on file.
+    , six AS (
+      SELECT ship, part_number,
+             (MAX(CASE WHEN month = ?5 THEN on_hand END)
+              + SUM(CASE WHEN month > ?5 THEN COALESCE(receipts, 0) ELSE 0 END)
+              - MAX(CASE WHEN month = ?3 THEN on_hand END)) / ${SIX_MONTHS}.0 six_avg
+        FROM consumption_snapshot
+       WHERE month >= ?5 AND month <= ?3
+       GROUP BY ship, part_number
+      HAVING COUNT(DISTINCT month) = ${SIX_MONTHS + 1}
+    )
     -- Every open line, with its Excel-serial ETA already a date. Read once.
     -- A LATE DELIVERY IS STILL A DELIVERY. A line still in the in-transit
     -- export with its ETA already past has not been received yet: it is late,
@@ -186,6 +221,7 @@ export async function fleetRunway(hon, today, opts = {}) {
            -- disagreement cost a round trip. Carry the inputs.
            ${RATE} rate,
            a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months, a.last_src rate_source,
+           z.six_avg,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
            -- not an empty shelf: the export writes real zeros (1,445 of 3,481
            -- rows on 16 Sep 2026), so a missing figure is never "0 on board".
@@ -232,12 +268,24 @@ export async function fleetRunway(hon, today, opts = {}) {
       JOIN par p ON p.ship = a.ship AND p.part_number = a.part_number
       LEFT JOIN nxt n ON n.ship = a.ship AND n.part_number = a.part_number
       LEFT JOIN open_order o ON o.ship = a.ship AND o.rn = 1
+      LEFT JOIN six z ON z.ship = a.ship AND z.part_number = a.part_number
      WHERE ${ITEM_FILTER}
-       AND ${RATE} > 0`;
+       AND (${RATE} > 0 OR z.six_avg > 0)`;
 
   const prevMonth = monthsBack(month, 1);
+  const sixFrom = monthsBack(month, SIX_MONTHS + 1);
 
-  const rows = (await hon.prepare(sql).bind(month, fromMonth, prevMonth, today).all()).results || [];
+  // The rate each item is planned on. Floor-model items take the six-month
+  // figure when it exists and is positive; everything else, and a floor-model
+  // item without one, takes last month (or the average) as before. An item
+  // whose chosen rate is not positive is not judged, as before.
+  const rows = ((await hon.prepare(sql).bind(month, fromMonth, prevMonth, today, sixFrom).all()).results || [])
+    .map((r) => {
+      const six = r.six_avg == null ? null : Number(r.six_avg);
+      const onSix = isFloorModel(r.description) && six > 0;
+      return { ...r, rate: onSix ? six : Number(r.rate) || 0, rate_six: onSix ? six : null };
+    })
+    .filter((r) => r.rate > 0);
   if (!rows.length) {
     return {
       ran: false, findings: [], measured: 0,
@@ -279,6 +327,8 @@ export async function fleetRunway(hon, today, opts = {}) {
         rate_avg: r.rate_avg == null ? null : Number(r.rate_avg),
         rate_avg_months: r.rate_avg_months == null ? null : Number(r.rate_avg_months),
         rate_source: r.rate_source || 'calc',
+        // Set only when the item was planned on six months (floor-model).
+        rate_six: r.rate_six,
       }, {
         brand: r.brand,
         parQty: r.par_qty == null ? null : Number(r.par_qty),

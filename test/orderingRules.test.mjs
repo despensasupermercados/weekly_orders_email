@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 process.emitWarning = () => {};
 const { DatabaseSync } = await import('node:sqlite');
 import { orderingRules, publishOrderingRules, RULES_TABLE } from '../src/lib/orderingRules.js';
-import { tonerSpare, deliveryClass, MONTHLY_PORTS, LONG_HAUL_PORTS, TONER_BUFFER, TONER_BUFFER_LONG_HAUL, PAPER_PALLET } from '../src/lib/runway.js';
+import { tonerSpare, deliveryClass, MONTHLY_PORTS, LONG_HAUL_PORTS, TONER_BUFFER, TONER_BUFFER_LONG_HAUL, PAPER_PALLET, FLOOR_MODEL_MONTHS } from '../src/lib/runway.js';
 
 function d1(db) {
   return {
@@ -39,6 +39,8 @@ const get = (rows, rule, key) => rows.find((r) => r.rule === rule && r.key === k
   assert.equal(get(rows, 'toner_spare', 'unclassified_port'), '3');
   assert.equal(get(rows, 'usage', 'plan_on'), 'last_month');
   assert.equal(get(rows, 'usage', 'zero_month'), 'trailing_average');
+  assert.equal(get(rows, 'usage', 'floor_model_plan_on'), 'six_month_average', 'Ray 22 Oct');
+  assert.equal(get(rows, 'usage', 'floor_model_months'), String(FLOOR_MODEL_MONTHS));
   assert.equal(get(rows, 'paper', 'royal_celebrity'), String(PAPER_PALLET));
   // Every port the code knows, with the class the code gives it.
   const ports = rows.filter((r) => r.rule === 'port_class');
