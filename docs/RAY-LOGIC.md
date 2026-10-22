@@ -299,11 +299,16 @@ with the greater-of usage rule, asserted as fact. Written the same day:
 | OBP | reczif0KBkKahwxUp | September export, the 49 sheet codes |
 | OBP | recg5ns8T9RAGYj0G | usage excludes transfers out; "Nov start" = October to date; lost rows |
 | Azamara | recWvxaA9Chii3qlu | lean by design (why), toner tolerance 0 days, the 25 Sep par table, paper tolerance still open |
-| Azamara | recE26GAvkxgfOsbk | 19 Oct spot check: floor-model usage about 1, gaps ordered at month end "based on final usage", the 6-month measurement, NOT a rule yet |
+| Azamara | recfxNc6RGme0dtvM | 22 Oct: floor-model toner plans on six months; Ray's words, why, the formula, the replays. Supersedes recE26GAvkxgfOsbk (19 Oct spot check, archived) |
 | Azamara Quest | recY1rlEU9cVTInyV | December dates, ETA = due date, Ray's update |
 | Azamara Quest | reckf7iZlrCvHgXrc | the 11 lines read 18 Dec (19 Oct) |
 | Azamara Quest | recvgLzaIhBHDVtUZ | 19 Oct: okay until its December–January USA calls; the two risks he names (OBP not updated daily, C4070 down) |
 | Azamara Onward | recTCdb4khMZPl5Mw | 19 Oct: waste box, TN-328C, TN-328M need an order; the "Oct-26" column already received (log) |
+| Azamara Onward | recCrhMSkmYHf9d9i | 22 Oct: his month columns are deliveries beside the day's count, not added to it (log) |
+| CIMS Inventory Ordering Logic | recvtmYPtdlApfYnT | 22 Oct: the usage rules in force, floor-model on six months |
+| HON App | recrEauAhYMMZJtBj | 22 Oct: the floor-model item for HON (log) |
+| CIMS Brain | reckcPfpDyAI632St | how a session writes to the Brain so the next one finds it (log, 19 Oct) |
+| CIMS Inventory Reporting | rechmpDFj9dZc4rnz | the session handoff, READ FIRST; aliases "weekly orders email", "weekly_orders_email" route here (19 Oct) |
 | Azamara Pursuit | recuSBO6AOyVhi3Ok | 19 Oct: TNP75 needs an order; TN324BK okay only at 2 a month (log) |
 | Legend of the Seas | recJj6S7PV15K9mip | 19 Oct: okay, paper alignment starts 22 Oct (log) |
 | Explorer of the Seas | recKGZhsIIfAE56a0 | the 12 waste boxes with Hellmann |
