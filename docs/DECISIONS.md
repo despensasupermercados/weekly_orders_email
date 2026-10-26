@@ -7,6 +7,24 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **26 Oct — a fully scheduled fleet is clean, not COULD NOT CHECK.** The
+  first Monday on the floor-model rule went out at 12:02 UTC: 21 rows, 7 of 7
+  ships mailed. 20 of the 21 matched the 22 Oct preview. The two paper
+  differences were real stock moving: Navigator 11x17 left the list when 40
+  arrived early (24 → 62 aboard), and Explorer 8.5x11 joined it (15 aboard,
+  dry 12 Nov, pallet 13 Nov). 8 lines planned on the 6-month average, all
+  Azamara floor-model. Paper and C4070 stayed on last month, and Ray's 5
+  gaps were all listed. The same email also printed COULD NOT CHECK over 48
+  of 48 ships examined. Schedules for Solstice (20 Oct, by email), Infinity
+  and Ascent (21 Oct, uploads) had been loaded since the 19 Oct run, so
+  every ship in the in-transit feed had a usable schedule. Which of the
+  three was schedule-free on 19 Oct cannot be read back: the old rows were
+  replaced. The schedule-free check had no ship to cover and reported
+  "did not run". It now counts the feed's dated rows. If there are none,
+  the check did not run. If there are some, the check ran and is clean (`allScheduled`), and the run logs that it is.
+  test/gapCheckAllScheduled.test.mjs, 8 of 8 fault injections caught. A
+  reason ending in a full stop no longer prints "..".
+
 - **22 Oct — floor-model toner plans on six months (Ray).** Asked whether
   floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79, TN-328,
   WX-103) should plan on the 6-month average while paper and C4070 toner stay

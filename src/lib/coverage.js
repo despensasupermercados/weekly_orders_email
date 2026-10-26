@@ -79,7 +79,7 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
   // a crew; see the header comment.
   const lines = [];
   for (const b of broken) {
-    lines.push(`The ${b.name} check did not run — ${b.reason}. Every ship reads clear on it, which may not be true.`);
+    lines.push(`The ${b.name} check did not run — ${String(b.reason).replace(/\.+$/, '')}. Every ship reads clear on it, which may not be true.`);
   }
   if (unexamined.length) {
     lines.push(`${unexamined.length} addressed ${unexamined.length === 1 ? 'ship was' : 'ships were'} not examined by any check: ${unexamined.join(', ')}.`);
