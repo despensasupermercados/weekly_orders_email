@@ -334,6 +334,7 @@ async function buildWeekly(env, today) {
     checks.push({ name: 'delivery gap', ran: Boolean(g.ran), reason: g.reason });
     if (g.ran) { gaps = g.findings; deliveries = g.deliveries || []; for (const sh of g.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `schedule-free check did not run: ${g.reason}`);
+    if (g.ran && g.allScheduled) await logIngest(env, 'cron', 'schedule-free check: every ship in the in-transit feed has a usable ordering schedule, none left for it to cover');
   } catch (e) {
     const reason = String(e && e.message || e);
     checks.push({ name: 'delivery gap', ran: false, reason });

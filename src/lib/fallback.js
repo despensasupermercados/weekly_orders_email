@@ -132,11 +132,25 @@ export async function unscheduledGaps(hon, today, opts = {}) {
      ORDER BY t.ship, date`).bind(today).all()).results || [];
 
   if (!rows.length) {
-    return {
-      ran: false, findings: [], ships: 0,
-      reason: 'no in-transit rows for any ship without an ordering schedule - either every ship ' +
-        'has a schedule, or the OBP feed is empty. Both are worth knowing; neither is "clean".',
-    };
+    // TWO STATES, TOLD APART. An empty feed means nothing was looked at. A
+    // feed whose every ship has a usable schedule means there is no ship for
+    // this check to cover: the schedule check covers them all. The second is
+    // clean. Reporting it as "did not run" put COULD NOT CHECK on the 26 Oct
+    // 2026 email, after schedules for Solstice (20 Oct), Infinity and Ascent
+    // (21 Oct) were loaded, over a run that had examined 48 of 48 ships.
+    const feed = await hon.prepare(`
+      SELECT COUNT(*) n
+        FROM ${src.intransit.table} t
+       WHERE t.snapshot_date = (SELECT MAX(snapshot_date) FROM ${src.intransit.table})
+         AND ${src.intransit.etaOk('t')}`).first();
+    if (!feed || !Number(feed.n)) {
+      return {
+        ran: false, findings: [], ships: 0,
+        reason: `the OBP in-transit feed (${src.intransit.table}) has no row with a landing date ` +
+          'in its latest snapshot, so no delivery could be looked at',
+      };
+    }
+    return { ran: true, reason: null, ships: 0, shipNames: [], deliveries: [], findings: [], allScheduled: true };
   }
 
   const shipNames = [...new Set(rows.map((r) => r.ship))].filter((sh) => inService(sh, today));
