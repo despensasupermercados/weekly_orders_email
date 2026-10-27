@@ -116,3 +116,26 @@ console.log('     never becomes a negative burn, and a date is reported instead 
   assert.ok(/about 2 still aboard/.test(q.add_basis), q.add_basis);
   console.log('ok - runway: what is aboard when the order lands is walked day by day, so a par top-up does not re-order stock already coming');
 }
+
+// THE SHELF LASTS PAST THE LANDING AFTER THE OPEN ORDER: THAT ORDER'S BUSINESS,
+// WITH OR WITHOUT A DELIVERY ALREADY COMING. Ray, 27 Oct 2026, on Radiance
+// paper (48 aboard, dry 10 Jan, order landing 14 Nov, next landing 5 Dec) and
+// Star's waste box (14 aboard, dry 19 Jan, order landing 6 Dec, next 20 Dec):
+// "Vessel has enough ... for November but needs to put order in December."
+// Until then the test ran only when a delivery landed first, so both rows
+// were pinned on the open order.
+{
+  const T = '2026-10-26';
+  const star = { ship: 'Star', item: 'WASTE TONER BOX (DG3)', onHand: 14, rate: 5, arrivals: [], today: T, nextLoading: null };
+  assert.equal(runsOutFirst({ ...star, orderLands: '2026-12-06', orderUntil: '2026-12-20' }), null,
+    'dry 19 Jan, the open order lands 6 Dec and the next 20 Dec: December\'s order carries it');
+  const f = runsOutFirst({ ...star, orderLands: '2026-12-06', orderUntil: '2027-01-31' });
+  assert.ok(f && f.stockout === '2027-01-19', 'with the next landing after the dry day, this order must carry it');
+  assert.ok(runsOutFirst({ ...star, orderLands: '2027-01-25', orderUntil: '2027-02-10' }), 'an order landing after the dry day is always a finding');
+  assert.ok(runsOutFirst({ ...star, orderLands: null, orderUntil: null }), 'no open order: still a finding, the manual-order ask');
+  // The order quantity on a waste box that IS due is 12, whatever is aboard.
+  const due = withQuantity({ ...f, description: 'WASTE TONER BOX (DG3)' }, { brand: 'Royal', due: '2026-11-15', lands: '2026-12-06', until: '2027-01-31', coming: 0, today: T, arrivals: [] });
+  assert.equal(due.add_qty, 12, 'the 12 piece rule');
+  assert.match(due.add_basis, /a waste box order is 12 pieces/);
+  console.log('ok - runway: an item that lasts past the landing after the open order waits for that order (Radiance, Star, 27 Oct); a waste box order is 12');
+}

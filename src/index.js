@@ -494,22 +494,30 @@ async function ingestEmail(message, env) {
       }
     }
 
-    // REFUSE A PARTIAL WRITE. A run that finds the file but parses nothing, or
-    // parses rows with no loading date, means the decode or the layout changed.
-    // Writing those rows corrupts schedule_order and the corruption is silent -
-    // a null loading date drops that ship out of the weekly email entirely,
-    // which is the exact failure this Worker exists to prevent.
-    // Log loudly and change nothing.
+    // NEVER WRITE A NULL LOADING DATE: it drops that ship out of the weekly
+    // email entirely, silently, which is the failure this Worker exists to
+    // prevent. A file that parses nothing, or loses the column on most rows,
+    // is a decode or layout change: log loudly and change nothing.
+    // A ROW WITH NO LOADING DATE IS SKIPPED, NOT A REASON TO REFUSE THE FILE.
+    // Until 27 Oct 2026 one such row refused the whole publication: Ray's
+    // "Azamara MLS 2025.xlsx" parsed 288 rows, 211 with a loading date, and
+    // nothing was written while Onward's schedule on file ran out on 3 Dec.
+    // A blank Ship Load Date on a loading not yet fixed is Ray's sheet as he
+    // keeps it, not a decode failure. A decode failure looks different: the
+    // column is lost on EVERY row, or most of them. So fewer than half usable
+    // still refuses; otherwise the usable rows are written and every skipped
+    // row is named, so the ask to Ray is "these dates", not "the file".
     const usable = rows.filter((r) => r.due_date && r.loading_delivery_date);
-    if (!rows.length || usable.length < rows.length) {
+    const skipped = rows.filter((r) => !(r.due_date && r.loading_delivery_date));
+    if (!rows.length || usable.length < rows.length / 2) {
       await logIngest(env, message.from,
-        `Azamara MLS REFUSED: parsed ${rows.length} rows, ${usable.length} usable ` +
-        `(need a loading date on every row). schedule_order left unchanged. ` +
+        `Azamara MLS REFUSED: parsed ${rows.length} rows, ${usable.length} with a loading date ` +
+        `(need at least half). schedule_order left unchanged. ` +
         `Body was ${raw.length} bytes, decoded to ${body.length}.` +
-        (workbooks.length
+        (workbooks.length && !parsedFrom
           ? ` ${workbooks.length} workbook attachment(s) read (${workbooks.map((w) => w.filename).join(', ')}) ` +
             `and none carried a row with SHIP + DELIVERY DATE TO BWS headers.`
-          : ''));
+          : workbooks.length ? ` Read from ${parsedFrom}.` : ''));
       return;
     }
 
@@ -517,6 +525,9 @@ async function ingestEmail(message, env) {
     const r = await saveAzamara(env.HON, usable, 'azamara-mls');
     await logIngest(env, message.from,
       `Azamara MLS (from ${parsedFrom}): ${r.written} rows, ${r.missing} with no PO` +
+      (skipped.length
+        ? ` | ${skipped.length} row(s) SKIPPED, no loading date: ${skipped.slice(0, 12).map((s) => `${s.ship} due ${s.due_date}`).join(', ')}${skipped.length > 12 ? ', ...' : ''}`
+        : '') +
       (notes.length ? ` | notes: ${notes.join(' // ')}` : ''));
 }
 

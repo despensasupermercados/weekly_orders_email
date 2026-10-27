@@ -144,7 +144,11 @@ console.log('     never at a container whose order already closed; no schedule -
   put('INSERT INTO par VALUES (?,?,?,?,?,?,?,?,?,?)', [['ship', 'Oasis', 'Royal', 'P11x17', '20 LBS 11 x 17 DG3 PAPER', 'Paper', null, 40, null, 'SPAR']]);
   put('INSERT INTO schedule_order (ship, voyage, mot, loading_delivery_date, due_date) VALUES (?,?,?,?,?)', [
     ['Oasis', 'OA1', 'HOTEL BIWEEKLY HOTEL', '2026-11-06', '2026-10-15'],
-    ['Oasis', 'OA2', 'HOTEL BIWEEKLY HOTEL', '2026-11-20', '2026-10-29']]);
+    // The landing after the open order sits past the dry day (22 Nov), so the
+    // 6 Nov order is the one that must carry the paper. With it on 20 Nov the
+    // paper would be that order's business and the control would read clean
+    // (Ray, 27 Oct 2026: "enough for November but needs to put order in December").
+    ['Oasis', 'OA2', 'HOTEL BIWEEKLY HOTEL', '2026-11-30', '2026-10-29']]);
   put('INSERT INTO obp_intransit VALUES (?,?,?,?,?)', [['Oasis', 'P11x17', serial('2026-12-04'), 40, T]]);
   const oasis = async () => (await fleetRunway(d1(ldb), T)).findings.filter((f) => f.ship === 'Oasis');
 

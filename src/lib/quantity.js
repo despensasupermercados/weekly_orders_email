@@ -28,14 +28,13 @@
 //     since 15 Oct 2026, from the schedule's loading ports (Ray: +3 within
 //     the month, +4 long-haul).
 //
-//  2. "WASTE BOX 12" IS A PAR, NOT AN ORDER QUANTITY. Ray confirmed the figure
-//     - 12 base, 24 permitted on high volume [recGzzU4LphovQ1ne, recarBWzogzbK7BFO,
-//     and INV_06 "Waste box is EXACTLY 12"] - so the number is no longer
-//     unsourced. But a par is what should be ABOARD, and this check reads an
-//     ORDER LINE. Comparing an order quantity to a par level is a unit error,
-//     and it would fire on every correctly sized top-up. Enabling waste_box
-//     needs the on-hand figure as well as the order, which this module does not
-//     read. Until then it stays off, and the reason is the unit, not the source.
+//  2. "WASTE BOX 12" IS AN ORDER QUANTITY (Ray, 27 Oct 2026: "the 12 piece
+//     rule"; round 8: "12 pieces per order no exceptions"), 24 permitted on
+//     high volume [recGzzU4LphovQ1ne, recarBWzogzbK7BFO]. The 10 Sep reading
+//     of 12 as a par was a session's, not Ray's. The check below still stays
+//     OFF: whether a waste box is NEEDED on an order depends on the shelf and
+//     the landing after it, which runway.js judges and this module does not
+//     read, so an order with no waste box is not a finding here.
 //
 // That split is deliberate. The alternative - shipping a plausible-looking
 // number - is exactly how this project produced four confident wrong answers in
