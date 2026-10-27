@@ -318,11 +318,12 @@ differently on purpose:
 - **Colour completeness** and **an order with no toner at all** are self-evident from the
   order lines. A four-colour press needs four colours. No external figure is required, so
   these are **always on**.
-- **The waste-box rule** stays **off**, and not because the number is unsourced. Ray
-  confirmed 12 base and 24 on high volume, and `INV_06` says the waste box is exactly 12.
-  It is off because 12 is a **par** — what should be *aboard* — and this check reads an
-  **order line**. Comparing an order quantity to a par level is a unit error that would fire
-  on every correctly sized top-up. Enabling it needs the on-hand figure too.
+- **The waste-box rule** stays **off** here. Ray's figure is an **order quantity**: "12
+  pieces per order no exceptions" (round 8), "the 12 piece rule" (27 Oct 2026), 24 permitted
+  on high volume. Whether a waste box is *needed* on an order depends on the shelf and the
+  landing after it, which the runway check judges (`runway.js`, `WASTE_BOX_ORDER`); an order
+  with no waste box is not a finding on its own. (A session read 12 as a par from 10 Sep to
+  27 Oct and the email topped up to it; Ray struck that on Star.)
 - **There is no USA/international buffer**, on purpose. The 9 Sep handover called the +3/+4 a
   nationality rule and an earlier version of this file repeated that. The CIMS Brain corrected
   it on 7 Sep 2026: transit time exists per port for 192 ports in days, and the buffer follows

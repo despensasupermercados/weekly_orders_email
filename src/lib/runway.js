@@ -151,10 +151,16 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
   //  - The order lands ON OR AFTER the empty day: a finding. A later planned
   //    delivery ends the dry spell, or the order does; either way the crew
   //    must hear it now ("if you cannot wait, tell your Inventory Manager").
-  if (first.length) {
-    if (!orderLands) return null;
-    if (orderLands < out && orderUntil && out > orderUntil) return null;
-  }
+  if (first.length && !orderLands) return null;
+  // THE SHELF LASTS PAST THE LANDING AFTER THIS ORDER: the later order's
+  // business, whether or not something else is on its way. Until 27 Oct 2026
+  // this test ran only when a delivery landed first, so an item with nothing
+  // coming was pinned on the open order however far off it ran dry: Radiance
+  // paper (48 aboard, dry 10 Jan, order landing 14 Nov) read "add a pallet",
+  // and Star's waste box (14 aboard, dry 19 Jan, order landing 6 Dec) read
+  // "add 5". Ray, 27 Oct, on both: "Vessel has enough ... for November but
+  // needs to put order in December." One rule, both cases.
+  if (orderLands && orderLands < out && orderUntil && out > orderUntil) return null;
   const refill = first.length ? after : (nextLoading || after);
   // What lands BEFORE the empty date and is already counted in it, so the
   // reader can check the date: 18 aboard at 16 a month is mid-November, and
@@ -209,14 +215,18 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 //    his 7 Sep answer on the five ports). Until 15 Oct the code used +3
 //    everywhere, waiting for the loading ports to be on file; they are, in
 //    schedule_order.loading_port.
-//  WASTE TONER BOX (C4070): 12 IS A PAR, NOT AN ORDER QUANTITY.
+//  WASTE TONER BOX (C4070): 12 IS THE ORDER, LIKE PAPER'S PALLET.
 //    "the exact order is 12 pieces per ship from all brands" - Ray, 4 Sep Q7;
+//    "12 pieces per order no exceptions" - Ray, round 8 [recarBWzogzbK7BFO];
 //    "12 base, 24 permitted on high volume" - Ray, round 9 [recGzzU4LphovQ1ne].
-//    The Brain corrected the reading on 10 Sep 2026 [recN47v4lrTkjQNpO]: 12 is
-//    what should be ABOARD, and comparing an order line to it is a unit error.
-//    So the waste box is a top-up to 12, like the MFD par rule - and this file
-//    repeated the corrected error once before the corrections field was read.
-//    A later Brain record beats an earlier document.
+//    A session read 12 as a PAR on 10 Sep 2026 [recN47v4lrTkjQNpO] and the
+//    email topped up to it: Star, 26 Oct, 14 aboard, "Add 5". Ray, 27 Oct:
+//    "System is still not understanding the 12 piece rule for waste toners"
+//    and, on Star, "Vessel has enough waste toner for November but needs to
+//    put order in December." So: when a waste box order is needed it is 12,
+//    and it is needed when the shelf runs dry before the landing after this
+//    one - the same test as every other item. Ray's words beat a session's
+//    reading of them.
 //  20 LB PAPER, Royal and Celebrity:
 //    "always ordered in a pallet of 40 cases" - Ray, 1 Sep Q19. Paper has no
 //    par; 40 is the order set.
@@ -234,7 +244,7 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 
 export const TONER_BUFFER = 3;      // Ray Q20; delivered within the month (US, Canada, Caribbean)
 export const TONER_BUFFER_LONG_HAUL = 4; // Ray 15 Oct: "international ships have a 4+ rule"
-export const WASTE_BOX_PAR = 12;    // Ray 4 Sep Q7 + round 9; a PAR per the Brain, 10 Sep
+export const WASTE_BOX_ORDER = 12;  // Ray 4 Sep Q7, round 8, round 9, 27 Oct: "12 pieces per order"
 export const PAPER_PALLET = 40;     // Ray 1 Sep Q19, Royal and Celebrity only
 export const RADIANT_MIN = 10;      // Ray 1 Sep Q20
 
@@ -362,8 +372,8 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
   const left = Math.max(0, Math.floor(Number(onHandAtLanding) || 0));
 
   if (WASTE_BOX_C4070.test(desc)) {
-    const aboard = left > 0 ? `, about ${left} still on board when it lands` : '';
-    return { qty: Math.max(0, WASTE_BOX_PAR - left - coming), basis: `waste box par is ${WASTE_BOX_PAR}${aboard}` };
+    if (coming >= need) return { qty: 0, basis: coming >= WASTE_BOX_ORDER ? `${WASTE_BOX_ORDER} waste boxes are already on that order` : `${coming} waste boxes already on that order` };
+    return { qty: WASTE_BOX_ORDER, basis: `a waste box order is ${WASTE_BOX_ORDER} pieces` };
   }
   if (PRINT_SHOP_TONER.test(desc)) {
     const { spare, note } = tonerSpare({ brand, port, nextPort });

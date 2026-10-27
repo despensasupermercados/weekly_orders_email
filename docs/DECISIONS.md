@@ -7,6 +7,45 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **27 Oct — Ray's answers to the 26 Oct email: the waste box is an order of
+  12, an item that lasts past the next landing waits for the next order, the
+  date join stands, and our MLS ingest refused his file.** Ray, on the fleet
+  email: "System is still not understanding the 12 piece rule for waste
+  toners", arrow on Star's "Add 5" (14 aboard, 5 a month, dry 19 Jan, order
+  landing 6 Dec, next 20 Dec), and in his notes: "Star Waste Toner 12 / 7:
+  Vessel has enough waste toner for November but needs to put order in
+  December"; "Radiance 8.5x11 Paper 46 / 19: Vessel has enough paper for
+  November but needs to put order for December".
+  1. **12 is the order, not a par.** His words every time: "the exact order
+     is 12 pieces per ship" (4 Sep), "12 pieces per order no exceptions"
+     (round 8), "the 12 piece rule" (27 Oct). A session read it as a par on
+     10 Sep (recN47v4lrTkjQNpO) and the email topped up to it. Now
+     `WASTE_BOX_ORDER = 12`: when a waste box is due it is 12, less nothing
+     for what is aboard; 0 when the order already carries enough.
+  2. **The next order's business, with or without a delivery coming.** The
+     rule from 13 Oct (shelf lasts past the landing after the open order →
+     silent) ran only when a delivery landed first. Radiance and Star had
+     nothing coming and were pinned on the open order. One rule now, in
+     `runsOutFirst`. Replayed: 12 Oct 21 → 19 rows (Jewel 11x17, Star waste
+     box), 19 Oct 26 → 25 (Star), 22 Oct 21 → 18 (Radiance paper, Star and
+     Quest waste boxes). Every dropped row is one of these two shapes; no row
+     added, no other row changed. The Oasis control in runwayDb.test moved its
+     second landing past the dry day to keep proving what it proves.
+  3. **Eclipse and Edge: the date join is right.** "Vessel used the last
+     container before crossing to USA, no Nov 24 container not needed";
+     "vessel only does one order per month unless emergency, as such the order
+     is correct"; "Vessels can have multiple containers in one month, it's at
+     the ship's discretion." OBP's landing dates that sit off a schedule date
+     are other orders, not drift. No tolerance window. Closed.
+  4. **Our ingest refused his MLS.** He sent "Azamara MLS 2025.xlsx" at
+     11:13 UTC; it parsed 288 rows, 211 with a loading date, and the handler
+     refused the file because one short of all was not all. Nothing written.
+     Now at least half usable writes the usable rows and names every skipped
+     row (ship, due date); fewer than half still refuses. `test/mlsIngest.
+     test.mjs` drives the real `email()` handler. Ray has to resend; the
+     77 blank load dates are his to fill or confirm as not yet fixed.
+  9 of 9 fault injections caught; 30 of 30 test files.
+
 - **27 Oct — review of the whole engine against the Brain and live D1; three
   gaps closed, one put to Ray.** Miguel: "review the code, review this
   session, fix bugs and logic issues; we are not building, we are fixing

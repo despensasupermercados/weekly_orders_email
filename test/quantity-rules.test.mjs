@@ -8,7 +8,7 @@
 // source is the exact failure the Brain's corrections layer exists for.
 
 import assert from 'node:assert';
-import { orderQuantity, withQuantity, TONER_BUFFER, TONER_BUFFER_LONG_HAUL, WASTE_BOX_PAR, PAPER_PALLET, RADIANT_MIN, deliveryClass, tonerSpare } from '../src/lib/runway.js';
+import { orderQuantity, withQuantity, TONER_BUFFER, TONER_BUFFER_LONG_HAUL, WASTE_BOX_ORDER, PAPER_PALLET, RADIANT_MIN, deliveryClass, tonerSpare } from '../src/lib/runway.js';
 
 const q = (o) => orderQuantity(o);
 
@@ -24,14 +24,19 @@ assert.equal(q({ item: 'TN634K BLACK TONER', brand: 'Celebrity', rate: 14, inTra
 // What is already on that container is not ordered twice.
 assert.equal(q({ item: 'TN619C CYAN TONER', brand: 'Royal', rate: 5, inTransit: 35, cycleDays: 30 }).qty, 0);
 
-// Ray 4 Sep Q7: "the exact order is 12 pieces per ship from all brands".
-// 12 is a PAR (Brain correction recN47v4lrTkjQNpO, 10 Sep 2026): top up to
-// 12, netting what is on the order and what is still aboard when it lands.
-assert.equal(WASTE_BOX_PAR, 12);
+// Ray 4 Sep Q7: "the exact order is 12 pieces per ship from all brands";
+// round 8: "12 pieces per order no exceptions"; 27 Oct 2026, on Star's
+// "Add 5" (a top-up to 12 read as a par): "System is still not understanding
+// the 12 piece rule for waste toners". 12 is the ORDER, like paper's pallet:
+// what is aboard when it lands does not shave it, and what is already on the
+// order is not ordered twice.
+assert.equal(WASTE_BOX_ORDER, 12);
 assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 0 }).qty, 12);
 assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Azamara', rate: 3, inTransit: 12 }).qty, 0);
-assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 2, onHandAtLanding: 5 }).qty, 5);
-assert.match(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, onHandAtLanding: 5 }).basis, /par is 12, about 5 still on board/);
+assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 2, onHandAtLanding: 5 }).qty, 12, 'never a top-up: 12 or nothing');
+assert.equal(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, inTransit: 5, cycleDays: 30 }).qty, 0, 'enough already on the order for the cycle');
+assert.match(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4, onHandAtLanding: 5 }).basis, /a waste box order is 12 pieces/);
+assert.ok(!/par/.test(q({ item: 'WASTE TONER BOX (DG3)', brand: 'Royal', rate: 4 }).basis), 'the word par never appears on a waste box line');
 
 // Ray Q19: paper "always ordered in a pallet of 40 cases for royal and
 // celebrity ships" - and paper has no par, so consumption never sets the size.

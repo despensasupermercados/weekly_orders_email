@@ -20,7 +20,7 @@
 
 import {
   tonerSpare, deliveryClass, MONTHLY_PORTS, LONG_HAUL_PORTS,
-  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_PAR, FLOOR_MODEL_MONTHS,
+  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_ORDER, FLOOR_MODEL_MONTHS,
 } from './runway.js';
 
 export const RULES_TABLE = 'weekly_ordering_rules';
@@ -60,7 +60,8 @@ export function orderingRules() {
     ['paper', 'royal_celebrity', String(PAPER_PALLET), 'Ray 1 Sep 2026 Q19: "always ordered in a pallet of 40 cases"'],
     ['paper', 'azamara', 'strict consumption, no pallet', 'Ray 1 Sep 2026 Q19: "based on strict consumption due to space"'],
     ['radiant_white', 'minimum', String(RADIANT_MIN), 'Ray 1 Sep Q20 / 4 Sep Q8: "minimum of 10 cases"'],
-    ['waste_box_c4070', 'par', String(WASTE_BOX_PAR), 'Ray 4 Sep 2026 Q7: "the exact order is 12 pieces per ship from all brands"'],
+    ['waste_box_c4070', 'order', String(WASTE_BOX_ORDER), 'Ray 4 Sep 2026 Q7: "the exact order is 12 pieces per ship from all brands"; round 8: "12 pieces per order no exceptions"; 27 Oct 2026: "the 12 piece rule" - an order quantity, not a par; ordered when the shelf runs dry before the landing after the open order'],
+    ['order_timing', 'next_order', 'when the shelf lasts past the landing AFTER the open order, the item is that later order\'s business, whether or not a delivery is already coming', 'Ray 13 Oct 2026 (paper rows struck); 27 Oct 2026, Radiance paper and Star waste box: "Vessel has enough ... for November but needs to put order in December"'],
     ['mfd_toner', 'rule', 'top up to the OBP par', 'Ray 4 Sep 2026 Q1: "we follow this par level and replenish only as needed"'],
   ];
   for (const k of [...MONTHLY_PORTS].sort()) rows.push(['port_class', k, deliveryClass(k), 'delivered within the month (Ray 7 Sep, 15 Oct 2026)']);
