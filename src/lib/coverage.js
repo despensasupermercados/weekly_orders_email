@@ -60,6 +60,12 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
   const examinedShips = addressed.filter((s) => seen.has(s.key)).map((s) => s.name).sort();
   const broken = (checks || []).filter((c) => c && c.ran === false)
     .map((c) => ({ name: c.name, reason: c.reason || 'no reason given' }));
+  // RAN, BUT ON LESS THAN IT SHOULD HAVE. A check that answered from a table
+  // missing its newest month judged every ship, so nothing above is wrong,
+  // and still planned on a weaker rule than the one Ray agreed. That is not
+  // a clean run either; it is said in its own words, apart from "did not run".
+  const short = (checks || []).filter((c) => c && c.ran !== false && c.short)
+    .map((c) => ({ name: c.name, reason: String(c.short) }));
 
   // Group the unread items by ship: "Vision (3 items)" is a line an ops reader
   // can act on; forty item numbers is a wall they will skim past.
@@ -73,13 +79,16 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
   const unreadByShip = [...byShip.values()].sort((a, b) => a.ship.localeCompare(b.ship));
   const unreadItems = (unread || []).length;
 
-  const ok = !unexamined.length && !broken.length && !unreadItems;
+  const ok = !unexamined.length && !broken.length && !unreadItems && !short.length;
 
   // One line per problem, in the words an ops reader needs. Never rendered to
   // a crew; see the header comment.
   const lines = [];
   for (const b of broken) {
     lines.push(`The ${b.name} check did not run — ${String(b.reason).replace(/\.+$/, '')}. Every ship reads clear on it, which may not be true.`);
+  }
+  for (const s of short) {
+    lines.push(`The ${s.name} check ran short — ${s.reason.replace(/\.+$/, '')}. Every ship was judged, on a weaker rule than agreed.`);
   }
   if (unexamined.length) {
     lines.push(`${unexamined.length} addressed ${unexamined.length === 1 ? 'ship was' : 'ships were'} not examined by any check: ${unexamined.join(', ')}.`);
@@ -94,6 +103,7 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
     examinedShips,
     unexamined,
     broken,
+    short,
     unreadByShip,
     unreadItems,
     ok,
@@ -101,6 +111,7 @@ export function fleetCoverage({ fleetMap, checked = [], checks = [], unread = []
     // For the ingest_log line, which has to stay one short readable string.
     note: ok ? null : [
       broken.length ? `${broken.length} check(s) did not run (${broken.map((b) => b.name).join(', ')})` : null,
+      short.length ? `${short.length} check(s) ran short (${short.map((s) => s.name).join(', ')})` : null,
       unexamined.length ? `${unexamined.length} ship(s) unexamined (${unexamined.join(', ')})` : null,
       unreadItems ? `${unreadItems} on-hand value(s) unreadable` : null,
     ].filter(Boolean).join('; '),

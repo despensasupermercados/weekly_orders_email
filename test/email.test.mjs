@@ -342,8 +342,13 @@ console.log('ok - ship email: "enough until" never appears beside "you will have
   assert.ok(!/higher one/.test(real), 'the retired rule is never named');
   // The average stands in only when last month has no figure or reads zero,
   // and the line then says so rather than claiming last month drove it.
+  // THE FIGURE PLANNED ON KEEPS ITS DECIMAL (27 Oct 2026): the average is the
+  // forecast here, so it prints as the headline prints it - 1.3, not 1 - and a
+  // 0.33 can never read "you use 0 a month". As a reference beside last month
+  // (the Infinity lines above) it stays whole.
   const zero = render(mk({ rate: 1.3, rate_last: 0, rate_avg: 1.33, rate_avg_months: 3 }));
-  assert.ok(/0 last month · 1 average of 3 months · we plan on the average/.test(zero), zero.slice(0, 400));
+  assert.ok(/you use 1.3 a month/.test(zero), zero.slice(0, 400));
+  assert.ok(/0 last month · 1.3 average of 3 months · we plan on the average/.test(zero), zero.slice(0, 400));
   const none = render(mk({ rate: 5, rate_last: null, rate_avg: 5, rate_avg_months: 2 }));
   assert.ok(/no figure for last month · 5 average of 2 months · we plan on the average/.test(none), none.slice(0, 400));
   // OBP's own figure is named as OBP's, so Ray reads his number.

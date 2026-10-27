@@ -351,9 +351,12 @@ async function buildWeekly(env, today) {
   let unread = [];
   try {
     const r = await fleetRunway(env.HON, today);
-    checks.push({ name: 'runway', ran: Boolean(r.ran), reason: r.reason });
+    // `short`: it ran, but on less than it should have (last month's counts
+    // not on file yet). Coverage reports it to ops; a crew never sees it.
+    checks.push({ name: 'runway', ran: Boolean(r.ran), reason: r.reason, short: r.ran ? r.short || null : null });
     if (r.ran) { runsOut = r.findings; unread = r.unread || []; for (const sh of r.shipNames || []) checked.add(sh); }
     else await logIngest(env, 'cron', `runway check did not run: ${r.reason}`);
+    if (r.ran && r.short) await logIngest(env, 'cron', `runway check ran short: ${r.short}`);
   } catch (e) {
     const reason = String(e && e.message || e);
     checks.push({ name: 'runway', ran: false, reason });
