@@ -202,13 +202,25 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // saveAzamara parks the previous publication as 'azamara-mls:prev' and deletes
   // it after the insert. If that run dies between the two, the parked set stays
   // and every Azamara voyage appears twice.
+  // WHICH HALF OF THE SWAP DIED DECIDES THE REPAIR. saveAzamara parks the old
+  // set, writes the new one, then deletes the parked set. Die AFTER the write
+  // and the parked rows are a duplicate: delete them. Die BEFORE it (the
+  // insert batch failed) and the parked rows are the ONLY copy of Ray's MLS:
+  // deleting them would leave the four Azamara ships with no schedule at all,
+  // quietly, the night after a bounce nobody read. Restore those instead.
   const orphan = await one(hon,
     `SELECT COUNT(*) n FROM schedule_order WHERE source = 'azamara-mls:prev'`);
   if (orphan.n) {
-    if (repair) {
+    const live = await one(hon, `SELECT COUNT(*) live FROM schedule_order WHERE source = 'azamara-mls'`);
+    if (!Number(live.live)) {
+      if (repair) {
+        await hon.prepare(`UPDATE schedule_order SET source = 'azamara-mls' WHERE source = 'azamara-mls:prev'`).run();
+        repairs.push(`restored ${orphan.n} parked azamara-mls:prev rows: the MLS swap wrote no new set, so they were the only copy`);
+      } else add('critical', 'orphan_rows', `${orphan.n} azamara-mls:prev rows and NO live azamara-mls rows - a failed swap left the parked set as the only copy; restore it, never delete it`);
+    } else if (repair) {
       await hon.prepare(`DELETE FROM schedule_order WHERE source = 'azamara-mls:prev'`).run();
       repairs.push(`cleared ${orphan.n} orphaned azamara-mls:prev rows from a failed swap`);
-    } else add('warn', 'orphan_rows', `${orphan.n} azamara-mls:prev rows left behind`);
+    } else add('warn', 'orphan_rows', `${orphan.n} azamara-mls:prev rows left behind beside ${live.live} live rows`);
   }
 
   // ---- 5. Duplicate voyages ----
@@ -377,17 +389,22 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
   // that ship's order_lines is 0 for every voyage and it is reported as MISSING
   // EVERYTHING, confidently, forever. Or the reverse: a rename makes the fleet
   // look clean. Neither failure raises an error anywhere. Check it explicitly.
+  // ON THE COPY THE READERS USE. due.js joins on the fresher copy (obpSource);
+  // this read the workbook mirror whatever the readers used, so once the
+  // mirror stops (it last moved 13 Oct 2026) the check would fall silent on
+  // an empty list while the join it guards ran on the CSV copy.
+  const trTable = using && using.intransit && using.intransit.table ? using.intransit.table : 'obp_intransit';
   const schedShips = (await many(hon,
     `SELECT DISTINCT ship FROM schedule_order WHERE ${ELIGIBLE_MOT_SQL}`)).map((r) => r.ship);
   const obpShips = (await many(hon,
-    `SELECT DISTINCT ship FROM obp_intransit
-      WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM obp_intransit)`)).map((r) => r.ship);
+    `SELECT DISTINCT ship FROM ${trTable}
+      WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM ${trTable})`)).map((r) => r.ship);
   const obpSet = new Set(obpShips.map(normShip));
   const unmatched = schedShips.filter((s2) => s2 && !obpSet.has(normShip(s2)));
   if (obpShips.length && unmatched.length) {
     add(unmatched.length === schedShips.length ? 'critical' : 'warn', 'ship_join',
       `${unmatched.length} of ${schedShips.length} scheduled ships have no name match in the ` +
-      `latest OBP in-transit snapshot, so every voyage they have reads as unordered: ` +
+      `latest OBP in-transit snapshot (${trTable}), so every voyage they have reads as unordered: ` +
       `${unmatched.slice(0, 8).join(', ')}${unmatched.length > 8 ? ', ...' : ''}`);
   }
 

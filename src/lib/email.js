@@ -13,7 +13,7 @@
 // fifteen competing letterheads happened once already.
 import { mastRows } from '../cims-mast.js';
 import { byFleetOrder } from './fleetStatus.js';
-import { byDueDate } from './runway.js';
+import { byDueDate, isFloorModel } from './runway.js';
 import { normShip } from './fleet.js';
 import { CREW_LINE, STATUS } from './scheduleStatus.js';
 // Ship names do not agree across sources ("Allure of the Seas" / "Allure");
@@ -423,13 +423,15 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // six months of counts, so the pair is that figure and last month, and the
 // line says which one was used. Shown to one decimal under 10: at 1 or 2 a
 // month, "1.7" and "2" are different shelves by Christmas.
-// The headline figure. A six-month rate keeps its decimal under 10, the
-// same number the line below it prints; anything else rounds as it always
-// has. Rounded whole, a floor-model item at 0.3 a month would read "you use
-// 0 a month" beside an empty date.
-const shownRate = (f) => (f.rate_six != null && Number(f.rate_six) < 10
-  ? String(Math.round(Number(f.rate_six) * 10) / 10)
-  : String(Math.round(f.rate)));
+// THE FIGURE WE PLAN ON KEEPS ITS DECIMAL UNDER 10. A six-month rate, or a
+// trailing average standing in for a zero month, is a fraction: Journey's
+// TN324Y reads 0 last month and 0.33 over three. Rounded whole that is "you
+// use 0 a month" beside an empty date, which no reader can act on. Last
+// month's own figure is a count and stays whole. One rule, so the headline and
+// the line under it always print the same number.
+const fmt1 = (x) => (Number(x) < 10 ? String(Math.round(Number(x) * 10) / 10) : String(Math.round(Number(x))));
+const onAverage = (f) => f.rate_six == null && (f.rate_last == null || Number(f.rate_last) === 0);
+const shownRate = (f) => (f.rate_six != null ? fmt1(f.rate_six) : onAverage(f) ? fmt1(f.rate) : String(Math.round(f.rate)));
 
 function rateBasis(f) {
   if (f.rate_six != null) {
@@ -441,17 +443,35 @@ function rateBasis(f) {
     return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
       + `${sixText} a month over 6 months &middot; ${lastSixText} &middot; we plan on the 6-month average</div>`;
   }
+  // A FLOOR-MODEL ITEM WITHOUT ITS SIX-MONTH FIGURE SAYS SO. The rule needs
+  // seven month-end counts; an item new to the ship has fewer, and on the first
+  // Monday of a month the newest count may not be on file yet. Either way the
+  // item is planned on last month, and the line names that, so Ray can see the
+  // six-month rule did not run rather than think it was taken away.
+  const floor = isFloorModel(f.description);
   const last = f.rate_last == null ? null : Math.round(f.rate_last);
   const avg = f.rate_avg == null ? null : Math.round(f.rate_avg);
-  if (avg == null || last === avg) return '';
   const n = Number(f.rate_avg_months) || 0;
   const over = n > 1 ? ` of ${n} months` : '';
-  const onAverage = f.rate_last == null || Number(f.rate_last) === 0;
+  const planned = onAverage(f) ? 'the average' : 'last month';
   // "(OBP)" when the figure is OBP's own Consumption Statistic (Ray's monthly
   // export), so Ray reads his number, not ours, and knows which to check.
   const lastText = f.rate_last == null ? 'no figure for last month' : `${last} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
-  return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
-    + `${lastText} &middot; ${avg} average${over} &middot; we plan on ${onAverage ? 'the average' : 'last month'}</div>`;
+  // The average is printed to the decimal only when it is the figure planned
+  // on (then it must match the headline); as a reference beside last month it
+  // stays whole, as Ray has read it since 23 Sep. The pair is shown when the
+  // two PRINTED figures differ: 0 last month against 0.3 is the whole point of
+  // the line, and rounding both to 0 first hid exactly that case.
+  const avgShown = avg == null ? null : (onAverage(f) ? fmt1(f.rate_avg) : String(avg));
+  const parts = [];
+  if (avgShown != null && avgShown !== String(last)) {
+    parts.push(lastText, `${avgShown} average${over}`, `we plan on ${planned}`);
+  } else if (floor) {
+    parts.push(lastText, `we plan on ${planned}`);
+  }
+  if (floor) parts.push('no 6-month figure');
+  if (!parts.length) return '';
+  return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">${parts.join(' &middot; ')}</div>`;
 }
 
 // THE DELIVERIES BEHIND THE EMPTY DATE. When stock lands before the shelf

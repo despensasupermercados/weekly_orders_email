@@ -7,6 +7,57 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **27 Oct — review of the whole engine against the Brain and live D1; three
+  gaps closed, one put to Ray.** Miguel: "review the code, review this
+  session, fix bugs and logic issues; we are not building, we are fixing
+  gaps." Read every rule in `runway.js`, `runwayDb.js`, `due.js`,
+  `quantity.js`, `email.js`, `index.js`, `watchdog.js`, `obpCsv.js`,
+  `fallback.js`, `scheduleStatus.js`, `azamaraMls.js`, `anomaly.js` against
+  the Brain's corrections (recdPb11Q7UJsCMxC, 43 of them) and probed D1 for
+  every shape the SQL assumes: no duplicate (ship, part, month) in
+  `consumption_snapshot`, none in the latest inventory snapshot, none in
+  `par`; every consumable description in `par` matches exactly one quantity
+  rule. The rules in force match the code. What did not hold:
+  1. **A run without last month's counts said nothing.** `consumption_snapshot`
+     is cims-hon's and is written a month after the month closes (September
+     appeared with the 1 Oct export; on 27 Oct there is no October row). On
+     the first Monday of a month, before that row exists, every floor-model
+     item silently loses its six-month figure and plans on OBP's last month,
+     the figure Ray struck on 19 Oct; the computed average is a month short.
+     Now `fleetRunway` counts last month's rows and returns `short` when there
+     are none; coverage prints "The runway check ran short — … Every ship
+     was judged, on a weaker rule than agreed." to ops only; the run logs it.
+     The crew's line on a floor-model item without its six-month figure ends
+     "· no 6-month figure", so Ray sees the rule did not run rather than think
+     it was removed. `test/monthEndCounts.test.mjs`.
+  2. **"You use 0 a month."** The figure planned on was rounded whole in the
+     headline: Journey TN324Y reads 0 last month and 0.33 over three, and
+     would print "you use 0 a month · empty by …". The figure planned on now
+     keeps one decimal under 10 (six-month or average); last month's own
+     count stays whole, and the average stays whole when it is only the
+     reference beside last month (Infinity, 23 Sep: "8 average of 2 months").
+     The pair shows when the two printed figures differ, so 0 against 0.3 is
+     shown instead of hidden as 0 = 0.
+  3. **The night check could delete the only copy of Ray's Azamara MLS.**
+     `saveAzamara` parks the old rows as `azamara-mls:prev`, inserts the new
+     set, deletes the parked set. If the insert failed, the parked rows were
+     the only copy, and check 4 deleted them the next night: four ships with
+     no schedule, quietly. It now restores them when no live `azamara-mls`
+     rows exist and deletes them only beside a live set. Check 10 (the
+     ship-name join) now reads the in-transit copy the readers use, not the
+     workbook mirror, which last moved 13 Oct.
+  Put to Ray, not built: **OBP's landing date and the schedule's loading date
+  do not always agree.** 213 of 242 in-transit landing groups match a schedule
+  date exactly; 10 sit 4–14 days off (Eclipse 24 Nov voyage, due 29 Oct: no
+  lines; 16 lines / 175 units land 3 Dec. Edge 27 Jan voyage, due 29 Oct: no
+  lines; 84 units land 6 Feb. Also Silhouette, Anthem, Spectrum, Summit,
+  Utopia, Vision). The exact-date join reads those voyages as unordered and
+  `on_order` as 0. No crew is wrongly told today: the gap rule in `due.js`
+  reads them as skippable. OBP's VoyageNum matches the schedule's voyage on
+  only 184 of 242, worse than the date, so it is not the fix. Ask Ray whether
+  ShipProvDate drifts from the loading date for Celebrity before matching
+  within a window. 19 of 19 fault injections caught; 29 of 29 test files.
+
 - **26 Oct — a fully scheduled fleet is clean, not COULD NOT CHECK.** The
   first Monday on the floor-model rule went out at 12:02 UTC: 21 rows, 7 of 7
   ships mailed. 20 of the 21 matched the 22 Oct preview. The two paper

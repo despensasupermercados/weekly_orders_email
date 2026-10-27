@@ -275,6 +275,21 @@ export async function fleetRunway(hon, today, opts = {}) {
   const prevMonth = monthsBack(month, 1);
   const sixFrom = monthsBack(month, SIX_MONTHS + 1);
 
+  // ARE LAST MONTH'S COUNTS ON FILE AT ALL? consumption_snapshot is cims-hon's
+  // table and it writes a month after the month closes (September's row
+  // appeared with the 1 Oct export). When the month before this one is not
+  // there yet, two rules degrade at once and nothing in the email says so:
+  // every floor-model item loses its six-month figure (the window needs the
+  // count at the end of last month) and plans on OBP's last month, the very
+  // figure Ray struck on 19 Oct; and the computed last-month figure and the
+  // average each lose a month. A quiet downgrade of Ray's rule on the first
+  // Monday of a month is the kind of silence this Worker exists to remove, so
+  // the run reports it (coverage: "ran short") rather than looking healthy.
+  const monthEnd = await hon.prepare(`SELECT COUNT(*) n FROM consumption_snapshot WHERE month = ?1`).bind(prevMonth).first();
+  const monthEndRows = Number((monthEnd && monthEnd.n) || 0);
+  const short = monthEndRows ? null
+    : `consumption_snapshot has no month-end counts for ${prevMonth} yet, so floor-model toner planned on last month instead of six months and the average is one month short`;
+
   // The rate each item is planned on. Floor-model items take the six-month
   // figure when it exists and is positive; everything else, and a floor-model
   // item without one, takes last month (or the average) as before. An item
@@ -361,6 +376,9 @@ export async function fleetRunway(hon, today, opts = {}) {
   return {
     ran: true, reason: null, measured: rows.length, ships: shipNames.length, shipNames, findings: findingsOut,
     unread,
+    // The check ran, but on less than it should have: see monthEnd above.
+    short,
+    month_end: { month: prevMonth, rows: monthEndRows },
     source: { inventory: src.inventory.source, intransit: src.intransit.source, consumption: haveObp ? 'obp' : 'calc' },
   };
 }

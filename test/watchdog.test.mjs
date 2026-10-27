@@ -461,3 +461,54 @@ console.log('     repairs only its own rows, and recognises the hyphenated MOT v
   assert.ok(!/>NEW</.test(frozenLine), 'and not NEW: Miguel has seen this one before');
   console.log('ok - watchdog memory: a finding that clears and returns is news tagged BACK; a missed night is not a clearance');
 }
+
+// ---- Check 4: WHICH HALF OF THE AZAMARA SWAP DIED DECIDES THE REPAIR ------
+// saveAzamara parks the old MLS rows as 'azamara-mls:prev', inserts the new
+// set, then deletes the parked set. If the INSERT failed, the parked rows are
+// the only copy of Ray's schedule for four ships, and the old repair deleted
+// them the next night. Restore them instead; delete only beside a live set.
+{
+  const only = [];
+  const lonely = await runWatchdog(
+    { HON: fakeDb([...withRow("'azamara-mls:prev'", { n: 40 }), ['COUNT(*) live', { live: 0 }]], only) },
+    TODAY, { repair: true });
+  assert.ok(lonely.repairs.some((r) => /restored 40 parked azamara-mls:prev rows/.test(r)), `parked rows with no live set are restored: ${JSON.stringify(lonely.repairs)}`);
+  assert.ok(only.some((s) => s.startsWith("UPDATE schedule_order SET source = 'azamara-mls' WHERE source = 'azamara-mls:prev'")), 'by an UPDATE back to the live source');
+  assert.ok(!only.some((s) => s.startsWith("DELETE FROM schedule_order WHERE source = 'azamara-mls:prev'")), 'and never deleted');
+
+  const said = await runWatchdog(
+    { HON: fakeDb([...withRow("'azamara-mls:prev'", { n: 40 }), ['COUNT(*) live', { live: 0 }]]) },
+    TODAY, { repair: false });
+  const f = said.findings.find((x) => x.check === 'orphan_rows');
+  assert.ok(f && f.severity === 'critical' && /NO live azamara-mls rows/.test(f.detail), `with repair off it is a critical, not a warn: ${JSON.stringify(f)}`);
+
+  const dup = [];
+  const beside = await runWatchdog(
+    { HON: fakeDb([...withRow("'azamara-mls:prev'", { n: 40 }), ['COUNT(*) live', { live: 48 }]], dup) },
+    TODAY, { repair: true });
+  assert.ok(beside.repairs.some((r) => /cleared 40 orphaned azamara-mls:prev rows/.test(r)), 'parked rows beside a live set are the duplicate, and go');
+  assert.ok(dup.some((s) => s.startsWith("DELETE FROM schedule_order WHERE source = 'azamara-mls:prev'")));
+  assert.ok(!dup.some((s) => s.startsWith('UPDATE schedule_order SET source')));
+}
+console.log('ok - watchdog: a failed MLS swap that wrote nothing has its parked rows restored, never deleted; a duplicate parked set still goes');
+
+// ---- Check 10: THE SHIP-NAME JOIN IS CHECKED ON THE COPY THE READERS USE ---
+// due.js joins on obpSource's fresher copy. With the CSV copy in use and the
+// mirror gone quiet (13 Oct 2026), a check that read only obp_intransit would
+// compare the schedule against a list nothing else reads.
+{
+  const csvCols = ['ship', 'eta_date', 'snapshot_date', 'qty', 'item_description'].map((name) => ({ name }));
+  const onCsv = [
+    ...base,
+    ['PRAGMA table_info(weekly_obp_intransit)', csvCols],
+    ['MAX(snapshot_date) d FROM weekly_obp_intransit', { d: TODAY }],
+    ['DISTINCT ship FROM weekly_obp_intransit', [{ ship: 'Odyssey' }]],
+  ];
+  const r = await runWatchdog({ HON: fakeDb(onCsv) }, TODAY, { repair: false });
+  assert.equal(r.counts.obp_source && r.counts.obp_source.intransit, 'csv', `the readers are on the CSV copy: ${JSON.stringify(r.counts.obp_source)}`);
+  const join = r.findings.find((f) => f.check === 'ship_join');
+  assert.ok(join, 'Summit is scheduled but absent from the CSV in-transit copy: the join is checked where it runs');
+  assert.match(join.detail, /weekly_obp_intransit/);
+  assert.match(join.detail, /Summit/);
+}
+console.log('ok - watchdog: the ship-name join is checked against the in-transit copy the readers actually use');

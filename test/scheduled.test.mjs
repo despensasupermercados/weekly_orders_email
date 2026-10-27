@@ -68,9 +68,11 @@ const sent = [];
 const fakeDb = {
   prepare(sql) {
     const stmt = {
-      bind: () => stmt,
+      bind: (...a) => { stmt.args = a; return stmt; },
       run: async () => {
-        if (/INSERT INTO ingest_log/.test(sql)) logged.push(sql);
+        // The note travels in the bind args; keep it, so a test can read what
+        // the run said and not only that it said something.
+        if (/INSERT INTO ingest_log/.test(sql)) logged.push(`${sql} :: ${(stmt.args || []).join(' | ')}`);
         return { success: true };
       },
       first: async () => ({}),
@@ -128,6 +130,16 @@ assert.ok(/to do this week/.test(mail.html), 'the preheader states the real tota
 
 // The two schedule-free halves of the email must actually be in it.
 assert.ok(/Explorer/.test(mail.html), 'a delivery gap reaches the fleet email');
+
+// A RUN WITHOUT LAST MONTH'S COUNTS SAYS SO, TO OPS. This fake answers the
+// month-end COUNT with nothing (first() is {}), which is the first Monday of
+// a month before cims-hon has written the month: the six-month rule cannot
+// run. index.js must carry runwayDb's `short` into coverage and the log, or
+// the downgrade of Ray's floor-model rule is silent (27 Oct 2026).
+assert.ok(logged.some((l) => /runway check ran short/.test(l)), 'the run logs that it ran short');
+assert.ok(/runway check ran short/.test(mail.html), 'and the fleet email carries it in the ops block');
+assert.ok(/COULD NOT CHECK/.test(mail.html));
+console.log('ok - the Monday run reports a short runway check to ops');
 assert.ok(/MAGENTA/.test(mail.html), 'a stockout reaches the fleet email');
 
 console.log('ok - the Monday run assembles and sends: no unbound binding, and the subject');
