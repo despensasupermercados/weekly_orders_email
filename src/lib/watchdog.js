@@ -28,6 +28,12 @@ export const ELIGIBLE_MOT_SQL = `(
 // report those and leave them alone.
 export const OWNED_SOURCES = "('azamara-mls', 'ordering-schedule')";
 
+// A DATE COLUMN CAN HOLD A NON-DATE. schedule_order.loading_delivery_date is
+// TEXT, and a bad upload puts '', 'TBC' or a serial number in it. Date.parse
+// turns every one of those into NaN, and NaN fails every comparison silently
+// rather than loudly - see the schedule_undated check below.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 // ingest_log IS SHARED. cims-hon's own obp@cims.work route writes into the same
 // table - on 10 Sep 2026 it held forty-odd mails from ships' printers, none of
 // them ours. So "has any mail arrived?" is not a question this Worker can answer
@@ -279,11 +285,50 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
        FROM schedule_order WHERE ${ELIGIBLE_MOT_SQL} GROUP BY ship`);
   const fleet = await one(hon, `SELECT COUNT(DISTINCT ship) n FROM par`);
   const covered = cover.length;
-  if (fleet.n && covered < fleet.n) {
+
+  // COUNTING TWO POPULATIONS IS NOT COMPARING THEM.
+  // `covered` counts ships in schedule_order; `fleet.n` counts ships in par.
+  // Nothing normalises either side and nothing filters for in-service, so a
+  // ship in schedule_order but not in par inflates `covered` - and once
+  // covered >= fleet.n this check cannot fire AT ALL, however many real ships
+  // have no schedule. A count that can be inflated into silence is the same
+  // failure as the undated ship below, one level up. So name the ships: a list
+  // cannot be inflated, and it tells Ray which ship to send a schedule for.
+  // MEASURED 13 Oct 2026: 47 covered, 48 in par, 0 covered ships missing from
+  // par - so today this changes the WORDING of a true finding and adds a
+  // trigger that was previously unreachable. It is a guard, not a repair.
+  const parShips = ((await many(hon, `SELECT DISTINCT ship FROM par`)) || [])
+    .map((r) => r.ship).filter(Boolean);
+  const coveredSet = new Set(cover.map((c) => c.ship));
+  const uncovered = parShips.filter((s2) => !coveredSet.has(s2)).sort();
+  if (fleet.n && (covered < fleet.n || uncovered.length)) {
     add('warn', 'coverage',
-      `${covered} of ${fleet.n} ships have an ordering schedule loaded - the rest cannot be checked at all`);
+      `${covered} of ${fleet.n} ships have an ordering schedule loaded - ` +
+      (uncovered.length
+        ? `${uncovered.join(', ')} cannot be checked at all`
+        : 'the rest cannot be checked at all'));
   }
   for (const c of cover) {
+    // A SHIP WITH NO USABLE LOADING DATE PRODUCED NO FINDING AT ALL.
+    // last_load is MAX(loading_delivery_date), which is NULL when every
+    // eligible row for that ship carries a NULL or malformed one.
+    // Date.parse(null) is NaN; `NaN < 0` and `NaN < 30` are both FALSE, so the
+    // ship fell through schedule_expired AND schedule_expiring - while still
+    // counting toward `covered` above. Two silences that compound into "that
+    // ship is fine", which is the one outcome this Worker exists to prevent.
+    // The three sibling date comparisons in this file are all guarded by a
+    // truthiness test; this was the only one that was not.
+    // A bad schedule upload - right ship, wrong date column - is exactly the
+    // shape that triggers it. LATENT as at 13 Oct 2026: no ship is in this
+    // state (Millennium has 24 undated rows of 2021 history but its MAX is
+    // 2027-02-26, so the maths works). Reported as critical because a ship
+    // that cannot be checked is worse than one whose schedule has expired.
+    if (!c.last_load || !ISO_DATE.test(String(c.last_load))) {
+      add('critical', 'schedule_undated',
+        `${c.ship} has ${c.rows_} eligible schedule rows and not one usable loading date - ` +
+        'it is invisible to the weekly check and to the schedule expiry check');
+      continue;
+    }
     const daysLeft = Math.round((Date.parse(c.last_load) - Date.parse(today)) / 86400000);
     if (daysLeft < 0) add('critical', 'schedule_expired',
       `${c.ship} schedule ended ${c.last_load} - it is invisible to the weekly check`);
