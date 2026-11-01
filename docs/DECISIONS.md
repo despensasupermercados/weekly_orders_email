@@ -7,6 +7,22 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **1 Nov — October usage loaded from our own counts (`source = computed`),
+  523 rows, 50 ships.** Ray's October export had not arrived by 10:00 UTC, so
+  the fallback in `tools/README.md` ran against the month-opens of 1 Oct
+  (3,550 rows, 51 ships) and 1 Nov (3,817 rows, 52 ships; "Getaway" is new
+  to the export) with receipts to 30 Oct. One row dropped as negative
+  (Infinity TN619Y, 12 → 13 with no receipt). Known shapes: Silhouette
+  radiant computes 0 (6 + 5 − 11), so it plans on the average by the zero
+  rule; Quest TN324BK computes 3. `consumption_snapshot` still has no
+  October row, so the 2 Nov run will report "ran short" and floor-model
+  toner plans on these computed figures, not six months. When Ray's export
+  arrives, `tools/ray-export.mjs` replaces these rows (same key). The
+  Azamara MLS: Ray's 29 Oct reply to Miguel carries the current table pasted
+  in the body ("no changes received, everything stands the same") but went
+  to Miguel, not to azamara@cims.work; forwarding it there ingests it by the
+  body path. Onward still has one due date on file.
+
 - **27 Oct — Ray's answers to the 26 Oct email: the waste box is an order of
   12, an item that lasts past the next landing waits for the next order, the
   date join stands, and our MLS ingest refused his file.** Ray, on the fleet
