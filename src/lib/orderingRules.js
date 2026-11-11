@@ -20,7 +20,7 @@
 
 import {
   tonerSpare, deliveryClass, MONTHLY_PORTS, LONG_HAUL_PORTS,
-  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_ORDER, FLOOR_MODEL_MONTHS,
+  PAPER_PALLET, RADIANT_MIN, WASTE_BOX_ORDER, FLOOR_MODEL_MONTHS, AZAMARA_PAPER_SAFETY,
 } from './runway.js';
 
 export const RULES_TABLE = 'weekly_ordering_rules';
@@ -53,16 +53,17 @@ export function orderingRules() {
     ['toner_spare', 'long-haul', spare({ brand: 'Royal', port: 'BARCELONA', nextPort: 'BARCELONA' }), 'Ray 15 Oct 2026: "international ships have a 4+ rule"'],
     ['toner_spare', 'leaving_usa', spare({ brand: 'Royal', port: 'PORT EVERGLADES', nextPort: 'CIVITAVECCHIA' }), 'Sep spec recJFeQFxD78KCbaX: "The last US order before the ship goes international takes +4"; Ray 15 Oct: "international orders ... already has to have the 4+ rule"'],
     ['toner_spare', 'returning_usa', spare({ brand: 'Royal', port: 'PORT EVERGLADES', nextPort: 'MIAMI' }), 'Ray 15 Oct 2026: "the 3+ rule will come into play when they do their first order here, allowing them to adjust to new consumption"'],
-    ['toner_spare', 'azamara', spare({ brand: 'Azamara', port: 'Singapore', nextPort: 'Busan' }), 'Sep spec recJFeQFxD78KCbaX: "+3 Azamara (exception cruise line, flat)"; not re-confirmed by Ray on 15 Oct; ask only if an Azamara toner quantity is disputed'],
+    ['toner_spare', 'azamara', spare({ brand: 'Azamara', port: 'Singapore', nextPort: 'Busan' }), 'Ray 28 Oct 2026, asked whether Azamara toner is held at par: "print shop toners are consumption +4". Flat on every itinerary. Supersedes the Sep spec recJFeQFxD78KCbaX flat +3'],
     ['toner_spare', 'unclassified_port', spare({ brand: 'Royal', port: 'NOT A LISTED PORT', nextPort: 'MIAMI' }), 'the floor; the email line names the port as not on file so a person adds it'],
     ['toner_spare', 'which_order', 'long-haul spare when the order loads at a long-haul port OR the ship\'s next loading does; otherwise the monthly spare', 'Sep spec + Ray 15 Oct 2026; runway.js tonerSpare'],
 
     ['paper', 'royal_celebrity', String(PAPER_PALLET), 'Ray 1 Sep 2026 Q19: "always ordered in a pallet of 40 cases"'],
-    ['paper', 'azamara', 'strict consumption, no pallet', 'Ray 1 Sep 2026 Q19: "based on strict consumption due to space"'],
+    ['paper', 'azamara', `consumption + ${AZAMARA_PAPER_SAFETY} cases, no pallet`, 'Ray 1 Sep 2026 Q19: "based on strict consumption due to space"; 28 Oct 2026: "paper is order per consumption plus 5 pieces as a safety net"'],
+    ['paper', 'azamara_safety', String(AZAMARA_PAPER_SAFETY), 'Ray 28 Oct 2026: "paper is order per consumption plus 5 pieces as a safety net". Azamara 20 lb paper, card stock and gloss text'],
     ['radiant_white', 'minimum', String(RADIANT_MIN), 'Ray 1 Sep Q20 / 4 Sep Q8: "minimum of 10 cases"'],
     ['waste_box_c4070', 'order', String(WASTE_BOX_ORDER), 'Ray 4 Sep 2026 Q7: "the exact order is 12 pieces per ship from all brands"; round 8: "12 pieces per order no exceptions"; 27 Oct 2026: "the 12 piece rule" - an order quantity, not a par; ordered when the shelf runs dry before the landing after the open order'],
     ['order_timing', 'next_order', 'when the shelf lasts past the landing AFTER the open order, the item is that later order\'s business, whether or not a delivery is already coming', 'Ray 13 Oct 2026 (paper rows struck); 27 Oct 2026, Radiance paper and Star waste box: "Vessel has enough ... for November but needs to put order in December"'],
-    ['mfd_toner', 'rule', 'top up to the OBP par', 'Ray 4 Sep 2026 Q1: "we follow this par level and replenish only as needed"'],
+    ['mfd_toner', 'rule', 'top up to the usage until the next landing (the six-month rate), never below the OBP par', 'Ray 28 Oct 2026: "floor models are based on overall consumption"; Miguel 11 Nov 2026: "we go for overall consumption .. assuming that we always need a min that is set by the par level". Supersedes Ray 4 Sep Q1 (top up to the par)'],
   ];
   for (const k of [...MONTHLY_PORTS].sort()) rows.push(['port_class', k, deliveryClass(k), 'delivered within the month (Ray 7 Sep, 15 Oct 2026)']);
   for (const k of [...LONG_HAUL_PORTS].sort()) rows.push(['port_class', k, deliveryClass(k), 'long-haul (Ray 15 Oct 2026)']);

@@ -44,9 +44,11 @@ assert.equal(PAPER_PALLET, 40);
 assert.equal(q({ item: '20 LBS 8.5 x 11 DG3 PAPER', brand: 'Royal', rate: 41, inTransit: 0, cycleDays: 28 }).qty, 40);
 assert.equal(q({ item: '20 LBS 11 x 17 DG3 PAPER', brand: 'Celebrity', rate: 20, inTransit: 120, cycleDays: 28 }).qty, 0);
 // "Azamara it's based on strict consumption due to space so they could not
-// accept 40 cases rather what they use."
-assert.equal(q({ item: '20 LBS 8.5 x 11 DG3 PAPER', brand: 'Azamara', rate: 23, inTransit: 10, cycleDays: 30 }).qty, 13);
-assert.equal(q({ item: '8.5 x 14 #80 GLOSS TEXT', brand: 'Azamara', rate: 26, inTransit: 5, cycleDays: 30 }).qty, 21);
+// accept 40 cases rather what they use." And Ray, 28 Oct 2026: "paper is order
+// per consumption plus 5 pieces as a safety net". No pallet; + 5 cases.
+assert.equal(q({ item: '20 LBS 8.5 x 11 DG3 PAPER', brand: 'Azamara', rate: 23, inTransit: 10, cycleDays: 30 }).qty, 23 + 5 - 10);
+assert.equal(q({ item: '8.5 x 14 #80 GLOSS TEXT', brand: 'Azamara', rate: 26, inTransit: 5, cycleDays: 30 }).qty, 26 + 5 - 5);
+assert.match(q({ item: '20 LBS 8.5 x 11 DG3 PAPER', brand: 'Azamara', rate: 23, inTransit: 0, cycleDays: 30 }).basis, /23 cases used in 30 days \+ 5 safety/);
 
 // Ray Q20 / 4 Sep Q8: Radiant "minimum of 10 cases ... if a ship needs 14
 // cases, they can order the 14".
@@ -55,14 +57,19 @@ assert.equal(q({ item: 'RADIANT WHITE 28# 11x17', brand: 'Celebrity', rate: 12, 
 assert.equal(q({ item: 'RADIANT WHITE 28# 11x17', brand: 'Celebrity', rate: 14, inTransit: 0, cycleDays: 30 }).qty, 14);
 assert.equal(q({ item: 'RADIANT WHITE 28# 11x17', brand: 'Celebrity', rate: 12, inTransit: 52, cycleDays: 30 }).qty, 0);
 
-// Ray 4 Sep Q1: Azamara MFD toner "have a par level assigned on OBP, we follow
-// this par level and replenish only as needed". Top-up to par; no par, no number.
-assert.equal(q({ item: 'TN324M MAGENTA TONER', brand: 'Azamara', rate: 5, inTransit: 3, cycleDays: 30, parQty: 5 }).qty, 2);
-assert.equal(q({ item: 'TN-328C CYAN TONER', brand: 'Azamara', rate: 10, inTransit: 0, cycleDays: 30, parQty: 4 }).qty, 4);
-assert.equal(q({ item: 'TNP79K - BLACK TONER (YIELD: 13K )', brand: 'Azamara', rate: 2, inTransit: 0, parQty: null }), null);
-// A par that lasts less than the cycle is said so, in the basis, not hidden.
+// Azamara MFD toner and bottles: the usage until the next landing, never below
+// the OBP par. Ray 28 Oct 2026: "floor models are based on overall consumption";
+// Miguel 11 Nov 2026: "we go for overall consumption .. assuming that we always
+// need a min that is set by the par level". (Ray 4 Sep Q1, top up to the par,
+// is superseded.)
+assert.equal(q({ item: 'TN324M MAGENTA TONER', brand: 'Azamara', rate: 5, inTransit: 3, cycleDays: 30, parQty: 5 }).qty, 2, 'usage 5 = par 5, 3 on the way');
+assert.equal(q({ item: 'TN-328C CYAN TONER', brand: 'Azamara', rate: 10, inTransit: 0, cycleDays: 30, parQty: 4 }).qty, 10, 'usage 10 beats a par of 4');
+assert.equal(q({ item: 'TN514Y YELLOW TONER', brand: 'Azamara', rate: 1, inTransit: 0, cycleDays: 30, parQty: 3 }).qty, 3, 'the par 3 is the minimum over a usage of 1');
+assert.match(q({ item: 'TN514Y YELLOW TONER', brand: 'Azamara', rate: 1, inTransit: 0, cycleDays: 30, parQty: 3 }).basis, /OBP par is 3, more than the 1 used in 30 days/);
+assert.deepEqual(q({ item: 'TNP79K - BLACK TONER (YIELD: 13K )', brand: 'Azamara', rate: 2, inTransit: 0, parQty: null }),
+  { qty: 2, basis: '2 used in 30 days (no OBP par on file)' }, 'no par: the usage alone, and the line says the par is missing');
 assert.match(q({ item: 'TNP75 BLACK TONER BH 5000i (YIELD:', brand: 'Azamara', rate: 6, inTransit: 0, cycleDays: 30, parQty: 2 }).basis,
-  /2 lasts about 10 days/);
+  /6 used in 30 days \(OBP par 2\)/);
 // The colour letter follows the model with no space: "TN324M" must still match.
 assert.ok(q({ item: 'TN514Y YELLOW TONER', brand: 'Azamara', rate: 2, inTransit: 0, parQty: 3 }));
 
@@ -79,23 +86,23 @@ assert.equal(a.order_due, '2026-12-08');
 assert.equal(a.order_lands, '2026-12-18');
 assert.equal(a.cycle_days, 15);
 assert.equal(a.cover_to, '2027-01-02');
-assert.equal(a.add_qty, 7 + 3 - 10);
+assert.equal(a.add_qty, 7 + 4 - 10, 'Azamara print-shop toner: + 4 (Ray 28 Oct 2026)');
 const b = withQuantity(f, { brand: 'Azamara', parQty: 5 });
 assert.equal(b.order_due, null);
 assert.equal(b.cycle_days, 30);
 assert.equal(b.cover_to, null);
-assert.equal(b.add_qty, 17);
+assert.equal(b.add_qty, 14 + 4);
 
-// The par rule is a top-up: when the open order lands BEFORE the item runs dry,
-// what is still aboard that day counts. 10 aboard, 6 a month, lands in 30 days
-// -> about 4 left; par 5 -> add 1, not 5.
+// The floor-model rule is a top-up: when the open order lands BEFORE the item
+// runs dry, what is still aboard that day counts. 10 aboard, 6 a month, lands in
+// 30 days -> about 4 left; the usage 6 beats the par 5 -> add 2, not 6.
 const mfd = { ship: 'Onward', item: 'TNP75 BLACK TONER', rate: 6, on_hand: 10, stockout: '2026-11-04', next_loading: null };
 const c = withQuantity(mfd, { brand: 'Azamara', parQty: 5, due: '2026-10-06', lands: '2026-10-15', until: null, coming: 0, today: '2026-09-15', arrivals: [] });
-assert.equal(c.add_qty, 1);
+assert.equal(c.add_qty, 2);
 assert.match(c.add_basis, /about 4 still aboard/);
-// Same item, order landing after the stockout: nothing aboard, top up to par.
+// Same item, order landing after the stockout: nothing aboard, a month's usage (6).
 const d = withQuantity(mfd, { brand: 'Azamara', parQty: 5, due: '2026-11-06', lands: '2026-11-20', until: null, coming: 0, today: '2026-09-15', arrivals: [] });
-assert.equal(d.add_qty, 5);
+assert.equal(d.add_qty, 6);
 
 console.log("ok - quantities: every branch is one of Ray's written rules - +3 toner, 12 waste");
 console.log('     boxes, 40-case pallets, 10-case Radiant minimum, Azamara to consumption or OBP par');
@@ -134,9 +141,10 @@ console.log('     boxes, 40-case pallets, 10-case Radiant minimum, Azamara to co
     'the last order loaded abroad is still used abroad: +4');
   assert.equal(tonerSpare({ brand: 'Celebrity', port: 'PORT EVERGLADES', nextPort: 'MIAMI' }).spare, 3,
     'Ray: "the 3+ rule will come into play when they do their first order here"');
-  // Azamara is "exception cruise line, flat" +3 in the September spec; Ray's
+  // Azamara is a flat +4 on every itinerary: Ray 28 Oct 2026, "print shop toners are consumption +4" (it was the September spec's flat +3); Ray's
   // 15 Oct answer did not touch it.
-  assert.deepEqual(tonerSpare({ brand: 'Azamara', port: 'Singapore', nextPort: 'Busan' }), { spare: 3, note: '' });
+  assert.deepEqual(tonerSpare({ brand: 'Azamara', port: 'Singapore', nextPort: 'Busan' }), { spare: 4, note: '' });
+  assert.deepEqual(tonerSpare({ brand: 'Azamara', port: 'MIAMI', nextPort: 'MIAMI' }), { spare: 4, note: '' }, 'flat: the same in the USA');
   // Not on file: the +3 floor, and the line says so rather than guessing.
   assert.deepEqual(tonerSpare({ brand: 'Royal', port: 'ENSENADA', nextPort: 'LOS ANGELES' }),
     { spare: 3, note: 'delivery frequency for Ensenada not on file' });

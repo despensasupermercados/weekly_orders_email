@@ -232,14 +232,21 @@ export function runsOutFirst({ ship, item, onHand, rate, arrivals, today, nextLo
 //    par; 40 is the order set.
 //  20 LB PAPER, Azamara (and Azamara card stock / gloss text):
 //    "Azamara it's based on strict consumption due to space so they could not
-//     accept 40 cases rather what they use." - Ray, 1 Sep Q19.
+//     accept 40 cases rather what they use." - Ray, 1 Sep Q19. And 28 Oct 2026,
+//    asked whether Azamara paper is held at par: "paper is order per
+//    consumption plus 5 pieces as a safety net". So consumption + 5 cases, no
+//    pallet (AZAMARA_PAPER_SAFETY).
 //  RADIANT WHITE (Celebrity maps):
 //    "minimum of 10 cases ... if a ship needs 14 cases, they can order the 14"
 //    - Ray, 1 Sep Q20 and 4 Sep Q8.
 //  AZAMARA MFD TONER and MFD waste bottles (TN324, TN514, TNP48, TNP75, TNP79,
 //  TN-328, WX-103, WB-P05):
-//    "they have a par level assigned on OBP, we follow this par level and
-//     replenish only as needed" - Ray, 4 Sep Q1. Top-up to par.
+//    Ray, 4 Sep Q1: "they have a par level assigned on OBP, we follow this par
+//    level and replenish only as needed". Superseded 28 Oct 2026: "floor models
+//    are based on overall consumption"; Miguel, 11 Nov 2026: "we go for overall
+//    consumption .. assuming that we always need a min that is set by the par
+//    level". So the line tops up to the usage until the next landing (the
+//    six-month rate, runwayDb.js), never below the OBP par.
 // ---------------------------------------------------------------------------
 
 export const TONER_BUFFER = 3;      // Ray Q20; delivered within the month (US, Canada, Caribbean)
@@ -247,6 +254,8 @@ export const TONER_BUFFER_LONG_HAUL = 4; // Ray 15 Oct: "international ships hav
 export const WASTE_BOX_ORDER = 12;  // Ray 4 Sep Q7, round 8, round 9, 27 Oct: "12 pieces per order"
 export const PAPER_PALLET = 40;     // Ray 1 Sep Q19, Royal and Celebrity only
 export const RADIANT_MIN = 10;      // Ray 1 Sep Q20
+export const TONER_BUFFER_AZAMARA = 4; // Ray 28 Oct 2026: "print shop toners are consumption +4"
+export const AZAMARA_PAPER_SAFETY = 5; // Ray 28 Oct 2026: "paper is order per consumption plus 5 pieces as a safety net"
 
 const PRINT_SHOP_TONER = /\bTN(619|634)[A-Z]?\b/i;
 const MFD_TONER = /\b(TN324|TN514|TNP48|TNP75|TNP79|TN-?328)/i;
@@ -296,8 +305,10 @@ const ceil = (n) => Math.max(0, Math.ceil(n - 1e-9));
 // So +4 when this order loads at a long-haul port OR the next loading does.
 // The first order back in the USA, with a US loading after it, is +3.
 //
-// AZAMARA is a flat +3, "exception cruise line, flat" in the same spec. Ray's
-// 15 Oct answer did not mention Azamara; the exception stands until he does.
+// AZAMARA is a flat +4 on every itinerary. Ray, 28 Oct 2026, asked whether
+// Azamara toner is held at par: "print shop toners are consumption +4". It
+// was a flat +3 from the September spec ("exception cruise line, flat") until
+// then.
 //
 // A PORT ON NEITHER LIST gets +3, the floor, and the line names the port as
 // not on file, so the list is extended by a person rather than guessed by code.
@@ -349,7 +360,7 @@ export function deliveryClass(port) {
 // with the ship's next loading at `nextPort`. `note` is what the email prints
 // after the number; empty when the spare is the plain +3.
 export function tonerSpare({ brand = null, port = null, nextPort = null } = {}) {
-  if (/azamara/i.test(String(brand || ''))) return { spare: TONER_BUFFER, note: '' };
+  if (/azamara/i.test(String(brand || ''))) return { spare: TONER_BUFFER_AZAMARA, note: '' };
   const here = deliveryClass(port);
   const next = deliveryClass(nextPort);
   if (here === 'long-haul') return { spare: TONER_BUFFER_LONG_HAUL, note: `long-haul delivery, ${portLabel(port)}` };
@@ -380,27 +391,27 @@ export function orderQuantity({ item, brand, rate, inTransit = 0, cycleDays = MO
     return { qty: Math.max(0, need + spare - coming), basis: `${need} used in ${cycleDays} days + ${spare} spare${note ? ` (${note})` : ''}` };
   }
   if (isFloorModel(desc)) {
-    if (parQty == null) return null; // Ray: MFD lines follow the OBP par; no par, no number
-    const par = Number(parQty);
-    // A par below one cycle's usage is a par problem, not an ordering problem.
-    // Print the rule's number and say how long it lasts, so the reader can see
-    // the par is short instead of trusting a figure that runs out in days.
-    const lasts = rate > 0 ? Math.round(par / (Number(rate) / MONTH_DAYS)) : null;
-    const short = lasts != null && lasts < cycleDays ? ` (${par} lasts about ${lasts} days at your usage)` : '';
+    // The usage until the next landing, never below the OBP par (Ray 28 Oct,
+    // Miguel 11 Nov). A top-up: what is still aboard when it lands counts.
+    const par = parQty == null ? null : Number(parQty);
+    const target = Math.max(need, par ?? 0);
     const aboard = left > 0 ? `, about ${left} still aboard when it lands` : '';
-    return { qty: Math.max(0, par - left - coming), basis: `OBP par is ${par}${aboard}${short}` };
+    const basis = par == null ? `${need} used in ${cycleDays} days (no OBP par on file)${aboard}`
+      : par > need ? `OBP par is ${par}, more than the ${need} used in ${cycleDays} days${aboard}`
+        : `${need} used in ${cycleDays} days (OBP par ${par})${aboard}`;
+    return { qty: Math.max(0, target - left - coming), basis };
   }
   if (RADIANT.test(desc)) {
     if (coming >= need) return { qty: 0, basis: 'already on the way' };
     return { qty: Math.max(RADIANT_MIN, need - coming), basis: `${need} used in ${cycleDays} days, minimum ${RADIANT_MIN} cases` };
   }
   if (PAPER_20LB.test(desc)) {
-    if (azamara) return { qty: Math.max(0, need - coming), basis: `${need} cases used in ${cycleDays} days` };
+    if (azamara) return { qty: Math.max(0, need + AZAMARA_PAPER_SAFETY - coming), basis: `${need} cases used in ${cycleDays} days + ${AZAMARA_PAPER_SAFETY} safety` };
     if (coming >= need) return { qty: 0, basis: coming >= PAPER_PALLET ? 'a pallet is already on that order' : `${coming} cases already on that order` };
     return { qty: PAPER_PALLET, basis: `paper is one pallet of ${PAPER_PALLET} cases` };
   }
   if (AZAMARA_STOCK.test(desc)) {
-    return { qty: Math.max(0, need - coming), basis: `${need} used in ${cycleDays} days` };
+    return { qty: Math.max(0, need + AZAMARA_PAPER_SAFETY - coming), basis: `${need} used in ${cycleDays} days + ${AZAMARA_PAPER_SAFETY} safety` };
   }
   return null;
 }
