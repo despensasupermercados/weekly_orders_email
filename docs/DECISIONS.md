@@ -61,6 +61,17 @@ connector. Newest at the top of each list. Dates are 2026.
      test.mjs` drives the real `email()` handler. Ray has to resend; the
      77 blank load dates are his to fill or confirm as not yet fixed.
   9 of 9 fault injections caught; 30 of 30 test files.
+  **Proven live 2 Nov** (12:00:49 send, 26 rows, 9 of 9 ships mailed, all
+  11 mails delivered; replay of the 2 Nov D1 dumps on main 8d2ce6a matches):
+  Star's waste box and Radiance's 8.5x11 paper are not listed; no waste-box
+  line says "par"; no C4070 waste box fell due in the week, so "Add 12" has
+  not yet printed live (proven by test only). Ray's 27 Oct table against
+  ours: Journey 8.5x11 he expects 14 cases on 5 Dec, we say 20; TN634K he
+  expects 8, we say 11. Same rule (+3 spare), different usage: ours is the
+  computed October figure (15 cases, 6 toners), his is 13 and 4. His export
+  replaces ours when it arrives. THE MLS WAS NOT RESENT: as of 11 Nov the
+  last Azamara MLS ingest is still the 27 Oct refusal; Onward has one due
+  date on file (3 Dec).
 
 - **27 Oct — review of the whole engine against the Brain and live D1; three
   gaps closed, one put to Ray.** Miguel: "review the code, review this
@@ -112,6 +123,11 @@ connector. Newest at the top of each list. Dates are 2026.
   only 184 of 242, worse than the date, so it is not the fix. Ask Ray whether
   ShipProvDate drifts from the loading date for Celebrity before matching
   within a window. 19 of 19 fault injections caught; 29 of 29 test files.
+  **Proven live 2 Nov:** cims-hon had written October into
+  `consumption_snapshot` (3,824 rows) before 12:00 UTC, so the six-month
+  rule ran whole: 6 lines "over 6 months", 1 "no 6-month figure" (Quest
+  WX-103, fewer than seven counts), no "ran short", no "you use 0 a month",
+  no COULD NOT CHECK. The "ran short" guard itself has not fired live yet.
 
 - **26 Oct — a fully scheduled fleet is clean, not COULD NOT CHECK.** The
   first Monday on the floor-model rule went out at 12:02 UTC: 21 rows, 7 of 7
@@ -130,6 +146,11 @@ connector. Newest at the top of each list. Dates are 2026.
   the check did not run. If there are some, the check ran and is clean (`allScheduled`), and the run logs that it is.
   test/gapCheckAllScheduled.test.mjs, 8 of 8 fault injections caught. A
   reason ending in a full stop no longer prints "..".
+  **2 Nov:** the all-scheduled path did not arise (Edge and Vision's
+  schedules had ended and Getaway is new, so the schedule-free check had
+  three ships to cover; 2 were asked for a schedule); it stays proven by
+  test. The email carried no COULD NOT CHECK. 9 Nov: 0 actionable of 1,709
+  voyages, 1 ship asked, 7 of 7 ships mailed, run line clean.
 
 - **22 Oct — floor-model toner plans on six months (Ray).** Asked whether
   floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79, TN-328,
