@@ -26,8 +26,10 @@ hold a fixed spare at month end; shown 26 rows built on that idea he struck
 **pallets of 40 cases**, sized on last month. Print-shop toner is ordered on
 **consumption plus a spare: 3 where delivery comes within the month, 4 on a
 long-haul itinerary**. **Azamara is kept lean on purpose** and topped
-up as needed, with **zero tolerance** for a toner at nil. MFD toner and waste
-bottles follow the **OBP par**. He trusts **OBP's own usage figure**, which on
+up as needed, with **zero tolerance** for a toner at nil: its paper is
+consumption **+ 5 cases**, its print-shop toner consumption **+ 4** (28 Oct).
+MFD toner and waste bottles go on **overall consumption, never below the OBP
+par** (Ray 28 Oct, Miguel 11 Nov). He trusts **OBP's own usage figure**, which on
 about 1% of rows is lower than the arithmetic of its counts. He reads the
 **due date** as the deadline: after it the order "is processed or it's missed".
 
@@ -44,16 +46,19 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 | No month-end spare; no pallet for a small shortfall months out | 24 of 26 N; "current order projections do not affect paper usage" | 13 Oct | not built, on purpose |
 | Paper in sets of 40, sized on last month | "always ordered in a pallet of 40 cases" (Q19); "paper is ordered in sets of 40 cases based om previous months consumption" (Q1) | 1 Sep, 13 Oct | `PAPER_PALLET = 40` |
 | Azamara paper is strict consumption, no pallets | "based on strict consumption due to space so they could not accept 40 cases rather what they use" (Q19) | 1 Sep | `orderQuantity` Azamara branch |
+| Azamara paper: consumption plus 5 cases | asked whether Azamara paper is held at par: "paper is order per consumption plus 5 pieces as a safety net" | 28 Oct | `AZAMARA_PAPER_SAFETY = 5`, the Azamara paper, card stock and gloss text branches; published as `paper.azamara_safety` |
 | Radiant white: minimum 10, more if needed | "minimum of 10 cases … if a ship needs 14 cases, they can order the 14" (Q20, Q8) | 1 Sep, 4 Sep | `RADIANT_MIN = 10` |
 | Print-shop toner: consumption plus a spare | "order 3 toners over their consumption amount … a safety net in case you print a little bit more" (Q20) | 1 Sep | `orderQuantity` toner branch |
 | The spare is 3 at home, 4 long-haul | "USA ships have a 3+ rule and international ships have a 4+ rule, if a ship is leaving the USA, you will normally start processing their international orders -3 months in advance, which already has to have the 4+ rule. if the ship is returning to USA, the 3+ rule will come into play when they do their first order here, allowing them to adjust to new consumption." | 15 Oct | `tonerSpare()`, from the order's loading port and the next one |
 | "International" means long-haul, not the flag | "Vancouver is considered international but since its next to the USA, it gets delivered within the month. ST MAARTEN, ORANJESTAD, FREEPORT, PUNTARENAS is also considered international but again nearby so the delivery once a month works. Canada, Caribbean Islands deliver on a shorter timeframe than other international sectors." | 7 Sep | `deliveryClass()`: US, Canada, Caribbean +3; Europe, Asia, Australia, South America +4 |
 | The last US order before leaving takes +4 | "The last US order before the ship goes international takes +4; the first order on return to the US takes +3" (Sep spec, recJFeQFxD78KCbaX) | 8 Sep | `tonerSpare()`: +4 when the next loading is long-haul |
-| Azamara toner spare is a flat +3 | "+3 Azamara (exception cruise line, flat)" (Sep spec) | 8 Sep | `tonerSpare()` Azamara branch; not re-confirmed on 15 Oct |
+| ~~Azamara toner spare is a flat +3~~ | "+3 Azamara (exception cruise line, flat)" (Sep spec) | 8 Sep | superseded 28 Oct |
+| Azamara toner spare is a flat +4 | asked whether Azamara toner is held at par: "print shop toners are consumption +4" | 28 Oct | `TONER_BUFFER_AZAMARA = 4`, `tonerSpare()` Azamara branch |
 | HON plans on last month too; the average is for dry dock and quiet months | "for the HON, i would recommend using the last month number only and guide the adjustments for the future based on that. the average should be viewed more for dry dock or quite months as the usage can pickup at any time" | 15 Oct | cims-hon to change; the email already shows the average beside last month and plans on it when last month is zero |
 | Waste box (C4070): the order is 12, 24 on high volume | "the exact order is 12 pieces per ship from all brands" (Q7); round 8: "12 pieces per order no exceptions"; "12 base, 24 permitted on high volume"; 27 Oct, on Star's "Add 5": "System is still not understanding the 12 piece rule for waste toners" | 4 Sep, 27 Oct | `WASTE_BOX_ORDER = 12`, the order quantity when the box is needed, never a top-up (a session read it as a par 10 Sep–27 Oct) |
 | An item that lasts past the landing after the open order waits for that order | 13 Oct, paper rows struck: "current order projections do not affect paper usage"; 27 Oct, Radiance paper and Star waste box with nothing coming: "Vessel has enough ... for November but needs to put order in December" | 13 Oct, 27 Oct | `runway.js` `runsOutFirst`: `orderLands < out` and `out > orderUntil` → silent, whether or not a delivery is already coming (until 27 Oct only when one was) |
-| MFD toner and bottles: top up to the OBP par | "they have a par level assigned on OBP, we follow this par level and replenish only as needed" (Q1) | 4 Sep | MFD branch of `orderQuantity` |
+| ~~MFD toner and bottles: top up to the OBP par~~ | "they have a par level assigned on OBP, we follow this par level and replenish only as needed" (Q1) | 4 Sep | superseded 28 Oct / 11 Nov |
+| MFD toner and bottles: overall consumption, never below the par | Ray: "floor models are based on overall consumption"; Miguel, asked whether that replaces the par: "we go for overall consumption .. assuming that we always need a min that is set by the par level" | 28 Oct, 11 Nov | MFD branch of `orderQuantity`: top up to the greater of the usage until the next landing (the six-month rate) and the OBP par |
 | Azamara holds little by design; top-ups as needed | "inventory cost goes up and some products move very slowly" | 24 Sep | top-ups appear as in-transit lines outside the schedule |
 | Azamara toner tolerance is zero days | "Days without item 0 … if item drops to 0, printer needs to communicate immediately" | 25 Sep | red line "If you cannot wait, tell your Inventory Manager now" |
 | The due date is the deadline | "looks at the order due date which is the physical date they have to process the order or it's missed. After that … the loading delivery date which is the date that the items are gonna be on board" (Q21) | 1 Sep | `open_order` = earliest due ≥ today; two tiles |
@@ -246,8 +251,7 @@ columns are deliveries beside the day's count (§4.14).
   12/18/2026". DONE 19 Oct: the export reads 18 Dec (Brain reckf7iZlrCvHgXrc).
 - Silhouette radiant white: with IT on his side. Nothing to ask until IT
   answers; the engine plans on OBP's 1, which matches his own judgement.
-- Azamara's toner spare: the September spec says a flat +3; his 15 Oct answer
-  did not mention Azamara. Ask only if an Azamara toner quantity is disputed.
+- ~~Azamara's toner spare~~: answered 28 Oct, a flat +4.
 - Azamara paper tolerance (ask only when a paper gap on Azamara is called fine).
 
 Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
@@ -257,8 +261,8 @@ Answered 14 Oct: what OBP subtracts on the five rows (§4.2, transfers out).
 Miguel, 16 Oct: the settled rules "should be cross pollinated to the Brain and
 across the apps that use it". The weekly email now publishes them every night
 into `weekly_ordering_rules` in the shared D1 database (`src/lib/orderingRules.js`):
-usage basis, the toner spare (+3, +4, leaving and returning, Azamara flat +3,
-unknown port), paper, radiant white, waste box, MFD par, and every port with
+usage basis, the toner spare (+3, +4, leaving and returning, Azamara flat +4,
+unknown port), paper (Azamara + 5), radiant white, waste box, the MFD rule, and every port with
 its delivery class. Values come from the same functions the email runs, so the
 table cannot disagree with the email. Other apps read it; none keeps a copy.
 

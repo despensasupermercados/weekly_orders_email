@@ -35,7 +35,8 @@ const get = (rows, rule, key) => rows.find((r) => r.rule === rule && r.key === k
   assert.equal(get(rows, 'toner_spare', 'leaving_usa'), '4', 'the last US order before the ship leaves');
   assert.equal(get(rows, 'toner_spare', 'returning_usa'), '3', 'the first order back in the USA');
   assert.equal(get(rows, 'toner_spare', 'azamara'), String(tonerSpare({ brand: 'Azamara', port: 'BARCELONA' }).spare));
-  assert.equal(get(rows, 'toner_spare', 'azamara'), '3', 'Azamara flat +3 (Sep spec)');
+  assert.equal(get(rows, 'toner_spare', 'azamara'), '4', 'Azamara flat +4 (Ray 28 Oct 2026: "print shop toners are consumption +4")');
+  assert.equal(get(rows, 'paper', 'azamara_safety'), '5', 'Ray 28 Oct 2026: "consumption plus 5 pieces as a safety net"');
   assert.equal(get(rows, 'toner_spare', 'unclassified_port'), '3');
   assert.equal(get(rows, 'usage', 'plan_on'), 'last_month');
   assert.equal(get(rows, 'usage', 'zero_month'), 'trailing_average');

@@ -87,8 +87,8 @@ assert.equal(quest.cover_to, '2027-01-15');        // one full cycle: 18 Dec -> 
 assert.equal(quest.cycle_days, 28);
 assert.equal(quest.on_order, 2);                   // already on the 18 Dec order
 assert.equal(quest.has_schedule, true);
-// 14 a month * 28/30 = 13.07 -> 14, + 3 spare, less the 2 already on it.
-assert.equal(quest.add_qty, 14 + 3 - 2);
+// 14 a month * 28/30 = 13.07 -> 14, + 4 spare (Azamara, Ray 28 Oct 2026), less the 2 already on it.
+assert.equal(quest.add_qty, 14 + 4 - 2);
 // The 20 Sep dry-dock row is not an order the printer can use.
 assert.notEqual(quest.order_due, '2026-09-16');
 
@@ -354,7 +354,7 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.ok(p11, 'Onward 11x17: the order lands 5 Feb, the shelf empties 6 Feb: a finding');
   assert.equal(p11.stockout, '2027-02-06');
   assert.ok(p11.order_lands < p11.stockout);
-  assert.equal(p11.add_qty, 17, 'Azamara paper is strict consumption: 17 a month over the default 30-day cycle');
+  assert.equal(p11.add_qty, 17 + 5, 'Azamara paper is consumption + 5 (Ray 28 Oct 2026): 17 a month over the default 30-day cycle, + 5 cases');
   assert.equal(got2.find((f) => f.ship === 'Brilliance'), undefined,
     'dry 4 Feb, after the landing that follows the open order: the next order\'s business, silent');
   console.log('ok - runwayDb: a delivery landing first no longer hides a dry spell the open order could fix (Onward, 13 Oct)');
