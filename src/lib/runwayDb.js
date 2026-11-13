@@ -97,6 +97,7 @@ export async function fleetRunway(hon, today, opts = {}) {
     const idx = y * 12 + (m - 1) - n;
     return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
   };
+  const monthName = (ym) => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(String(ym).slice(5, 7)) - 1];
   const month = String(today).slice(0, 7);
   const fromMonth = monthsBack(month, 4);
 
@@ -110,9 +111,15 @@ export async function fleetRunway(hon, today, opts = {}) {
   // where it exists, the computed one stands in where it does not, and the
   // email says which it used. Absent table: the computed figure, as before.
   const haveObp = Boolean(await columnsOf(hon, CSV_CONSUMPTION));
+  // THE TABLE'S SOURCE COLUMN SAYS WHOSE FIGURE IT IS. Rows loaded from Ray's
+  // export carry 'ray-export'; rows our own fallback computed from the
+  // month-opens (tools/README.md, first run 1 Nov 2026) carry 'computed'. The
+  // email's "(OBP)" tag belongs only to the first: on 2 and 9 Nov 2026 it was
+  // printed beside computed October figures, and Ray read his own system's
+  // number where there was none ("usage is not 11, is 7").
   const obpm = haveObp
-    ? `SELECT ship, part_number, usage FROM ${CSV_CONSUMPTION} WHERE month = ?3`
-    : `SELECT NULL ship, NULL part_number, NULL usage WHERE 0`;
+    ? `SELECT ship, part_number, usage, source FROM ${CSV_CONSUMPTION} WHERE month = ?3`
+    : `SELECT NULL ship, NULL part_number, NULL usage, NULL source WHERE 0`;
 
   // Usage per month is Ray's formula, computed in SQL because the alternative
   // is pulling three years of snapshots for 48 ships into a Worker.
@@ -125,18 +132,48 @@ export async function fleetRunway(hon, today, opts = {}) {
              LAG(c.month) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev_month
         FROM consumption_snapshot c
        WHERE c.month < ?1 AND c.month >= ?2
-    ), used AS (
+    ), used0 AS (
       -- THE PREVIOUS ROW MUST BE THE PREVIOUS MONTH. LAG takes the row before,
       -- whatever month it is: with July missing, August's "usage" would be
       -- June's count plus August's receipts minus August's count - two months
       -- of use less July's receipts, read as one month. A comment here used to
       -- claim such a row "drops out as well"; it did not. Now it does.
       -- (No gap in the data on 13 Oct 2026: 10,106 of 10,106 pairs consecutive.)
-      SELECT ship, part_number, month, (prev + receipts - on_hand) u
+      SELECT ship, part_number, month, (prev + receipts - on_hand) u,
+             (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER)) mi
         FROM cons
-       WHERE prev IS NOT NULL AND (prev + receipts - on_hand) >= 0
+       WHERE prev IS NOT NULL
          AND (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER))
            - (CAST(substr(prev_month, 1, 4) AS INTEGER) * 12 + CAST(substr(prev_month, 6, 2) AS INTEGER)) = 1
+    ), used1 AS (
+      SELECT ship, part_number, month, u, mi,
+             LAG(u)   OVER (PARTITION BY ship, part_number ORDER BY month) prev_u,
+             LAG(mi)  OVER (PARTITION BY ship, part_number ORDER BY month) prev_mi,
+             LEAD(u)  OVER (PARTITION BY ship, part_number ORDER BY month) next_u,
+             LEAD(mi) OVER (PARTITION BY ship, part_number ORDER BY month) next_mi
+        FROM used0
+    ), used AS (
+      -- A NEGATIVE MONTH IS READ TOGETHER WITH THE MONTH BEFORE IT. A receipt
+      -- booked in one month and on the shelf in the next (RAY-LOGIC.md 4.4)
+      -- shows as one high month and one negative one: Infinity TN619Y, 9 Nov
+      -- 2026, September 16 (12 aboard + 16 received - 12), October -1 (12 + 0
+      -- - 13). Dropping the -1 as a typo and keeping the 16 made the email
+      -- plan on "12 average of 2 months" and add 7 toners to a long-haul
+      -- order; the two months together say 15 over 2, 7.5 a month, which is
+      -- Ray's 7. So the pair is shared evenly across both months and counts
+      -- as two months of the average. A negative month with no positive
+      -- month before it, or a pair that is still negative (the count rose
+      -- over two months with nothing booked in), is dropped as before.
+      SELECT ship, part_number, month, u, n FROM (
+        SELECT ship, part_number, month,
+               CASE WHEN u >= 0 AND next_u < 0 AND next_mi = mi + 1 AND u + next_u >= 0 THEN (u + next_u) / 2.0
+                    WHEN u < 0 AND prev_u >= 0 AND prev_mi = mi - 1 AND prev_u + u >= 0 THEN (prev_u + u) / 2.0
+                    WHEN u >= 0 THEN u END u,
+               CASE WHEN u >= 0 AND next_u < 0 AND next_mi = mi + 1 AND u + next_u >= 0 THEN 2
+                    WHEN u < 0 AND prev_u >= 0 AND prev_mi = mi - 1 AND prev_u + u >= 0 THEN 2
+                    ELSE 1 END n
+          FROM used1)
+       WHERE u IS NOT NULL
     ), agg0 AS (
       -- HOW MANY MONTHS THE AVERAGE IS ACTUALLY MADE OF.
       --
@@ -151,7 +188,8 @@ export async function fleetRunway(hon, today, opts = {}) {
       -- not have, on the very line added to make the figure auditable. Carry
       -- the count and say the true one.
       SELECT ship, part_number, AVG(u) avg3, COUNT(u) avg_months,
-             MAX(CASE WHEN month = ?3 THEN u END) lastm_calc
+             MAX(CASE WHEN month = ?3 THEN u END) lastm_calc,
+             MAX(CASE WHEN month = ?3 THEN n END) lastm_calc_months
         FROM used GROUP BY ship, part_number
     ), obpm AS (${obpm}),
     -- OBP's last-month figure over the computed one; and an item OBP reports
@@ -159,11 +197,13 @@ export async function fleetRunway(hon, today, opts = {}) {
     agg AS (
       SELECT a0.ship, a0.part_number, a0.avg3, a0.avg_months,
              COALESCE(m.usage, a0.lastm_calc) lastm,
-             CASE WHEN m.usage IS NOT NULL THEN 'obp' ELSE 'calc' END last_src
+             CASE WHEN m.usage IS NOT NULL AND COALESCE(m.source, '') <> 'computed' THEN 'obp' ELSE 'calc' END last_src,
+             CASE WHEN m.usage IS NOT NULL THEN 1 ELSE a0.lastm_calc_months END lastm_months
         FROM agg0 a0
         LEFT JOIN obpm m ON m.ship = a0.ship AND m.part_number = a0.part_number
       UNION ALL
-      SELECT m.ship, m.part_number, NULL avg3, 0 avg_months, m.usage lastm, 'obp' last_src
+      SELECT m.ship, m.part_number, NULL avg3, 0 avg_months, m.usage lastm,
+             CASE WHEN COALESCE(m.source, '') <> 'computed' THEN 'obp' ELSE 'calc' END last_src, 1 lastm_months
         FROM obpm m
        WHERE NOT EXISTS (SELECT 1 FROM agg0 a0 WHERE a0.ship = m.ship AND a0.part_number = m.part_number)
     )
@@ -220,7 +260,7 @@ export async function fleetRunway(hon, today, opts = {}) {
            -- only the answer, so there was nothing to check it against and the
            -- disagreement cost a round trip. Carry the inputs.
            ${RATE} rate,
-           a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months, a.last_src rate_source,
+           a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months, a.last_src rate_source, a.lastm_months rate_last_months,
            z.six_avg,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
            -- not an empty shelf: the export writes real zeros (1,445 of 3,481
@@ -294,6 +334,11 @@ export async function fleetRunway(hon, today, opts = {}) {
   // figure when it exists and is positive; everything else, and a floor-model
   // item without one, takes last month (or the average) as before. An item
   // whose chosen rate is not positive is not judged, as before.
+  let usageSource = 'calc';
+  if (haveObp) {
+    const m = await hon.prepare(`SELECT SUM(CASE WHEN COALESCE(source, '') <> 'computed' THEN 1 ELSE 0 END) obp, COUNT(*) n FROM ${CSV_CONSUMPTION} WHERE month = ?1`).bind(prevMonth).first();
+    usageSource = m && Number(m.obp) > 0 ? 'obp' : m && Number(m.n) > 0 ? 'computed' : 'calc';
+  }
   const rows = ((await hon.prepare(sql).bind(month, fromMonth, prevMonth, today, sixFrom).all()).results || [])
     .map((r) => {
       const six = r.six_avg == null ? null : Number(r.six_avg);
@@ -342,6 +387,11 @@ export async function fleetRunway(hon, today, opts = {}) {
         rate_avg: r.rate_avg == null ? null : Number(r.rate_avg),
         rate_avg_months: r.rate_avg_months == null ? null : Number(r.rate_avg_months),
         rate_source: r.rate_source || 'calc',
+        // 2 when last month's figure is a negative month read together with
+        // the one before it (the `used` CTE); the email then names both.
+        rate_last_months: r.rate_last_months == null ? null : Number(r.rate_last_months),
+        rate_last_span: Number(r.rate_last_months) === 2 ? `${monthName(monthsBack(prevMonth, 1))} and ${monthName(prevMonth)}` : null,
+        rate_last_month: monthName(prevMonth),
         // Set only when the item was planned on six months (floor-model).
         rate_six: r.rate_six,
       }, {
@@ -379,6 +429,8 @@ export async function fleetRunway(hon, today, opts = {}) {
     // The check ran, but on less than it should have: see monthEnd above.
     short,
     month_end: { month: prevMonth, rows: monthEndRows },
-    source: { inventory: src.inventory.source, intransit: src.intransit.source, consumption: haveObp ? 'obp' : 'calc' },
+    // 'obp' only when last month's rows are Ray's export; 'computed' when the
+    // table holds our own fallback for the month; 'calc' with no table or no row.
+    source: { inventory: src.inventory.source, intransit: src.intransit.source, consumption: usageSource },
   };
 }
