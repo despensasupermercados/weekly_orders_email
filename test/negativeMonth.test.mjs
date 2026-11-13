@@ -82,6 +82,24 @@ const text = (findings, ship) => renderWeekly([], [], today, { gaps: [], deliver
   assert.ok(!text([by.C], 'C').includes('(OBP)'), 'C carries no tag');
   assert.equal(r.source.consumption, 'obp', 'the run reads as OBP-sourced when any export row exists for the month');
 }
+// An item with no count history at all (a ship new to the export) is measured
+// from the table row alone; the tag still follows the row's source.
+{
+  const { hon, item, obpRow, db } = fresh();
+  item('E', 'A3VX430', 'TN619C CYAN TONER', []);
+  item('F', 'A3VX430', 'TN619C CYAN TONER', []);
+  obpRow('E', 'A3VX430', 'TN619C CYAN TONER', '2026-10', 11, 'computed');
+  obpRow('F', 'A3VX430', 'TN619C CYAN TONER', '2026-10', 11, 'ray-export');
+  const r = await fleetRunway(hon, today);
+  const e = r.findings.find((x) => x.ship === 'E'); const f = r.findings.find((x) => x.ship === 'F');
+  assert.ok(e && f, 'both measured from the table row');
+  assert.equal(e.rate_source, 'calc'); assert.equal(f.rate_source, 'obp');
+  assert.equal(e.rate_avg_months, 0);
+}
+// (The adjacency guards on the pair, prev_mi = mi - 1 and next_mi = mi + 1,
+// cannot be reached inside the four-month window the query reads: a month
+// with a consecutive predecessor whose previous measurable month is NOT the
+// month before it needs five months. They stay as guards for a wider window.)
 // The run-level source: a month with only computed rows is 'computed', an empty table 'calc'.
 {
   const { hon, item, obpRow } = fresh();
