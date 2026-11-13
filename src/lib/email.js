@@ -433,13 +433,27 @@ const fmt1 = (x) => (Number(x) < 10 ? String(Math.round(Number(x) * 10) / 10) : 
 const onAverage = (f) => f.rate_six == null && (f.rate_last == null || Number(f.rate_last) === 0);
 const shownRate = (f) => (f.rate_six != null ? fmt1(f.rate_six) : onAverage(f) ? fmt1(f.rate) : String(Math.round(f.rate)));
 
+// LAST MONTH'S FIGURE, AND WHOSE IT IS. "(OBP)" only when the figure is OBP's
+// own Consumption Statistic from Ray's monthly export (rate_source 'obp'), so
+// Ray reads his number, not ours, and knows which to check; a figure we
+// computed from the counts carries no tag. When last month's count rose with
+// nothing booked in, the figure is the two months read together (runwayDb.js,
+// the `used` CTE) and the line says so instead of calling it last month.
+function lastMonthText(f, last) {
+  if (f.rate_last == null) return 'no figure for last month';
+  if (Number(f.rate_last_months) === 2 && f.rate_last_span) {
+    return `${last} a month over ${f.rate_last_span}, read together: the ${f.rate_last_month} count went up`;
+  }
+  return `${last} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
+}
+
 function rateBasis(f) {
   if (f.rate_six != null) {
     const six = Number(f.rate_six);
     const sixText = shownRate(f);
     const lastSix = f.rate_last == null ? null : Math.round(f.rate_last);
     if (lastSix === Math.round(six) && Math.abs(six - lastSix) < 0.05) return '';
-    const lastSixText = f.rate_last == null ? 'no figure for last month' : `${lastSix} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
+    const lastSixText = lastMonthText(f, lastSix);
     return `<div style="font-family:${FB};font-size:11px;color:${SLATE};padding-top:1px;">`
       + `${sixText} a month over 6 months &middot; ${lastSixText} &middot; we plan on the 6-month average</div>`;
   }
@@ -454,9 +468,7 @@ function rateBasis(f) {
   const n = Number(f.rate_avg_months) || 0;
   const over = n > 1 ? ` of ${n} months` : '';
   const planned = onAverage(f) ? 'the average' : 'last month';
-  // "(OBP)" when the figure is OBP's own Consumption Statistic (Ray's monthly
-  // export), so Ray reads his number, not ours, and knows which to check.
-  const lastText = f.rate_last == null ? 'no figure for last month' : `${last} last month${f.rate_source === 'obp' ? ' (OBP)' : ''}`;
+  const lastText = lastMonthText(f, last);
   // The average is printed to the decimal only when it is the figure planned
   // on (then it must match the headline); as a reference beside last month it
   // stays whole, as Ray has read it since 23 Sep. The pair is shown when the
@@ -466,7 +478,8 @@ function rateBasis(f) {
   const parts = [];
   if (avgShown != null && avgShown !== String(last)) {
     parts.push(lastText, `${avgShown} average${over}`, `we plan on ${planned}`);
-  } else if (floor) {
+  } else if (floor || Number(f.rate_last_months) === 2) {
+    // A pair of months read together is always named, equal average or not.
     parts.push(lastText, `we plan on ${planned}`);
   }
   if (floor) parts.push('no 6-month figure');
