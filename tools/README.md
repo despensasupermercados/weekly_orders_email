@@ -120,3 +120,8 @@ Check it on 19 Oct data: 26 findings, the same rows production mailed
 ("27 to fix" = 26 + 1 ship with no schedule).
 
 Dumps are fleet data. Keep them in the session scratchpad, never in the repo.
+
+Rows with `source = 'computed'` are ours, not OBP's: the email prints their
+figure as "11 last month" with no "(OBP)" tag, and the run's usage source
+reads `computed` (13 Nov 2026). Ray's export replaces them, same key, and the
+tag returns with it.

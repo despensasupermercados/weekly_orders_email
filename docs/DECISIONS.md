@@ -7,6 +7,59 @@ connector. Newest at the top of each list. Dates are 2026.
 
 ## Decisions that shape the code (do not re-open)
 
+- **13 Nov — Ray's 9 Nov table: "(OBP)" only on his figure; a negative
+  month is read with the month before it; the rest is the usage source.**
+  Ray, on the 9 Nov fleet email, marked 7 of 16 rows Incorrect, every one of
+  them the usage figure: "usage is not 11, is 7" (Infinity cyan), Infinity
+  yellow 12 → 7, Pursuit cyan 10 → 5, magenta 9 → 5, 11x17 21 → 13, Onward
+  magenta 7 → 5, 11x17 14 → 12; and Pursuit TNP75 "no need for add, 5 coming
+  in December". He attached "Stats test.xlsx": one sheet per ship with
+  Ending Inventory, End of Month Consumption and his planned orders by
+  month ("Vessel orders are aligned till March 2027").
+  1. **The "(OBP)" tag was ours to lose.** Since 1 Nov
+     `weekly_obp_consumption` holds October rows with `source = computed`
+     (our fallback) beside September's `ray-export` rows. The label read the
+     table, not the column, so the 2 Nov (23 tags) and 9 Nov (15 tags)
+     emails printed "11 last month (OBP)" beside a figure we computed. Ray
+     read his own system's number where there was none. Now `rate_source`
+     is `obp` only for his rows; the run's usage source reads `computed`
+     when only ours exist. `test/negativeMonth.test.mjs`.
+  2. **The negative-month artifact, live.** Infinity TN619Y: 12 aboard end
+     of August, 16 received in September, 12 aboard end of September (16
+     used), 13 aboard end of October with nothing booked in (−1). The −1
+     was dropped as a typo and the 16 averaged: "no figure for last month ·
+     12 average of 2 months", and "Add 7" to a long-haul order. The two
+     months together are 15 over 2 = 7.5 a month, Ray's 7; at 7.5 the 11
+     aboard plus 24 arriving cover the 7 Feb landing and the row leaves the
+     list (replays of 2 and 9 Nov both). The `used` CTE now shares such a
+     pair evenly across both months, counts it as two months of the
+     average, and the line reads "8 a month over Sep and Oct, read together:
+     the Oct count went up". A negative month with no positive month before
+     it, or a pair still negative, is dropped as before. Fleet-wide on the
+     9 Nov data: 17 negative months Aug–Oct, 10 of them pairable; the only
+     other live change is Quest TNP75's average, 3.5 → 1.3 (the backlog's
+     own example; it plans on six months, so its add is unchanged).
+  3. **The other six rows are the usage source, not the rule.** Our October
+     figure is the count-based one (month-open 1 Oct + receipts − month-open
+     1 Nov) because Ray's October export has not come; it counts toner moved
+     to another ship as used (Vision "is borrowing from Allure"). His figures
+     sit at or below the 3-month average on every disputed row (Pursuit
+     cyan: Aug 5, Sep 6, Oct 10; his 5), and his table's header is
+     "Average", though his rule since 12 Oct is last month. Not changed:
+     one measured question to him, with both inputs, in the Ray draft of
+     13 Nov; his export replaces the computed rows when it arrives.
+  4. **Pursuit TNP75 "no need for add".** 1 aboard, 1.3 a month, 5 landing
+     19 Dec and 2 on 20 Jan; the order due 23 Nov lands 24 Feb with about 4
+     aboard, so the par rule said "Add 1". Ray reads the December 5 as the
+     fix and judges February at month end. Left as is: a one-unit top-up on
+     a par item, and PR #60 (another session, 11 Nov, Ray 28 Oct: floor
+     models on overall consumption, never below par) now sets that line.
+  Note: PR #60 landed on main from another session between #59 and this
+  work (Azamara print-shop toner +4, Azamara paper + 5 safety, MFD toner
+  top-up to max(usage, par); Brain recL5lRUS6tClwMbj). Replays here ran on
+  top of it: Pursuit cyan now "12 used in 35 days + 4 spare", 11x17 "+ 5
+  safety".
+
 - **1 Nov — October usage loaded from our own counts (`source = computed`),
   523 rows, 50 ships.** Ray's October export had not arrived by 10:00 UTC, so
   the fallback in `tools/README.md` ran against the month-opens of 1 Oct
@@ -538,8 +591,9 @@ Read the live log before the code, then the code with a fault injected.
 
 ## Backlog — not built, on purpose
 
-- **The average drops a negative month and keeps its inflated neighbour
-  (found 19 Oct).** A receipt booked in one month and counted on the shelf in
+- **BUILT 13 Nov (see the 13 Nov entry): a negative month is now read with
+  the month before it.** Kept for the record: **The average drops a negative
+  month and keeps its inflated neighbour (found 19 Oct).** A receipt booked in one month and counted on the shelf in
   the next (§4.4 of RAY-LOGIC.md) shows as one high month and one negative
   one; `runwayDb.js` drops the negative as a typo and averages the high one.
   Quest TNP75 on 19 Oct: August 6, September −3 (dropped), so the email
