@@ -37,13 +37,20 @@ export const INGEST_SOURCE = 'weekly-orders-email';
 
 // Ray publishes the Azamara MLS monthly. A month plus a week of slack.
 export const AZAMARA_MAX_SILENCE_DAYS = 40;
+// Ray's monthly usage export is due in the first week of the month
+// (tools/README.md). From this day it is missing; a week later it is critical,
+// so the night check repeats it weekly until it lands.
+export const RAY_EXPORT_DUE_DAY = 8;
+export const RAY_EXPORT_CRITICAL_DAY = 15;
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 import { voyageStates, dataFaults, escalations, MISSED_CREW_DAYS } from './due.js';
 import { quantityFindings, rulesFrom } from './quantity.js';
 import { anomalyFindings } from './anomaly.js';
 import { SEND_FAILED_MARK } from './sendNote.js';
 import { normShip } from './fleet.js';
-import { obpSource } from './obpSource.js';
+import { obpSource, CSV_CONSUMPTION } from './obpSource.js';
+import { columnsOf } from './schema.js';
 
 const one = async (db, sql, ...b) => (await db.prepare(sql).bind(...b).first()) || {};
 const many = async (db, sql, ...b) => ((await db.prepare(sql).bind(...b).all()).results || []);
@@ -530,6 +537,41 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
     } catch (e) {
       add('warn', 'delivery_blocked', `delivery check threw: ${String(e && e.message || e)}`);
     }
+  }
+
+  // ---- 16. Is last month's usage OBP's figure, or only ours? ----
+  // The email plans on last month's usage (Ray, 12 Oct 2026). OBP's figure,
+  // from Ray's monthly export, nets everything OBP knows. Ours is the counts,
+  // with transfers to other ships netted and nothing else (transfers.js).
+  // Ray's October 2026 export never came: the 16 Nov email planned on our
+  // October, and two of the five lines Ray checked were wrong on usage
+  // (Infinity: 4 toners sent to Eclipse; Pursuit: counts he says are wrong).
+  // Nothing anywhere said the export was missing. This says it, to Miguel.
+  // A row counts as OBP's when its source is not 'computed', the engine's
+  // own test (runwayDb.js). No table: the Worker's DDL has not run, which the
+  // other checks surface; this one says nothing rather than guess.
+  try {
+    const day = Number(String(today).slice(8, 10));
+    const cols = day >= RAY_EXPORT_DUE_DAY ? await columnsOf(hon, CSV_CONSUMPTION) : null;
+    if (cols && cols.has('source')) {
+      const [y, mo] = String(today).slice(0, 7).split('-').map(Number);
+      const idx = y * 12 + (mo - 1) - 1;
+      const prev = `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
+      const name = MONTHS[idx % 12];
+      const m = await one(hon,
+        `SELECT SUM(CASE WHEN COALESCE(source, '') <> 'computed' THEN 1 ELSE 0 END) obp,
+                SUM(CASE WHEN source = 'computed' THEN 1 ELSE 0 END) ours
+           FROM ${CSV_CONSUMPTION} WHERE month = ?`, prev);
+      if (!Number(m.obp)) {
+        add(day >= RAY_EXPORT_CRITICAL_DAY ? 'critical' : 'warn', 'usage_export',
+          `Ray's ${name} usage export from OBP is not loaded. The Monday email plans on ` +
+          (Number(m.ours) ? `our own ${name} figures, from the counts` : `cims-hon's month-end counts`) +
+          `, which cannot see a count corrected on board. Ask Ray for the three brand files ` +
+          `and load them with tools/ray-export.mjs`);
+      }
+    }
+  } catch (e) {
+    add('warn', 'usage_export_blocked', `usage export check threw: ${String(e && e.message || e)}`);
   }
 
   return {
