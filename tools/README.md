@@ -8,6 +8,7 @@ Only this Worker's own `weekly_*` tables are ever written that way.
 | Script | What it is for |
 |---|---|
 | `ray-export.mjs` | Load Ray's monthly OBP export into `weekly_obp_consumption`, the usage the email plans on |
+| `computed-month.mjs` | Our own figure for a month when Ray's export has not come, transfers to other ships netted |
 | `replay.mjs` | Re-run the Monday email's engine on saved data, to prove a rule change before it ships |
 | `mast-check.sh` | Prove `src/cims-mast.js` is byte-identical to the canonical letterhead |
 
@@ -49,36 +50,27 @@ when it is loaded, otherwise from our own counts. Each month:
 **If the export has not come by the 1st**, load our own figure so Monday plans
 on the month that ended. Then ask Ray for the file; when it arrives, step 4
 replaces these rows (same key, source `ray-export`).
-Preview with the SELECT alone, then run the whole statement. The two dates are
-the month-opens step 1 finds for October and November:
+Print the statement with the tool, then run it through the D1 tool. The two
+dates are the month-opens step 1 finds for the month and the month after:
 
-```sql
-INSERT OR REPLACE INTO weekly_obp_consumption
-  (ship, part_number, description, month, begin_qty, additions, end_qty, usage, source)
-SELECT b.ship, b.part_number, b.description, '2026-10',
-       b.on_hand, COALESCE(r.q, 0), e.on_hand,
-       b.on_hand + COALESCE(r.q, 0) - e.on_hand, 'computed'
-  FROM weekly_obp_month_open b
-  JOIN weekly_obp_month_open e
-    ON e.ship = b.ship AND e.part_number = b.part_number AND e.snapshot_date = '2026-11-01'
-  LEFT JOIN (SELECT ship, part_number, SUM(accepted_qty) q
-               FROM weekly_obp_order
-              WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM weekly_obp_order)
-                AND received_date >= '2026-10-01' AND received_date < '2026-11-01'
-              GROUP BY ship, part_number) r
-    ON r.ship = b.ship AND r.part_number = b.part_number
- WHERE b.snapshot_date = '2026-10-01'
-   AND (b.description LIKE '%TONER%' OR b.description LIKE '%PAPER%' OR b.description LIKE '%CARD STOCK%'
-        OR b.description LIKE '%GLOSS%' OR b.description LIKE '%RADIANT%')
-   AND b.description NOT LIKE '%FEED%' AND b.description NOT LIKE '%ROLLER%' AND b.description NOT LIKE '%KIT%'
-   AND b.on_hand + COALESCE(r.q, 0) - e.on_hand >= 0;
 ```
+node tools/computed-month.mjs 2026-10 2026-10-01 2026-11-01 out.sql
+```
+
+It writes Begin + what the ship accepted in the month - End, LESS WHAT THE SHIP
+SENT TO ANOTHER SHIP: a line another ship accepted with "transfer from <ship>"
+in its PO number or vendor invoice (`src/lib/transfers.js`, the same rule the
+Monday email runs). It never replaces a row from Ray's export and does not
+write a month that goes negative. Until 16 Nov 2026 the statement lived here
+and did not net transfers: October's Infinity cyan read 11 where OBP's rule
+gives 7, and Ray struck the line.
 
 This was measured on September, 19 Oct, using Ray's Beginning in place of
 the 1 Sep count, which was not kept. The receipts-and-ending half equals Ray's
 Usage on 401 of 420 rows. These are the 19 that differ, all known shapes
 (`docs/RAY-LOGIC.md` §4):
-- **Transfers out.** Ours is 10 higher: Brilliance ×2, Constellation, Ascent.
+- **Transfers out.** Ours was 10 higher: Brilliance ×2, Constellation, Ascent.
+  Netted since 16 Nov 2026 (`transfers.js`): all four now equal Ray's figure.
 - **A transfer received.** Ours is lower: Legend cyan.
 - **Receipts booked before they reach the shelf:** Spectrum, Infinity.
 - **Silhouette radiant**, with OBP's IT.
