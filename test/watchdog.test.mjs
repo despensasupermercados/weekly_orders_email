@@ -512,3 +512,33 @@ console.log('ok - watchdog: a failed MLS swap that wrote nothing has its parked 
   assert.match(join.detail, /Summit/);
 }
 console.log('ok - watchdog: the ship-name join is checked against the in-transit copy the readers actually use');
+
+// ---- 16. Ray's monthly usage export ----
+// The 16 Nov 2026 email planned on our own October because Ray's October
+// export never came, and nothing said so. From the 8th the night check names
+// the missing month; from the 15th it is critical (repeated weekly).
+{
+  const { RAY_EXPORT_DUE_DAY, RAY_EXPORT_CRITICAL_DAY } = await import('../src/lib/watchdog.js');
+  const usage = (row) => [
+    ['PRAGMA table_info(weekly_obp_consumption)', ['ship', 'part_number', 'month', 'usage', 'source'].map((name) => ({ name }))],
+    ['FROM weekly_obp_consumption WHERE month', row],
+    ...base,
+  ];
+  const run = async (row, day) => (await runWatchdog({ HON: fakeDb(usage(row)) }, day, { repair: false }))
+    .findings.filter((f) => f.check.startsWith('usage_export'));
+  const nov16 = await run({ obp: 0, ours: 523 }, '2026-11-16');
+  assert.equal(nov16.length, 1, 'October missing on 16 Nov is named');
+  assert.equal(nov16[0].severity, 'critical', 'a week past due it repeats weekly');
+  assert.match(nov16[0].detail, /^Ray's October usage export from OBP is not loaded\. The Monday email plans on our own October figures, from the counts/);
+  assert.match(nov16[0].detail, /tools\/ray-export\.mjs$/);
+  const nov9 = await run({ obp: 0, ours: 523 }, '2026-11-09');
+  assert.equal(nov9[0].severity, 'warn', 'in its second week it is a warning');
+  assert.match(nov9[0].detail, /cannot see a count corrected on board/);
+  assert.equal((await run({ obp: 0, ours: 0 }, '2026-11-09'))[0].detail.includes("cims-hon's month-end counts"), true, 'no fallback loaded either: says what is planned on');
+  assert.equal((await run({ obp: 443, ours: 0 }, '2026-11-16')).length, 0, 'loaded: silent');
+  assert.equal((await run({ obp: 0, ours: 523 }, '2026-11-07')).length, 0, 'first week: not yet due');
+  const jan = await run({ obp: 0, ours: 0 }, '2027-01-20');
+  assert.match(jan[0].detail, /^Ray's December usage export/, 'January asks for December');
+  assert.ok(RAY_EXPORT_DUE_DAY === 8 && RAY_EXPORT_CRITICAL_DAY === 15);
+  console.log('ok - watchdog: a missing monthly usage export from Ray is named from the 8th and repeated weekly from the 15th');
+}
