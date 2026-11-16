@@ -9,19 +9,23 @@
 import { inService } from './fleetStatus.js';
 import { require_, columnsOf } from './schema.js';
 import { runsOutFirst, withQuantity, byDueDate, isFloorModel, FLOOR_MODEL_MONTHS } from './runway.js';
-import { obpSource, CSV_CONSUMPTION } from './obpSource.js';
+import { obpSource, CSV_CONSUMPTION, CSV_ORDERS } from './obpSource.js';
+import { transfersOutSql, NO_TRANSFERS_SQL, TRANSFER_COLS } from './transfers.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
 // hardcoded list would have silently dropped black from the newer presses.
 // The NOT LIKEs remove the machine parts that merely carry the word "paper".
-const ITEM_FILTER = `(
-      p.description LIKE '%TONER%' OR p.description LIKE '%PAPER%'
-   OR p.description LIKE '%CARD STOCK%' OR p.description LIKE '%GLOSS%'
-   OR p.description LIKE '%RADIANT%')
-  AND p.description NOT LIKE '%FEED%'
-  AND p.description NOT LIKE '%ROLLER%'
-  AND p.description NOT LIKE '%KIT%'`;
+// Exported as a function of the alias so tools/computed-month.mjs loads the
+// same items this check plans on.
+export const itemFilter = (a) => `(
+      ${a}.description LIKE '%TONER%' OR ${a}.description LIKE '%PAPER%'
+   OR ${a}.description LIKE '%CARD STOCK%' OR ${a}.description LIKE '%GLOSS%'
+   OR ${a}.description LIKE '%RADIANT%')
+  AND ${a}.description NOT LIKE '%FEED%'
+  AND ${a}.description NOT LIKE '%ROLLER%'
+  AND ${a}.description NOT LIKE '%KIT%'`;
+const ITEM_FILTER = itemFilter('p');
 
 export const HORIZON_DAYS = 120;
 
@@ -121,12 +125,23 @@ export async function fleetRunway(hon, today, opts = {}) {
     ? `SELECT ship, part_number, usage, source FROM ${CSV_CONSUMPTION} WHERE month = ?3`
     : `SELECT NULL ship, NULL part_number, NULL usage, NULL source WHERE 0`;
 
+  // TONER SENT TO ANOTHER SHIP, read from the receiving ship's order lines
+  // (transfers.js says how and why). Taken off the sender's month below, in
+  // the monthly figures and in the six-month window, so a month in which the
+  // ship lent stock away is not read as a month it printed more. Ray's export
+  // rows already net it (OBP's own figure) and are not touched. Without the
+  // order lines on file nothing is netted and the run says it ran short.
+  const ordCols = await columnsOf(hon, CSV_ORDERS);
+  const haveOrders = Boolean(ordCols) && TRANSFER_COLS.every((c) => ordCols.has(c));
+  const xferSql = haveOrders ? transfersOutSql('?5') : NO_TRANSFERS_SQL;
+
   // Usage per month is Ray's formula, computed in SQL because the alternative
   // is pulling three years of snapshots for 48 ships into a Worker.
   // A negative usage is a mistyped ending inventory (the Pursuit failure) and
   // is dropped here rather than allowed to drag an average down.
   const sql = `
-    WITH cons AS (
+    WITH xfer AS (${xferSql}
+    ), cons AS (
       SELECT c.ship, c.part_number, c.month, c.on_hand, c.receipts,
              LAG(c.on_hand) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev,
              LAG(c.month) OVER (PARTITION BY c.ship, c.part_number ORDER BY c.month) prev_month
@@ -139,12 +154,14 @@ export async function fleetRunway(hon, today, opts = {}) {
       -- of use less July's receipts, read as one month. A comment here used to
       -- claim such a row "drops out as well"; it did not. Now it does.
       -- (No gap in the data on 13 Oct 2026: 10,106 of 10,106 pairs consecutive.)
-      SELECT ship, part_number, month, (prev + receipts - on_hand) u,
-             (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER)) mi
-        FROM cons
-       WHERE prev IS NOT NULL
-         AND (CAST(substr(month, 1, 4) AS INTEGER) * 12 + CAST(substr(month, 6, 2) AS INTEGER))
-           - (CAST(substr(prev_month, 1, 4) AS INTEGER) * 12 + CAST(substr(prev_month, 6, 2) AS INTEGER)) = 1
+      -- Less what the ship sent to another ship that month (xfer).
+      SELECT c.ship, c.part_number, c.month, (c.prev + c.receipts - c.on_hand - COALESCE(x.qty, 0)) u,
+             (CAST(substr(c.month, 1, 4) AS INTEGER) * 12 + CAST(substr(c.month, 6, 2) AS INTEGER)) mi
+        FROM cons c
+        LEFT JOIN xfer x ON x.ship = c.ship AND x.part_number = c.part_number AND x.month = c.month
+       WHERE c.prev IS NOT NULL
+         AND (CAST(substr(c.month, 1, 4) AS INTEGER) * 12 + CAST(substr(c.month, 6, 2) AS INTEGER))
+           - (CAST(substr(c.prev_month, 1, 4) AS INTEGER) * 12 + CAST(substr(c.prev_month, 6, 2) AS INTEGER)) = 1
     ), used1 AS (
       SELECT ship, part_number, month, u, mi,
              LAG(u)   OVER (PARTITION BY ship, part_number ORDER BY month) prev_u,
@@ -209,16 +226,22 @@ export async function fleetRunway(hon, today, opts = {}) {
     )
     -- Six months of counts for the floor-model rate (SIX_MONTHS above): the
     -- count at the end of ?5, every receipt after it, the count at the end of
-    -- last month. Only when all seven month-end rows are on file.
-    , six AS (
-      SELECT ship, part_number,
-             (MAX(CASE WHEN month = ?5 THEN on_hand END)
-              + SUM(CASE WHEN month > ?5 THEN COALESCE(receipts, 0) ELSE 0 END)
-              - MAX(CASE WHEN month = ?3 THEN on_hand END)) / ${SIX_MONTHS}.0 six_avg
-        FROM consumption_snapshot
-       WHERE month >= ?5 AND month <= ?3
-       GROUP BY ship, part_number
-      HAVING COUNT(DISTINCT month) = ${SIX_MONTHS + 1}
+    -- last month, less what was sent to other ships in those six months.
+    -- Only when all seven month-end rows are on file.
+    , xsix AS (
+      SELECT ship, part_number, SUM(qty) qty FROM xfer
+       WHERE month > ?5 AND month <= ?3 GROUP BY ship, part_number
+    ), six AS (
+      SELECT c.ship, c.part_number,
+             (MAX(CASE WHEN c.month = ?5 THEN c.on_hand END)
+              + SUM(CASE WHEN c.month > ?5 THEN COALESCE(c.receipts, 0) ELSE 0 END)
+              - MAX(CASE WHEN c.month = ?3 THEN c.on_hand END)
+              - COALESCE(MAX(xs.qty), 0)) / ${SIX_MONTHS}.0 six_avg
+        FROM consumption_snapshot c
+        LEFT JOIN xsix xs ON xs.ship = c.ship AND xs.part_number = c.part_number
+       WHERE c.month >= ?5 AND c.month <= ?3
+       GROUP BY c.ship, c.part_number
+      HAVING COUNT(DISTINCT c.month) = ${SIX_MONTHS + 1}
     )
     -- Every open line, with its Excel-serial ETA already a date. Read once.
     -- A LATE DELIVERY IS STILL A DELIVERY. A line still in the in-transit
@@ -327,8 +350,12 @@ export async function fleetRunway(hon, today, opts = {}) {
   // the run reports it (coverage: "ran short") rather than looking healthy.
   const monthEnd = await hon.prepare(`SELECT COUNT(*) n FROM consumption_snapshot WHERE month = ?1`).bind(prevMonth).first();
   const monthEndRows = Number((monthEnd && monthEnd.n) || 0);
-  const short = monthEndRows ? null
-    : `consumption_snapshot has no month-end counts for ${prevMonth} yet, so floor-model toner planned on last month instead of six months and the average is one month short`;
+  const short = [
+    monthEndRows ? null
+      : `consumption_snapshot has no month-end counts for ${prevMonth} yet, so floor-model toner planned on last month instead of six months and the average is one month short`,
+    haveOrders ? null
+      : `${CSV_ORDERS} is not on file, so toner a ship sent to another ship counts as toner it used`,
+  ].filter(Boolean).join('; ') || null;
 
   // The rate each item is planned on. Floor-model items take the six-month
   // figure when it exists and is positive; everything else, and a floor-model

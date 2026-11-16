@@ -30,7 +30,9 @@ up as needed, with **zero tolerance** for a toner at nil: its paper is
 consumption **+ 5 cases**, its print-shop toner consumption **+ 4** (28 Oct).
 MFD toner and waste bottles go on **overall consumption, never below the OBP
 par** (Ray 28 Oct, Miguel 11 Nov). He trusts **OBP's own usage figure**, which on
-about 1% of rows is lower than the arithmetic of its counts. He reads the
+about 1% of rows is lower than the arithmetic of its counts; most of those
+rows are stock **sent to another ship**, which is not usage and which our own
+figure has netted out since 16 Nov (§4.2). He reads the
 **due date** as the deadline: after it the order "is processed or it's missed".
 
 ## 2. The rules, each with its source and where it lives in the code
@@ -41,6 +43,7 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
 | A zero month → plan on the average | "correct" (Q3, Quest WX-103: 2, 2, then 0) | 13 Oct | `RATE` = `COALESCE(NULLIF(lastm,0), avg)` |
 | Floor-model toner and waste bottles plan on six months | asked whether TN324, TN514, TNP75, TNP79, TN-328 and WX-103 should plan on the 6-month average while paper and C4070 toner stay on last month: "yes. six month average would work better for the floor models toners." | 22 Oct | `runwayDb.js` six-month window (`FLOOR_MODEL_MONTHS`, `isFloorModel`); email "we plan on the 6-month average"; falls back to last month without seven month-end counts |
 | OBP's usage figure over our computed one | the September export, one sheet per ship | 14 Oct | `weekly_obp_consumption`; email "(OBP)" only on a `ray-export` row, never on our `computed` fallback (13 Nov) |
+| Stock sent to another ship is not usage | 16 Nov spot check, Infinity TN619C: "Incorrect consumption. Ship uses between 7-8 toners" (we said 11; 4 went to Eclipse, "transfer from infinity") | 16 Nov | `transfers.js`; `runwayDb.js` `xfer` CTE (monthly figures, average, six months); `tools/computed-month.mjs` |
 | A negative month is read together with the month before it | his 9 Nov table: Infinity yellow "usage is not 12, is 7" (Sep 16, Oct −1 → 7.5) | 13 Nov | `runwayDb.js` `used` CTE; email "8 a month over Sep and Oct, read together" |
 | Every ordered delivery counts, late ones too | Oasis, 40 cases due 11 Oct still in transit: "no paper order required" | 12 Oct | `transit` CTE, late = today; email "overdue since" |
 | Act when the shelf empties before the next delivery the open order could beat | Q4 above | 13 Oct | `runsOutFirst` (PR #35, #39) |
@@ -110,7 +113,15 @@ about 1% of rows is lower than the arithmetic of its counts. He reads the
    11x17 and 8.5x11, Constellation 11x17: "10 cases transferred to Legend";
    "most of the above is related to transfers, which the other ship accepts
    the order on OBP." The receiving ship books the transfer as an Addition
-   (Legend's September Additions, 60, carry them). Silhouette radiant
+   (Legend's September Additions, 60, carry them).
+   **The transfer is in our own data (16 Nov).** The receiver's accepted
+   line carries the sender in its PO number or vendor invoice: "transfer from
+   infinity", "transferred from beyond", "transfer from celebrity edge",
+   "return from quest". Netting those lines off the sender reproduces OBP's
+   September figure on all four transfer rows above (10 each) and flags no
+   row where OBP's figure equals the arithmetic. Built 16 Nov
+   (`transfers.js`): the email's monthly figures, its average and the
+   six-month window net them, and so does our computed fallback month. Silhouette radiant
    (16 → 1): "IT will be checking this one … Silhouette is an issue and has
    been sent to IT for review." Our own formula overstates a sender's usage by
    the transfer; Ray's export is the source (Brain recg5ns8T9RAGYj0G).
@@ -271,6 +282,26 @@ HON (cims-hon) still runs the old usage and buffer. Push access to cims-hon was
 refused on 16 Oct, so the change is written as a brief with a paste-in prompt:
 `docs/cims-hon-ordering-rules-handoff-2026-10-16.md`. The INV_04 and INV_06
 canonical docs need the same update; they sit with cims-hon.
+
+## 6b. Spot check of the 16 Nov 2026 email (five rows)
+
+Miguel forwarded the email: "Plz spot check .. 5". Ray's verdicts, verbatim:
+
+| Ship · item | Email said | Ray | What the data says |
+|---|---|---|---|
+| Vision TN634K | add 3, 5 a month | "Correct" · "Vessel is borrowing toner from Allure on Nov 25th" | nothing to change; the loan will show as Vision's Addition and come off Allure's month |
+| Legend waste box (DG3) | add 12 | "Correct" · "Ship has order for 12/06/2026 arrival" | the 12-piece rule (27 Oct fix) holds |
+| Infinity TN619C | 11 a month, add 9 | "Incorrect consumption" · "Ship uses between 7-8 toners, ship will adjust March order as needed" | **he was right**: Eclipse accepted 4 on 14 Oct, "transfer from infinity"; 11 - 4 = 7. Fixed (§4.2) |
+| Pursuit TN619C | 10 a month, add 10 | "Incorrect consumption" · "Kevin left the ship with inventory count errors, not 10 in consumption" | no transfer out. The counts say 13 → 8 in October with 5 received, and 8 → 4 from 1 to 15 Nov. Magenta moved the same way (9 in October). If the counts are wrong, the 4 aboard is wrong too: a recount settles it, code cannot |
+| Quest TN619C | nothing to add | "Correct" · "Vessel in drydock, nothing to order right now" | the email also said "7 days after you run out"; dry-dock dates are not on file, so the shelf is drawn down at the normal rate. Not built: no source for the dates |
+
+Lessons kept:
+- A month that jumps above the months before it is either stock that left
+  the ship (now netted when another ship accepted it) or a count problem.
+  Code can only fix the first.
+- October's figure is ours (`computed`); Ray's October export never came.
+  His export nets everything OBP knows; ours nets only what the receiver
+  wrote down.
 
 ## 7. How to work with Ray (standing rules, learned the hard way)
 
