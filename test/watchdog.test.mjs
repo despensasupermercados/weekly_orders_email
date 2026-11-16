@@ -533,7 +533,7 @@ console.log('ok - watchdog: the ship-name join is checked against the in-transit
   assert.match(nov16[0].detail, /tools\/ray-export\.mjs$/);
   const nov9 = await run({ obp: 0, ours: 523 }, '2026-11-09');
   assert.equal(nov9[0].severity, 'warn', 'in its second week it is a warning');
-  assert.match(nov9[0].detail, /cannot see a count corrected on board/);
+  assert.match(nov9[0].detail, /from the counts, not OBP's own figure\. Ask Ray/);
   assert.equal((await run({ obp: 0, ours: 0 }, '2026-11-09'))[0].detail.includes("cims-hon's month-end counts"), true, 'no fallback loaded either: says what is planned on');
   assert.equal((await run({ obp: 443, ours: 0 }, '2026-11-16')).length, 0, 'loaded: silent');
   assert.equal((await run({ obp: 0, ours: 523 }, '2026-11-07')).length, 0, 'first week: not yet due');

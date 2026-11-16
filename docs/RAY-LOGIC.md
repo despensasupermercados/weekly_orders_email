@@ -183,6 +183,18 @@ figure has netted out since 16 Nov (§4.2). He reads the
     19 Oct data gives 26 rows; the email's subject said "27 to fix" (26 + 1
     with no schedule).
 
+16. **The monthly CIMS report workbooks are OBP's month-end snapshot, not
+    Ray's usage export.** Miguel sent ten on 16 Nov ("JAN_2026_CIMS_Report"
+    to "OCT_2026_CIMS_File"): the three OBP sheets (acceptedorderdetails,
+    intransititems, onboardinventory) as at each month's last day, plus pivot
+    tabs. Checked against `consumption_snapshot`, consumables, 48 ships:
+    February to October agree to the unit (e.g. October 8,838 units on 419
+    rows); January differs on one row, Onward 8.5x11, 21 in the file and 17 on
+    file, outside every planning window. They carry no Usage column, so they
+    do not replace Ray's export; with transfers netted (§4.2) our arithmetic applies
+    OBP's formula to them. The "CIMS Final Data" rollup tab in the July to
+    October files still holds 2025 only.
+
 ## 5. Contradictions the Brain still carries — for Miguel to settle
 
 1. **Usage rule — SETTLED 15 Oct.** Ray: "for the HON, i would recommend
