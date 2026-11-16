@@ -566,7 +566,7 @@ export async function runWatchdog(env, today, { repair = true } = {}) {
         add(day >= RAY_EXPORT_CRITICAL_DAY ? 'critical' : 'warn', 'usage_export',
           `Ray's ${name} usage export from OBP is not loaded. The Monday email plans on ` +
           (Number(m.ours) ? `our own ${name} figures, from the counts` : `cims-hon's month-end counts`) +
-          `, which cannot see a count corrected on board. Ask Ray for the three brand files ` +
+          `, not OBP's own figure. Ask Ray for the three brand files ` +
           `and load them with tools/ray-export.mjs`);
       }
     }
