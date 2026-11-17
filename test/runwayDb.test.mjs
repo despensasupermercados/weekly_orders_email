@@ -216,11 +216,16 @@ console.log('     never at a container whose order already closed; no schedule -
   const got = (await fleetRunway(d1(rdb), T)).findings;
   const row = (ship) => got.find((f) => f.ship === ship);
 
-  assert.equal(row('Freedom'), undefined,
-    `Freedom plans on last month's 3, its 14 reach the 14 Jan delivery; nothing to ask: ${JSON.stringify(row('Freedom'))}`);
+  // SUPERSEDED 17 NOV 2026: THE HIGHER OF LAST MONTH AND THE AVERAGE (Ray: "review
+  // consumption vs last 3 months"; Miguel: "the higher of"). Freedom and Star are the
+  // rows Ray struck on 12 Oct under the same rule; they come back by decision, and
+  // these asserts say so rather than hide it.
+  assert.ok(row('Freedom'), 'Freedom plans on the higher 4.7 again and its 14 run out three days before 14 Jan');
+  assert.equal(row('Freedom').rate.toFixed(1), '4.7');
+  assert.equal(row('Freedom').rate_avg_skipped, null, 'no month in 6, 5, 3 looks mistyped');
 
   assert.ok(row('Star'), 'Star, 2 aboard, runs out either way');
-  assert.equal(row('Star').rate, 3, 'Star plans on last month (3), not the average (7) and not the higher one');
+  assert.equal(row('Star').rate, 7, 'Star plans on the higher of last month (3) and the average (7)');
   assert.equal(row('Star').rate_last, 3);
 
   assert.ok(row('Utopia'), 'Utopia runs out');
@@ -237,7 +242,7 @@ console.log('     never at a container whose order already closed; no schedule -
   assert.ok(row('Quest'), 'Quest WX-103, none aboard, used 2 and 2 before a zero month: still in the email');
   assert.equal(row('Quest').rate_last, 0);
   assert.equal(row('Quest').rate, 1.3, 'the zero month falls back to the average of 2, 2, 0 (1.3 as carried)');
-  console.log('ok - runwayDb: usage is last month (Ray 12 Oct); the average only when last month has no figure or reads zero');
+  console.log('ok - runwayDb: usage is the higher of last month and the average (17 Nov); the average alone when last month has no figure or reads zero');
 }
 
 // A DRY SPELL BETWEEN TWO PLANNED DELIVERIES (12 Oct 2026). The stock walk saw

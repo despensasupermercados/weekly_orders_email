@@ -11,6 +11,7 @@ import { require_, columnsOf } from './schema.js';
 import { runsOutFirst, withQuantity, byDueDate, isFloorModel, FLOOR_MODEL_MONTHS } from './runway.js';
 import { obpSource, CSV_CONSUMPTION, CSV_ORDERS } from './obpSource.js';
 import { transfersOutSql, NO_TRANSFERS_SQL, TRANSFER_COLS } from './transfers.js';
+import { skippedMonth, rateWithout } from './spike.js';
 
 // The consumables the fleet orders [recQ2a7KrEQhosimV]. Matched on description:
 // the black toner part number already changed once (TN619K -> TN634K) and a
@@ -41,7 +42,15 @@ export const HORIZON_DAYS = 120;
 // 13 Oct ("correct"), asked about Quest's WX-103 waste box: 0 aboard on
 // 12 Oct, used 2 in July, 2 in August, 0 in September. Planning on zero would
 // have removed it from the email when stock was lowest.
-const RATE = 'COALESCE(NULLIF(a.lastm, 0), a.avg3)';
+// THE HIGHER OF LAST MONTH AND THE AVERAGE, AGAIN (17 Nov 2026). Voyager's HON
+// audit planned yellow toner on October's 2 against a 3-month 3; Ray, 17 Nov:
+// "HON should review consumption vs last 3 months, in the case ship was
+// transition, dry dock, it does not expect to have low usage"; Miguel: "the
+// higher of last month and the 3-month average". The rule above was dropped on
+// 12 Oct for the Solstice radiant and Freedom yellow rows Ray struck; it is back
+// on his newer word, in both apps the same day (cims-hon planningRate, v52).
+// A zero or unmeasured last month still falls to the average.
+const RATE = 'CASE WHEN a.lastm > 0 AND a.avg3 > 0 THEN MAX(a.lastm, a.avg3) ELSE COALESCE(NULLIF(a.lastm, 0), a.avg3) END';
 
 // FLOOR-MODEL TONER IS PLANNED ON SIX MONTHS, NOT ONE. Ray, 22 Oct 2026, asked
 // whether floor-model toner and waste bottles (TN324, TN514, TNP75, TNP79,
@@ -205,6 +214,7 @@ export async function fleetRunway(hon, today, opts = {}) {
       -- not have, on the very line added to make the figure auditable. Carry
       -- the count and say the true one.
       SELECT ship, part_number, AVG(u) avg3, COUNT(u) avg_months,
+             GROUP_CONCAT(month || '=' || u) avg3_detail,
              MAX(CASE WHEN month = ?3 THEN u END) lastm_calc,
              MAX(CASE WHEN month = ?3 THEN n END) lastm_calc_months
         FROM used GROUP BY ship, part_number
@@ -212,14 +222,14 @@ export async function fleetRunway(hon, today, opts = {}) {
     -- OBP's last-month figure over the computed one; and an item OBP reports
     -- that has no count history at all still gets a rate from OBP alone.
     agg AS (
-      SELECT a0.ship, a0.part_number, a0.avg3, a0.avg_months,
+      SELECT a0.ship, a0.part_number, a0.avg3, a0.avg_months, a0.avg3_detail,
              COALESCE(m.usage, a0.lastm_calc) lastm,
              CASE WHEN m.usage IS NOT NULL AND COALESCE(m.source, '') <> 'computed' THEN 'obp' ELSE 'calc' END last_src,
              CASE WHEN m.usage IS NOT NULL THEN 1 ELSE a0.lastm_calc_months END lastm_months
         FROM agg0 a0
         LEFT JOIN obpm m ON m.ship = a0.ship AND m.part_number = a0.part_number
       UNION ALL
-      SELECT m.ship, m.part_number, NULL avg3, 0 avg_months, m.usage lastm,
+      SELECT m.ship, m.part_number, NULL avg3, 0 avg_months, NULL avg3_detail, m.usage lastm,
              CASE WHEN COALESCE(m.source, '') <> 'computed' THEN 'obp' ELSE 'calc' END last_src, 1 lastm_months
         FROM obpm m
        WHERE NOT EXISTS (SELECT 1 FROM agg0 a0 WHERE a0.ship = m.ship AND a0.part_number = m.part_number)
@@ -283,6 +293,7 @@ export async function fleetRunway(hon, today, opts = {}) {
            -- only the answer, so there was nothing to check it against and the
            -- disagreement cost a round trip. Carry the inputs.
            ${RATE} rate,
+           a.avg3_detail rate_avg_detail,
            a.lastm rate_last, a.avg3 rate_avg, a.avg_months rate_avg_months, a.last_src rate_source, a.lastm_months rate_last_months,
            z.six_avg,
            -- NULL STAYS NULL. No row, or a row with no reading, is an absence,
@@ -366,11 +377,34 @@ export async function fleetRunway(hon, today, opts = {}) {
     const m = await hon.prepare(`SELECT SUM(CASE WHEN COALESCE(source, '') <> 'computed' THEN 1 ELSE 0 END) obp, COUNT(*) n FROM ${CSV_CONSUMPTION} WHERE month = ?1`).bind(prevMonth).first();
     usageSource = m && Number(m.obp) > 0 ? 'obp' : m && Number(m.n) > 0 ? 'computed' : 'calc';
   }
+  // THE SPIKE MONTH, judged over six months the way cims-hon's record judges
+  // it (spike.js), so the email and the handover agree on which month is
+  // suspect. One extra read: the six months of counts, with transfers out.
+  const csCols = await columnsOf(hon, 'consumption_snapshot');
+  const csvCols = csCols && csCols.has('source') && csCols.has('opening') ? 'c.source, c.opening' : 'NULL source, NULL opening';
+  const spikeRows = ((await hon.prepare(`WITH xfer AS (${xferSql})
+      SELECT c.ship, c.part_number, c.month, c.on_hand, c.receipts, ${csvCols}, COALESCE(x.qty, 0) xq
+        FROM consumption_snapshot c
+        LEFT JOIN xfer x ON x.ship = c.ship AND x.part_number = c.part_number AND x.month = c.month
+       WHERE c.month >= ?5 AND c.month < ?1`).bind(month, null, null, null, sixFrom).all()).results || []);
+  const seriesBy = new Map();
+  for (const r of spikeRows) {
+    const k = `${r.ship}|${r.part_number}`;
+    if (!seriesBy.has(k)) seriesBy.set(k, []);
+    seriesBy.get(k).push(r);
+  }
   const rows = ((await hon.prepare(sql).bind(month, fromMonth, prevMonth, today, sixFrom).all()).results || [])
     .map((r) => {
       const six = r.six_avg == null ? null : Number(r.six_avg);
       const onSix = isFloorModel(r.description) && six > 0;
-      return { ...r, rate: onSix ? six : Number(r.rate) || 0, rate_six: onSix ? six : null };
+      if (onSix) return { ...r, rate: six, rate_six: six };
+      // THE HIGHER OF LAST MONTH AND THE AVERAGE, the average without a month
+      // that looks mistyped (17 Nov 2026). The SQL RATE is the same rule
+      // before the skip; this is the figure planned on.
+      const skip = skippedMonth(seriesBy.get(`${r.ship}|${r.part_number}`) || [], month);
+      if (!skip) return { ...r, rate: Number(r.rate) || 0, rate_six: null, rate_avg_skipped: null };
+      const w = rateWithout(r.rate_last, r.rate_avg_detail, skip);
+      return { ...r, rate: w.rate, rate_avg: w.avg, rate_avg_months: w.months, rate_six: null, rate_avg_skipped: monthName(skip) };
     })
     .filter((r) => r.rate > 0);
   if (!rows.length) {
@@ -421,6 +455,8 @@ export async function fleetRunway(hon, today, opts = {}) {
         rate_last_month: monthName(prevMonth),
         // Set only when the item was planned on six months (floor-model).
         rate_six: r.rate_six,
+        // The month left out of the average as one that looks mistyped (spike.js).
+        rate_avg_skipped: r.rate_avg_skipped || null,
       }, {
         brand: r.brand,
         parQty: r.par_qty == null ? null : Number(r.par_qty),

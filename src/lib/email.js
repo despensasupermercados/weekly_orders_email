@@ -430,7 +430,9 @@ const redDays = (n) => `<strong style="color:${RED};">${n} day${n === 1 ? '' : '
 // month's own figure is a count and stays whole. One rule, so the headline and
 // the line under it always print the same number.
 const fmt1 = (x) => (Number(x) < 10 ? String(Math.round(Number(x) * 10) / 10) : String(Math.round(Number(x))));
-const onAverage = (f) => f.rate_six == null && (f.rate_last == null || Number(f.rate_last) === 0);
+// Since 17 Nov the average is also what we plan on when it is the higher of the two.
+const onAverage = (f) => f.rate_six == null && (f.rate_last == null || Number(f.rate_last) === 0
+  || (f.rate_avg != null && Number(f.rate_avg) > Number(f.rate_last)));
 const shownRate = (f) => (f.rate_six != null ? fmt1(f.rate_six) : onAverage(f) ? fmt1(f.rate) : String(Math.round(f.rate)));
 
 // LAST MONTH'S FIGURE, AND WHOSE IT IS. "(OBP)" only when the figure is OBP's
@@ -466,7 +468,7 @@ function rateBasis(f) {
   const last = f.rate_last == null ? null : Math.round(f.rate_last);
   const avg = f.rate_avg == null ? null : Math.round(f.rate_avg);
   const n = Number(f.rate_avg_months) || 0;
-  const over = n > 1 ? ` of ${n} months` : '';
+  const over = (n > 1 ? ` of ${n} months` : '') + (f.rate_avg_skipped ? `, ${f.rate_avg_skipped} left out (looks mistyped)` : '');
   const planned = onAverage(f) ? 'the average' : 'last month';
   const lastText = lastMonthText(f, last);
   // The average is printed to the decimal only when it is the figure planned
