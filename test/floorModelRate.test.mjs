@@ -87,7 +87,7 @@ assert.deepEqual(Object.keys(by).sort(), ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'
 assert.equal(by.A.rate, 1, 'floor-model: six months of counts, not OBP\'s 4');
 assert.equal(by.A.rate_six, 1);
 assert.equal(by.A.rate_last, 4, 'last month still carried, to print beside it');
-assert.equal(by.B.rate, 12, 'paper plans on last month');
+assert.equal(by.B.rate.toFixed(1), Math.max(by.B.rate_last, by.B.rate_avg).toFixed(1), 'paper plans on the higher of last month and the average (17 Nov)');
 assert.equal(by.B.rate_six, null);
 assert.equal(by.C.rate, 2, 'four months of counts: no six-month figure, last month');
 assert.equal(by.C.rate_six, null);

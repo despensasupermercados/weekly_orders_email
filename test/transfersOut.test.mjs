@@ -79,7 +79,7 @@ const INF_RECEIPTS = [0, 11, 8, 8, 9, 8, 10, 6];
   const inf = r.findings.find((f) => f.ship === 'Infinity');
   assert.ok(inf, 'Infinity is judged');
   assert.equal(inf.rate_last, 7, 'October is 22 + 6 - 17 - 4 sent to Eclipse = 7, Ray\'s figure');
-  assert.equal(inf.rate, 7, 'and that is what the email plans on');
+  assert.equal(inf.rate.toFixed(1), Math.max(inf.rate_last, inf.rate_avg).toFixed(1), 'and the email plans on the higher of it and the average (17 Nov)');
   assert.ok(Math.abs(inf.rate_avg - (8 + 8 + 7) / 3) < 1e-9, `the average nets it too: Aug 8, Sep 8, Oct 7 (${inf.rate_avg})`);
   const ecl = r.findings.find((f) => f.ship === 'Eclipse');
   assert.ok(ecl, 'Eclipse is judged');

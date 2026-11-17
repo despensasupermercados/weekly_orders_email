@@ -70,7 +70,7 @@ const byB = first.findings.find((f) => f.ship === 'B');
 assert.ok(byA && byB, 'both items are still judged');
 assert.equal(byA.rate, 4, 'floor-model item fell back to OBP\'s last month');
 assert.equal(byA.rate_six, null, 'no six-month figure without the seventh count');
-assert.equal(byB.rate, 12);
+assert.equal(byB.rate.toFixed(1), Math.max(byB.rate_last, byB.rate_avg).toFixed(1), 'paper: the higher of OBP\'s October and the average (17 Nov)');
 
 // Ops hear it, in words apart from "did not run"; the fleet email carries it; a crew never sees it.
 const checks = [{ name: 'voyage', ran: true }, { name: 'runway', ran: first.ran, reason: first.reason, short: first.short }];

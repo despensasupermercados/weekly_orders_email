@@ -119,12 +119,14 @@ const text = (findings, ship) => renderWeekly([], [], today, { gaps: [], deliver
   assert.equal(f.rate_last, 7.5, 'September 16 and October -1 read together: 15 over 2');
   assert.equal(f.rate_last_months, 2);
   assert.equal(f.rate_last_span, 'Sep and Oct');
-  assert.equal(f.rate, 7.5, 'and that is the figure planned on, not the 12 average of the inflated month');
+  assert.equal(f.rate.toFixed(1), Math.max(f.rate_last, f.rate_avg).toFixed(1), 'planned on the higher of last month and the average (17 Nov)');
+  assert.ok(f.rate < 8, 'and never the 12 average of the inflated month');
   assert.ok(Math.abs(f.rate_avg - (8 + 7.5 + 7.5) / 3) < 1e-9, `the average carries both halves: ${f.rate_avg}`);
   assert.equal(f.rate_avg_months, 3);
   const t = text([f], 'Infinity');
-  assert.ok(t.includes('you use 8 a month'), t.slice(0, 200));
+  assert.ok(t.includes('you use 7.7 a month'), t.slice(0, 200));
   assert.ok(t.includes('8 a month over Sep and Oct, read together: the Oct count went up'), `the line names the pair: ${t.slice(t.indexOf('on board'), t.indexOf('on board') + 220)}`);
+  assert.ok(t.includes('7.7 average of 3 months · we plan on the average'), 'the line names the half planned on (17 Nov)');
   assert.ok(!t.includes('no figure for last month') && !t.includes('(OBP)'), t);
 }
 // A negative month with nothing positive before it in the window is still dropped.
