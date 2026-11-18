@@ -44,9 +44,9 @@ export function orderingRules() {
     ['usage', 'floor_model_months', String(FLOOR_MODEL_MONTHS), 'Ray 22 Oct 2026'],
     ['usage', 'floor_model_formula', `(count at the end of the month before the ${FLOOR_MODEL_MONTHS} + every receipt in them - count at the end of last month) / ${FLOOR_MODEL_MONTHS}, from consumption_snapshot. All ${FLOOR_MODEL_MONTHS + 1} month-end counts required, and the result must be above 0; otherwise the item plans on last month`, 'runwayDb.js; counts at both ends cancel a receipt booked in one month and shelved the next'],
     ['usage', 'zero_month', 'trailing_average', 'Ray 13 Oct 2026 (Q3, Quest WX-103 2, 2, then 0): "correct"'],
-    ['usage', 'average_role', 'shown beside last month as a view for dry dock and quiet months; not a floor', 'Ray 15 Oct 2026: "the average should be viewed more for dry dock or quite months as the usage can pickup at any time"'],
+    ['usage', 'average_role', 'a floor under last month: the plan is the higher of the two; a month that looks mistyped (double the median of the other five, and at least 6) is left out of the average, never last month', 'Ray 17 Nov 2026: "HON should review consumption vs last 3 months, in the case ship was transition, dry dock, it does not expect to have low usage"; Miguel 17 Nov: leave a flagged month out. Supersedes Ray 15 Oct (a view only)'],
     ['usage', 'last_month_source', 'OBP Consumption Statistic (weekly_obp_consumption) where Ray\'s export has the month, else month-open + receipts - next month-open', 'Ray 14 Oct 2026: OBP usage excludes transfers out ("10 cases transferred to Legend")'],
-    ['usage', 'retired', 'greater of last month and the 3-month average', 'HON spec recJFeQFxD78KCbaX, retired by Ray 15 Oct 2026'],
+    ['usage', 'retired', 'last month only (Ray 12/15 Oct 2026)', 'Replaced 17 Nov 2026 by the higher of last month and the 3-month average (Ray on the Voyager HON audit; Miguel)'],
 
     ['toner_spare', 'items', 'print-shop toner TN619 C/M/Y and TN634 K (C4070, C4080)', 'Ray 1 Sep 2026 Q20'],
     ['toner_spare', 'monthly', spare({ brand: 'Royal', port: 'MIAMI', nextPort: 'MIAMI' }), 'Ray 15 Oct 2026: "USA ships have a 3+ rule"; 7 Sep: Canada and the Caribbean islands are delivered within the month'],
